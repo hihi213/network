@@ -49,7 +49,6 @@ extern UIManager* global_ui_manager;
 /* UI 초기화 및 정리 함수 */
 int init_ui(void);
 void cleanup_ui(void);
-int init_server_ui(void);
 void refresh_all_windows(void);
 
 /* 서버 UI 함수 */
@@ -72,4 +71,5 @@ bool create_generic_menu(UIManager* manager, const char* title, const char** ite
 UIManager* init_ui_manager(void);
 void cleanup_ui_manager(UIManager* manager);
 int create_menu(UIManager* manager, const char* title, const char** items, int count);
+void set_status_message(UIManager* manager, const char* message);
 #endif /* UI_H */

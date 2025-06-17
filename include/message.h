@@ -52,6 +52,7 @@ Message* create_status_response_message(const Device* devices, int count);
 Message* create_error_message(const char* error_msg);
 Message* create_ping_message(void);
 Message* create_pong_message(void);
+Message* create_reservation_message(const char* device_id);
 
 /* 메시지 유효성 검사 함수 */
 bool is_valid_message(const Message* message);

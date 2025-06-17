@@ -114,48 +114,48 @@ bool remove_device(ResourceManager* manager, const char* id) {
     return true;
 }
 
-/* 장치 상태 업데이트 */
-bool update_device_status(ResourceManager* manager, const char* id, const char* status, const char* username) {
-    if (!manager || !id || !status) return false;
+/**
+ * @brief 특정 장비의 상태(DeviceStatus)를 변경합니다.
+ * @param manager 자원 관리자(ResourceManager) 포인터.
+ * @param device_id 상태를 변경할 장비의 ID.
+ * @param new_status 새로운 장비 상태 (DEVICE_AVAILABLE, DEVICE_RESERVED 등).
+ * @return 성공 시 true, 장비를 찾지 못하는 등 실패 시 false를 반환합니다.
+ */
+bool update_device_status(ResourceManager* manager, const char* device_id, DeviceStatus new_status) {
+    // 1. 파라미터 유효성 검사
+    if (!manager || !device_id) {
+        LOG_ERROR("Resource", "update_device_status: NULL 파라미터 수신");
+        return false;
+    }
 
+    // 2. 스레드 안전성을 위해 뮤텍스 잠금
     pthread_mutex_lock(&manager->mutex);
 
-    // 장비 찾기
-    int index = -1;
+    Device* device_to_update = NULL;
+    // 3. 관리자 목록에서 해당 ID를 가진 장비 검색
     for (int i = 0; i < manager->device_count; i++) {
-        if (strcmp(manager->devices[i].id, id) == 0) {
-            index = i;
+        if (strcmp(manager->devices[i].id, device_id) == 0) {
+            device_to_update = &manager->devices[i];
             break;
         }
     }
 
-    if (index == -1) {
-        pthread_mutex_unlock(&manager->mutex);
-        return false;
-    }
-    
-    // 상태 업데이트
-    Device* device = &manager->devices[index];
-    if (strcmp(status, "available") == 0) {
-        device->status = DEVICE_AVAILABLE;
-    } else if (strcmp(status, "reserved") == 0) {
-        device->status = DEVICE_RESERVED;
-    } else if (strcmp(status, "maintenance") == 0) {
-        device->status = DEVICE_MAINTENANCE;
-    } else {
-        pthread_mutex_unlock(&manager->mutex);
+    // 4. 장비를 찾지 못한 경우 처리
+    if (device_to_update == NULL) {
+        LOG_WARNING("Resource", "상태를 업데이트할 장비를 찾지 못함: ID=%s", device_id);
+        pthread_mutex_unlock(&manager->mutex); // 잠금 해제
         return false;
     }
 
-    // 예약자 정보 업데이트
-    if (username) {
-        strncpy(device->reserved_by, username, MAX_USERNAME_LENGTH - 1);
-        device->reserved_by[MAX_USERNAME_LENGTH - 1] = '\0';
-    } else {
-        device->reserved_by[0] = '\0';
-    }
+    // 5. 장비 상태 업데이트
+    device_to_update->status = new_status;
 
+    LOG_INFO("Resource", "장비 상태 업데이트 성공: ID=%s, 새 상태=%d", 
+             device_id, new_status);
+
+    // 6. 뮤텍스 잠금 해제
     pthread_mutex_unlock(&manager->mutex);
+
     return true;
 }
 

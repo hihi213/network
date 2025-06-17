@@ -43,5 +43,6 @@ int get_user_reservations(ReservationManager* manager, const char* username, Res
 int get_device_reservations(ReservationManager* manager, const char* device_id, Reservation* reservations, int max_reservations);
 void cleanup_expired_reservations(ReservationManager* manager);
 const char* get_reservation_status_string(ReservationStatus status);
+Reservation* get_active_reservation_for_device(ReservationManager* manager, const char* device_id);
 
 #endif /* RESERVATION_H */

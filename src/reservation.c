@@ -325,3 +325,25 @@ Reservation* get_reservation_by_device(ReservationManager* manager, const char* 
     pthread_mutex_unlock(&manager->mutex);
     return NULL;
 } 
+
+Reservation* get_active_reservation_for_device(ReservationManager* manager, const char* device_id) {
+    if (!manager || !device_id) return NULL;
+
+    pthread_mutex_lock(&manager->mutex);
+    
+    time_t now = time(NULL);
+    for (int i = 0; i < manager->reservation_count; i++) {
+        Reservation* r = &manager->reservations[i];
+        if (strcmp(r->device_id, device_id) == 0) {
+            // [중요] 상태가 승인이고, 현재 시간이 예약 시간 범위 안에 있는지 확인
+            if (r->status == RESERVATION_APPROVED && now >= r->start_time && now < r->end_time) {
+                pthread_mutex_unlock(&manager->mutex);
+                return r; // 활성화된 예약을 찾았으므로 반환
+            }
+        }
+    }
+
+    pthread_mutex_unlock(&manager->mutex);
+    return NULL; // 활성화된 예약 없음
+}
+
