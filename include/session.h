@@ -58,7 +58,6 @@ typedef struct {
 int init_client_session(ClientSession* session);
 void cleanup_client_session(ClientSession* session);
 int update_session_state(ClientSession* session, SessionState state);
-void update_client_session_activity(ClientSession* session);
 bool is_session_connected(const ClientSession* session);
 bool is_session_logged_in(const ClientSession* session);
 
@@ -68,7 +67,6 @@ void cleanup_session_manager(SessionManager* manager);
 ServerSession* create_session(SessionManager* manager, const char* username, const char* ip, int port);
 int close_session(SessionManager* manager, const char* username);
 void cleanup_expired_sessions(SessionManager* manager);
-ServerSession* get_session(SessionManager* manager, const char* username);
 bool is_session_expired(const ServerSession* session);
 
 #endif /* SESSION_H */
