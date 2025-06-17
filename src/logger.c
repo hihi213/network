@@ -107,11 +107,11 @@ static void write_to_log_file(LogLevel level, const char* category, const char* 
         timeinfo = localtime(&rawtime);
         strftime(timestamp_str, sizeof(timestamp_str), "%m월 %d일 %H:%M", timeinfo);
 
-        fprintf(log_file, "%s [%s] [%s] [%s]\n",
-                message,
-                timestamp_str,
+        fprintf(log_file, "[%s] [%s] %s [%s]\n",
                 get_log_level_string_internal(level),
-                category);
+                category,
+                message,
+                timestamp_str);
         fflush(log_file);
     } else {
         fprintf(stderr, "경고: 로그 파일이 열려 있지 않습니다. 메시지: [%s] [%s] %s\n",

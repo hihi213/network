@@ -1,4 +1,3 @@
-
 #include "../include/logger.h"
 #include "../include/message.h"
 #include "../include/network.h"
@@ -304,7 +303,7 @@ static int handle_client_message(SSL* ssl, const Message* message) {
             }
             break;
         default:
-            LOG_ERROR("Server", "알 수 없는 메시지 타입: %d", message->type);
+            LOG_ERROR("Server", "알 수 없는 메시지 타입: %d [%s]", message->type, get_message_type_string(message->type));
             send_error_response(ssl, "알 수 없는 메시지 타입");
             break;
     }
