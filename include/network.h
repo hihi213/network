@@ -51,8 +51,6 @@ int handle_ssl_handshake(SSLHandler* handler);
 int send_message(SSL* ssl, const Message* message);
 
 /* 유틸리티 함수 */
-int set_nonblocking(int socket_fd);
-bool is_connection_alive(SSL* ssl, int socket_fd);
 int set_socket_options(int socket_fd);
 void update_ssl_activity(SSLHandler* handler);
 

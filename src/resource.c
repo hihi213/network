@@ -159,26 +159,6 @@ bool update_device_status(ResourceManager* manager, const char* device_id, Devic
     return true;
 }
 
-/* 장치 정보 조회 */
-Device* get_device(ResourceManager* manager, const char* id) {
-    if (!manager || !id) {
-        LOG_ERROR("Resource", "잘못된 파라미터");
-        return NULL;
-    }
-
-    pthread_mutex_lock(&manager->mutex);
-
-    Device* device = NULL;
-    for (int i = 0; i < manager->device_count; i++) {
-        if (strcmp(manager->devices[i].id, id) == 0) {
-            device = &manager->devices[i];
-            break;
-        }
-    }
-
-    pthread_mutex_unlock(&manager->mutex);
-    return device;
-}
 
 /* 장치 목록 조회 */
 int get_device_list(ResourceManager* manager, Device* devices, int max_devices) {
@@ -210,24 +190,3 @@ bool is_device_available(ResourceManager* manager, const char* id) {
     pthread_mutex_unlock(&manager->mutex);
     return false;
 }
-
-/* 장치 예약 상태 확인 */
-bool is_device_reserved(ResourceManager* manager, const char* id) {
-    if (!manager || !id) {
-        LOG_ERROR("Resource", "잘못된 파라미터");
-        return false;
-    }
-
-    pthread_mutex_lock(&manager->mutex);
-
-    bool reserved = false;
-    for (int i = 0; i < manager->device_count; i++) {
-        if (strcmp(manager->devices[i].id, id) == 0) {
-            reserved = (manager->devices[i].status == DEVICE_RESERVED);
-            break;
-        }
-    }
-
-    pthread_mutex_unlock(&manager->mutex);
-    return reserved;
-} 

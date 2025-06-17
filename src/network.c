@@ -259,23 +259,6 @@ int init_client_socket(const char* server_ip, int port) {
     return client_fd;
 }
 
-/* SSL 연결 설정 */
-SSL* setup_ssl_connection(SSL_CTX* ctx, int socket_fd) {
-    SSL* ssl = SSL_new(ctx);
-    if (!ssl) {
-        LOG_ERROR("SSL", "SSL 객체 생성 실패: %s", ERR_error_string(ERR_get_error(), NULL));
-        return NULL;
-    }
-
-    if (!SSL_set_fd(ssl, socket_fd)) {
-        LOG_ERROR("SSL", "SSL 소켓 설정 실패: %s", ERR_error_string(ERR_get_error(), NULL));
-        SSL_free(ssl);
-        return NULL;
-    }
-
-    return ssl;
-}
-
 /* SSL 핸드셰이크 처리 함수 */
 int handle_ssl_handshake(SSLHandler* handler) {
     if (!handler || !handler->ssl) {
@@ -342,40 +325,7 @@ int handle_ssl_handshake(SSLHandler* handler) {
     return 0;
 }
 
-/* SSL 연결 종료 */
-void close_connection(SSL* ssl, int socket_fd) {
-    if (ssl) {
-        SSL_shutdown(ssl);
-        SSL_free(ssl);
-    }
-    if (socket_fd >= 0) {
-        close(socket_fd);
-    }
-}
 
-/* SSL 컨텍스트 정리 */
-void cleanup_ssl_context(SSL_CTX* ctx) {
-    if (ctx) {
-        SSL_CTX_free(ctx);
-    }
-}
-
-/* 논블로킹 소켓 설정 함수 */
-int set_nonblocking(int socket_fd) {
-    int flags = fcntl(socket_fd, F_GETFL, 0);
-    if (flags == -1) {
-        LOG_ERROR("Network", "소켓 플래그 가져오기 실패: %s", strerror(errno));
-        return -1;
-    }
-
-    flags |= O_NONBLOCK;
-    if (fcntl(socket_fd, F_SETFL, flags) == -1) {
-        LOG_ERROR("Network", "소켓 논블로킹 설정 실패: %s", strerror(errno));
-        return -1;
-    }
-
-    return 0;
-}
 
 SSLHandler* create_ssl_handler(SSLManager* manager, int socket_fd) {
     if (!manager || !manager->ctx) {
@@ -434,49 +384,6 @@ int set_socket_options(int socket_fd) {
     if (setsockopt(socket_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
         LOG_ERROR("Network", "소켓 옵션 (SO_REUSEADDR) 설정 실패: %s", strerror(errno));
         return -1;
-    }
-    return 0;
-}
-
-int set_keepalive(int socket_fd, int keepidle, int keepinterval, int keepcount) {
-    int optval = 1;
-    if (setsockopt(socket_fd, SOL_SOCKET, SO_KEEPALIVE, &optval, sizeof(optval)) < 0) {
-        LOG_ERROR("Network", "소켓 옵션 (SO_KEEPALIVE) 설정 실패: %s", strerror(errno));
-        return -1;
-    }
-
-    // macOS에서는 TCP_KEEPALIVE 옵션만 지원
-    optval = keepidle;
-    if (setsockopt(socket_fd, IPPROTO_TCP, TCP_KEEPALIVE, &optval, sizeof(optval)) < 0) {
-        LOG_ERROR("Network", "소켓 옵션 (TCP_KEEPALIVE) 설정 실패: %s", strerror(errno));
-        return -1;
-    }
-
-    optval = keepinterval;
-    if (setsockopt(socket_fd, IPPROTO_TCP, TCP_KEEPALIVE, &optval, sizeof(optval)) < 0) {
-        LOG_ERROR("Network", "소켓 옵션 (TCP_KEEPALIVE) 설정 실패: %s", strerror(errno));
-        return -1;
-    }
-
-    optval = keepcount;
-    if (setsockopt(socket_fd, IPPROTO_TCP, TCP_KEEPALIVE, &optval, sizeof(optval)) < 0) {
-        LOG_ERROR("Network", "소켓 옵션 (TCP_KEEPALIVE) 설정 실패: %s", strerror(errno));
-        return -1;
-    }
-    return 0;
-}
-
-const char* get_ssl_error(void) {
-    unsigned long err_code = ERR_get_error();
-    if (err_code == 0) {
-        return "No SSL error";
-    }
-    return ERR_error_string(err_code, NULL);
-}
-
-time_t get_ssl_last_activity(const SSLHandler* handler) {
-    if (handler) {
-        return handler->last_activity;
     }
     return 0;
 }
@@ -572,20 +479,3 @@ if (!ssl || !message) {
     LOG_INFO("Network", "메시지 전송 완료: 타입=%s, 크기=%zu bytes", get_message_type_string(message->type), total_size);
     return 0;
 }
-
-/* 연결 상태 확인 함수 */
-bool is_connection_alive(SSL* ssl, int socket_fd) {
-    if (!ssl || socket_fd < 0) return false;
-    
-    char buf[1];
-    int ret = SSL_peek(ssl, buf, 1);
-        if (ret <= 0) {
-        int ssl_error = SSL_get_error(ssl, ret);
-        if (ssl_error == SSL_ERROR_NONE || ssl_error == SSL_ERROR_WANT_READ) {
-            return true;
-        }
-        return false;
-    }
-    return true;
-}
-
