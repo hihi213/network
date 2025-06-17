@@ -186,32 +186,44 @@ Message* receive_message(SSL* ssl) {
     }
 
     // 인자 수신
-    for (uint32_t i = 0; i < arg_count; i++) {
-        uint32_t arg_len;
-        ret = SSL_read(ssl, &arg_len, sizeof(arg_len));
-        if (ret <= 0) {
-            LOG_ERROR("Message", "인자 길이 수신 실패");
-            cleanup_message(message);
-            return NULL;
-        }
-        arg_len = ntohl(arg_len);
-
-        if (arg_len >= MAX_ARG_LENGTH) {
-            LOG_ERROR("Message", "인자 길이가 너무 김");
-            cleanup_message(message);
-            return NULL;
-        }
-
-        ret = SSL_read(ssl, message->args[i], arg_len);
-        if (ret <= 0) {
-            LOG_ERROR("Message", "인자 내용 수신 실패");
-            cleanup_message(message);
-            return NULL;
-        }
-        message->args[i][arg_len] = '\0';
+for (uint32_t i = 0; i < arg_count; i++) {
+    uint32_t arg_len;
+    ret = SSL_read(ssl, &arg_len, sizeof(arg_len));
+    if (ret <= 0) {
+        LOG_ERROR("Message", "인자 길이 수신 실패");
+        cleanup_message(message);
+        free(message); // [중요] 생성된 메시지 객체 자체도 해제
+        return NULL;
     }
-    message->arg_count = arg_count;
+    arg_len = ntohl(arg_len);
 
+    if (arg_len >= MAX_ARG_LENGTH) {
+        LOG_ERROR("Message", "인자 길이가 너무 김: %u", arg_len);
+        cleanup_message(message);
+        free(message);
+        return NULL;
+    }
+
+    // [수정] 인자를 저장할 메모리 할당
+    message->args[i] = (char*)malloc(arg_len + 1);
+    if (!message->args[i]) {
+        LOG_ERROR("Message", "인자 메모리 할당 실패");
+        cleanup_message(message);
+        free(message);
+        return NULL;
+    }
+
+    // [수정] 할당된 메모리에 인자 내용 수신
+    ret = SSL_read(ssl, message->args[i], arg_len);
+    if (ret <= 0) {
+        LOG_ERROR("Message", "인자 내용 수신 실패");
+        cleanup_message(message);
+        free(message);
+        return NULL;
+    }
+    message->args[i][arg_len] = '\0';
+    message->arg_count++; // [중요] 성공적으로 읽은 인자 수 증가
+}
     // 데이터 길이 수신
     uint32_t data_len;
     ret = SSL_read(ssl, &data_len, sizeof(data_len));

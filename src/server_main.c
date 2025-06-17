@@ -188,15 +188,19 @@ static int handle_login_request(Client* client, const Message* message) {
     const char* user = message->args[0];
     const char* pass = message->args[1];
 
-    // 여기에 실제 DB나 파일에서 사용자 정보를 확인하는 인증 로직이 들어가야 합니다.
-    // 지금은 임시로 "test" / "1234" 만 허용합니다.
-    if (strcmp(user, "test") == 0 && strcmp(pass, "1234") == 0) {
+    // 임시 인증 로직 ("test" / "1234" 만 허용)
+     if (strcmp(user, "test") == 0 && strcmp(pass, "1234") == 0) {
         client->state = SESSION_LOGGED_IN;
         strncpy(client->username, user, MAX_USERNAME_LENGTH -1);
-        create_session(session_manager, user, client->ip, 0); // 세션 생성
+        create_session(session_manager, user, client->ip, 0);
+
         Message* response = create_message(MSG_LOGIN, "success");
+
         send_message(client->ssl, response);
+
         cleanup_message(response);
+        free(response); // [수정] 메모리 해제 추가
+
         LOG_INFO("Auth", "로그인 성공: %s", user);
         return 0;
     } else {
@@ -204,7 +208,6 @@ static int handle_login_request(Client* client, const Message* message) {
         return send_error_response(client->ssl, "아이디 또는 비밀번호가 틀립니다.");
     }
 }
-
 static int handle_status_request(Client* client, const Message* message) {
     // 이 함수는 message 파라미터를 사용하지 않으므로 경고를 방지합니다.
     (void)message; 

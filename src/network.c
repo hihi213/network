@@ -330,27 +330,9 @@ int handle_ssl_handshake(SSLHandler* handler) {
         return -1;
     }
 
-    // SSL 상태 확인
-    int ssl_state = SSL_get_state(handler->ssl);
-    LOG_INFO("Network", "SSL 핸드셰이크 후 상태: %d", ssl_state);
-
-    // TLS_ST_OK 상태가 될 때까지 대기
-    int max_retries = 5;
-    int retry_count = 0;
-    while (ssl_state != TLS_ST_OK && retry_count < max_retries) {
-        usleep(100000); // 100ms 대기
-        ssl_state = SSL_get_state(handler->ssl);
-        LOG_INFO("Network", "SSL 상태 확인 중: %d (시도 %d/%d)", ssl_state, retry_count + 1, max_retries);
-        retry_count++;
-    }
-
-    if (ssl_state != TLS_ST_OK) {
-        LOG_ERROR("Network", "SSL 핸드셰이크가 완료되지 않음 (최종 상태: %d)", ssl_state);
-        return -1;
-    }
 
     // SSL 세션 정보 로깅
-    const SSL_CIPHER* cipher = SSL_get_current_cipher(handler->ssl);
+   const SSL_CIPHER* cipher = SSL_get_current_cipher(handler->ssl);
     if (cipher) {
         LOG_INFO("Network", "사용 중인 암호화 방식: %s", SSL_CIPHER_get_name(cipher));
     }

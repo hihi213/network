@@ -14,6 +14,8 @@ static void handle_server_message(const Message* message);
 static void handle_main_menu(void);
 static void handle_device_reservation(int device_index);
 static DeviceStatus string_to_device_status(const char* status_str);
+static void handle_logged_in_menu(void);
+static bool handle_login(void);
 
 /* --- 전역 변수 --- */
 extern UIManager* global_ui_manager;
@@ -50,16 +52,24 @@ int main(int argc, char* argv[]) {
     }
 
     while (running) {
+// 로그인 상태에 따라 적절한 메뉴만 호출
+    if (client_session.state == SESSION_LOGGED_IN) {
+        handle_logged_in_menu();
+    } else {
         handle_main_menu();
-        if (!running) break;
+    }
 
+    if (!running) break;
+
+        // 서버로부터 메시지를 기다리는 poll 로직 (UI 상호작용 후 즉시 실행)
         struct pollfd fds[2];
         fds[0].fd = client_session.socket_fd;
         fds[0].events = POLLIN;
         fds[1].fd = self_pipe[0];
         fds[1].events = POLLIN;
 
-        int ret = poll(fds, 2, -1);
+        // 0ms 타임아웃으로 즉시 확인
+        int ret = poll(fds, 2, 0); 
 
         if (ret < 0) {
             if (errno == EINTR) continue;
@@ -90,30 +100,62 @@ int main(int argc, char* argv[]) {
     return 0;
 }
 
+// 로그인 이전의 메인 메뉴
 static void handle_main_menu(void) {
-    const char* items[] = { "장비 현황 조회", "종료" };
+    const char* items[] = { "로그인", "종료" };
     int choice = create_menu(global_ui_manager, "메인 메뉴", items, 2);
 
     switch (choice) {
-        case 0: {
-            Message* msg = create_message(MSG_STATUS_REQUEST, NULL);
-            if (msg) {
-                if(send_message(client_session.ssl, msg) < 0) running = false;
-                cleanup_message(msg);
-            }
+        case 0: // 로그인
+            handle_login();
             break;
-        }
-        case 1:
-        case -1:
+        case 1: // 종료
+        case -1: // ESC
             running = false;
             break;
     }
 }
 
+// 로그인 이후의 메인 메뉴 (새로 추가)
+static void handle_logged_in_menu(void) {
+    const char* items[] = { "장비 현황 조회 및 예약", "로그아웃" };
+    int choice = create_menu(global_ui_manager, "메인 메뉴", items, 2);
+
+    switch (choice) {
+        case 0: { // 장비 현황 조회
+            Message* msg = create_message(MSG_STATUS_REQUEST, NULL);
+            if (msg) {
+                if(send_message(client_session.ssl, msg) < 0) running = false;
+                cleanup_message(msg);
+                free(msg);
+            }
+            break;
+        }
+        case 1: // 로그아웃
+            // 세션 상태를 변경하고, 다음 루프에서 로그인 메뉴를 표시하도록 함
+            client_session.state = SESSION_DISCONNECTED;
+            show_success_message("로그아웃되었습니다.");
+            sleep(1);
+            break;
+        case -1: // ESC
+             // 현재는 아무 동작 안 함. 필요 시 종료 로직 추가 가능
+            break;
+    }
+}
+
 static void handle_server_message(const Message* message) {
-    switch (message->type) {
+       switch (message->type) {
+        // [추가] 로그인 응답 처리
+        case MSG_LOGIN:
+            if (strcmp(message->data, "success") == 0) {
+                client_session.state = SESSION_LOGGED_IN;
+                show_success_message("로그인 성공!");
+                sleep(1); // 1초간 메시지 표시
+            }
+            // 에러의 경우 MSG_ERROR로 오므로 별도 처리 필요 없음
+            break;
         case MSG_STATUS_RESPONSE: {
-            if (device_list) free(device_list);
+          if (device_list) free(device_list);
             
             device_count = message->arg_count / 4;
             device_list = (Device*)malloc(sizeof(Device) * device_count);
@@ -251,3 +293,38 @@ static DeviceStatus string_to_device_status(const char* status_str) {
     return DEVICE_AVAILABLE;
 }
 
+// 사용자 로그인을 처리하는 함수 (실제 구현 시에는 사용자 입력 필요)
+static bool handle_login() {
+    // UI에 사용자 이름과 비밀번호 입력 필드를 표시하고 값을 받아와야 함.
+    // 여기서는 하드코딩된 값으로 대체.
+    const char* username = "test";
+    const char* password = "1234";
+
+    show_success_message("로그인 시도 중...");
+
+    // 로그인 메시지 생성
+    Message* msg = create_message(MSG_LOGIN, NULL);
+    if (!msg) {
+        show_error_message("메시지 생성 실패");
+        return false;
+    }
+
+    // 인자에 아이디와 비밀번호 추가
+    msg->args[0] = strdup(username);
+    msg->args[1] = strdup(password);
+    msg->arg_count = 2;
+
+    // 메시지 전송
+    if (send_message(client_session.ssl, msg) < 0) {
+        running = false;
+        cleanup_message(msg);
+        free(msg);
+        return false;
+    }
+
+    cleanup_message(msg);
+    free(msg);
+    
+    // 이 함수는 메시지 전송까지만 담당. 결과는 handle_server_message 에서 처리.
+    return true; 
+}
