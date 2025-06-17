@@ -36,15 +36,30 @@ static Device* device_list = NULL;
 static int device_count = 0;
 ITEM** device_menu_items = NULL;
 
+// [수정] 메인 메뉴를 보여주는 함수
 static void show_main_menu(void) {
-    const char* menu_items[] = {
-        "1. 장비 현황 조회",
-        "2. 종료",
-        NULL
+    const char* items[] = {
+        "장비 현황 조회",
+        "종료"
     };
-    create_menu(global_ui_manager, menu_items, 2);
-    set_status_message(global_ui_manager, "메뉴를 선택하세요 (1-2)");
-    current_state = STATE_MAIN_MENU;
+    // 통합 메뉴 함수 사용
+    int choice = createMenu(global_ui_manager, "메인 메뉴", items, 2);
+
+    switch (choice) {
+        case 0: // 장비 현황 조회
+            {
+                Message* msg = create_message(MSG_STATUS_REQUEST, NULL);
+                if (msg) {
+                    send_message(client_session.ssl, msg);
+                    cleanup_message(msg);
+                }
+            }
+            break;
+        case 1: // 종료
+        case -1: // 취소
+            running = false;
+            break;
+    }
 }
 
 /* 시그널 핸들러 */
@@ -111,31 +126,43 @@ static int connect_to_server(const char* server_ip, int port) {
 static int handle_server_message(const Message* message) {
     switch (message->type) {
         case MSG_STATUS_RESPONSE: {
-            // 기존 장비 목록 해제
-            if (device_list) {
-                free(device_list);
-                device_list = NULL;
+            // 1. 서버로부터 받은 장비 데이터를 기반으로 메뉴에 표시할 문자열 배열 생성
+            int count = message->arg_count / 4;
+            // char*을 담을 배열 동적 할당
+            const char** menu_items = (const char**)malloc(sizeof(char*) * count);
+            if (!menu_items) return -1;
+
+            // 각 항목 문자열 동적 할당 및 포맷팅
+            for (int i = 0; i < count; i++) {
+                menu_items[i] = (char*)malloc(256); // 각 문자열을 위한 공간 할당
+                if (!menu_items[i]) { /* 에러 처리 */ }
+                
+                // 장비 정보 파싱 및 저장 (기존 device_list 로직은 유지하거나 이 단계에 통합)
+                strncpy(device_list[i].id, message->args[i*4], MAX_ID_LENGTH - 1);
+                strncpy(device_list[i].name, message->args[i*4 + 1], MAX_DEVICE_NAME_LENGTH - 1);
+                // ... (나머지 정보도 파싱)
+
+                snprintf((char*)menu_items[i], 256, "%-10s | %-25s | %-15s | %s",
+                         message->args[i*4], message->args[i*4 + 1], 
+                         message->args[i*4 + 2], message->args[i*4 + 3]);
             }
-            
-            device_count = message->arg_count / 4;
-            device_list = (Device*)malloc(sizeof(Device) * device_count);
-            
-            if (!device_list) {
-                show_error_message("장비 목록 메모리 할당 실패");
-                return -1;
+
+            // 2. 통합 메뉴 함수 호출하여 사용자 선택 받기
+            int selected_index = createMenu(global_ui_manager, "장비 목록 (선택: Enter, 뒤로가기: ESC)", menu_items, count);
+
+            // 3. 사용된 메모리 해제
+            for (int i = 0; i < count; i++) {
+                free((void*)menu_items[i]);
             }
+            free(menu_items);
             
-            // 장비 정보 파싱
-            for (int i = 0; i < device_count; i++) {
-                int base_idx = i * 4;
-                strncpy(device_list[i].id, message->args[base_idx], MAX_DEVICE_ID_LEN - 1);
-                strncpy(device_list[i].name, message->args[base_idx + 1], MAX_DEVICE_NAME_LENGTH - 1);
-                strncpy(device_list[i].type, message->args[base_idx + 2], MAX_DEVICE_TYPE_LENGTH - 1);
-                device_list[i].status = string_to_device_status(message->args[base_idx + 3]);
+            // 4. 선택 결과에 따른 로직 처리
+            if (selected_index >= 0) {
+                handle_device_reservation(selected_index);
+            } else {
+                // 사용자가 ESC로 메뉴를 닫았을 때, 다시 메인 메뉴를 보여줄 수 있음
+                show_main_menu(); 
             }
-            
-            // 장비 목록 메뉴 생성
-            create_device_menu();
             break;
         }
         case MSG_ERROR:
@@ -312,107 +339,28 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    // 메인 메뉴 표시
+   // 최초 메인 메뉴 표시
     show_main_menu();
 
-    // --- 기존 pollfd 설정 부분을 아래와 같이 수정 ---
-    struct pollfd fds[1];
-    fds[0].fd = client_session.socket_fd;
-    fds[0].events = POLLIN;
-
-    time_t last_activity = time(NULL);
-    const int PING_INTERVAL = 15;
-
     while (running) {
-        // 1. 사용자 키보드 입력 처리 (비동기)
-        int ch = getch();
-        if (ch != ERR) { // 키 입력이 있었을 경우
-            last_activity = time(NULL); // 키 입력도 활동으로 간주
-            if (global_ui_manager && global_ui_manager->menu) {
-                switch(ch) {
-                    case KEY_DOWN: 
-                        menu_driver(global_ui_manager->menu, REQ_DOWN_ITEM); 
-                        break;
-                    case KEY_UP: 
-                        menu_driver(global_ui_manager->menu, REQ_UP_ITEM); 
-                        break;
-                    case 10:       // Enter 키
-                    case KEY_ENTER:
-                    {
-                        ITEM* cur_item = current_item(global_ui_manager->menu);
-                        if (!cur_item) break;
-                        
-                        // 현재 선택된 아이템의 인덱스 찾기
-                        int index = 0;
-                        for (int i = 0; i < device_count; i++) {
-                            if (device_menu_items[i] == cur_item) {
-                                index = i;
-                                break;
-                            }
-                        }
-                        
-                        handle_device_reservation(index);
-                        break;
-                    }
-                    case 27: // Esc 키
-                        // 장비 목록 메뉴 닫기
-                        if (global_ui_manager->menu) {
-                            unpost_menu(global_ui_manager->menu);
-                            free_menu(global_ui_manager->menu);
-                            global_ui_manager->menu = NULL;
-                        }
-                        if (global_ui_manager->menu_win) {
-                            delwin(global_ui_manager->menu_win);
-                            global_ui_manager->menu_win = NULL;
-                        }
-                        cleanup_device_menu_items();
-                        show_main_menu();
-                        break;
-                }
-            }
-        }
+        // poll을 사용하여 서버로부터 메시지가 왔는지 확인
+        struct pollfd fds[1];
+        fds[0].fd = client_session.socket_fd;
+        fds[0].events = POLLIN;
 
-        // 2. 서버 메시지 및 네트워크 상태 처리
-        int ret = poll(fds, 1, 0); // 타임아웃을 0으로 하여 즉시 리턴 (논블로킹)
-        if (ret < 0) {
-            if (errno == EINTR) continue;
-            LOG_ERROR("Network", "poll 실패: %s", strerror(errno));
-            break; // 루프 종료
-        }
-
+        int ret = poll(fds, 1, 100); // 100ms 타임아웃
+        
         if (ret > 0 && (fds[0].revents & POLLIN)) {
-            Message* received_msg = (Message*)malloc(sizeof(Message));
-            if (!received_msg) {
-                LOG_ERROR("Network", "메시지 메모리 할당 실패");
-                running = false;
-                break;
+            // 서버로부터 메시지 수신 및 처리
+            Message received_msg;
+            if (receive_message(client_session.ssl, &received_msg) == 0) {
+                handle_server_message(&received_msg);
+                cleanup_message(&received_msg);
+            } else {
+                running = false; // 수신 실패 시 종료
             }
-            if (receive_message(client_session.ssl, received_msg) < 0) {
-                LOG_ERROR("Network", "서버로부터 메시지 수신 실패, 연결이 종료되었을 수 있습니다.");
-                free(received_msg);
-                running = false;
-                break;
-            }
-            handle_server_message(received_msg);
-            last_activity = time(NULL);
-            cleanup_message(received_msg);
-            free(received_msg);
         }
         
-        // 3. 주기적인 작업 처리 (PING 등)
-        time_t current_time = time(NULL);
-        if (current_time - last_activity >= PING_INTERVAL) {
-            Message* ping_msg = create_ping_message();
-            if (ping_msg) {
-                if (send_message(client_session.ssl, ping_msg) == 0) {
-                    last_activity = current_time;
-                    LOG_DEBUG("Network", "PING 메시지 전송");
-                }
-                cleanup_message(ping_msg);
-                free(ping_msg);
-            }
-        }
-
         // 4. UI 업데이트
         update_client_status(&client_session);
         refresh_all_windows();

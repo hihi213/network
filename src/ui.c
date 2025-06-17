@@ -148,59 +148,91 @@ void cleanup_ui_manager(UIManager* manager) {
     free(manager);
 }
 
-/* 메뉴 생성 */
-bool create_menu(UIManager* manager, const char** items, int count) {
+int createMenu(UIManager* manager, const char* title, const char** items, int count) {
     if (!manager || !items || count <= 0) {
-        LOG_ERROR("UI", "create_menu: 잘못된 파라미터");
-        return false;
+        LOG_ERROR("UI", "createMenu: 잘못된 파라미터");
+        return -1;
     }
 
     pthread_mutex_lock(&manager->mutex);
 
-    if (manager->menu) {
-        unpost_menu(manager->menu);
-        free_menu(manager->menu);
-        manager->menu = NULL;
-    }
-    if (manager->menu_items) {
-        for (int i = 0; i < manager->menu_count; i++) {
-            if (manager->menu_items[i]) free_item(manager->menu_items[i]);
-        }
-        free(manager->menu_items);
-        manager->menu_items = NULL;
-    }
-
-    manager->menu_items = (ITEM**)calloc(count + 1, sizeof(ITEM*));
-    if (!manager->menu_items) {
+    // 1. ncurses 메뉴 아이템 생성
+    ITEM** menu_items = (ITEM**)calloc(count + 1, sizeof(ITEM*));
+    if (!menu_items) {
         LOG_ERROR("UI", "메뉴 아이템 메모리 할당 실패");
         pthread_mutex_unlock(&manager->mutex);
-        return false;
+        return -1;
     }
-
     for (int i = 0; i < count; i++) {
-        manager->menu_items[i] = new_item(items[i], "");
+        menu_items[i] = new_item(items[i], "");
     }
-    manager->menu_items[count] = NULL;
+    menu_items[count] = NULL; // 메뉴 아이템 배열은 NULL로 끝나야 함
 
-    manager->menu = new_menu(manager->menu_items);
-    set_menu_win(manager->menu, manager->menu_win);
+    // 2. ncurses 메뉴 생성
+    MENU* menu = new_menu(menu_items);
     
-    WINDOW* menu_sub = derwin(manager->menu_win, LINES - 8, COLS - 4, 1, 2);
-    set_menu_sub(manager->menu, menu_sub);
-    
-    set_menu_mark(manager->menu, " > ");
-    set_menu_fore(manager->menu, COLOR_PAIR(COLOR_PAIR_MENU_SELECTED));
-    set_menu_back(manager->menu, COLOR_PAIR(COLOR_PAIR_MENU));
-    
+    // 3. 메뉴를 표시할 윈도우 설정
     werase(manager->menu_win);
     box(manager->menu_win, 0, 0);
-    post_menu(manager->menu);
-    manager->menu_count = count;
+    if (title) {
+        mvwprintw(manager->menu_win, 0, 2, " %s ", title);
+    }
+    
+    set_menu_win(menu, manager->menu_win);
+    // 윈도우 크기에 맞게 서브 윈도우 생성 (스크롤 가능 영역)
+    WINDOW* menu_sub = derwin(manager->menu_win, LINES - 8, COLS - 4, 1, 2);
+    set_menu_sub(menu, menu_sub);
+    set_menu_mark(menu, " > ");
+
+    post_menu(menu);
+    wrefresh(manager->menu_win);
+
+    // 4. 사용자 입력 처리 루프
+    int selected_index = -1;
+    int ch;
+    keypad(manager->menu_win, TRUE); // 키패드 입력 활성화
+    while ((ch = wgetch(manager->menu_win))) {
+        switch (ch) {
+            case KEY_DOWN:
+                menu_driver(menu, REQ_DOWN_ITEM);
+                break;
+            case KEY_UP:
+                menu_driver(menu, REQ_UP_ITEM);
+                break;
+            case 27: // ESC 키
+            case 'q':
+            case 'Q':
+                selected_index = -1;
+                goto end_menu_loop; // 루프 종료
+            case 10: // Enter 키
+            case KEY_ENTER:
+                {
+                    ITEM* cur = current_item(menu);
+                    selected_index = item_index(cur);
+                    goto end_menu_loop; // 루프 종료
+                }
+                break;
+        }
+        wrefresh(manager->menu_win);
+    }
+
+end_menu_loop:
+    // 5. 자원 정리
+    unpost_menu(menu);
+    free_menu(menu);
+    for (int i = 0; i < count; i++) {
+        free_item(menu_items[i]);
+    }
+    free(menu_items);
+    delwin(menu_sub);
+    werase(manager->menu_win); // 메뉴 윈도우 내용 지우기
+    box(manager->menu_win, 0, 0);
+    wrefresh(manager->menu_win);
 
     pthread_mutex_unlock(&manager->mutex);
-    return true;
-}
 
+    return selected_index;
+}
 /* 폼 생성 */
 bool create_form(UIManager* manager, const char** labels, int count) {
     if (!manager || !labels || count <= 0) {
@@ -713,4 +745,95 @@ void handle_reservation_cancel(ReservationManager* manager, const char* username
 int show_reservation_menu(void) {
     // 예약 현황 정보 없이 단순 메뉴만 보여줌
     return show_reservation_menu_with_status(NULL, 0);
+}
+
+/* 범용 메뉴 생성 함수 */
+bool create_generic_menu(UIManager* manager, const char* title, const char** items, int count, 
+                        void (*item_handler)(int index, void* data), void* user_data) {
+    if (!manager || !items || count <= 0) {
+        LOG_ERROR("UI", "create_generic_menu: 잘못된 파라미터");
+        return false;
+    }
+
+    pthread_mutex_lock(&manager->mutex);
+
+    // 기존 메뉴 정리
+    if (manager->menu) {
+        unpost_menu(manager->menu);
+        free_menu(manager->menu);
+        manager->menu = NULL;
+    }
+    if (manager->menu_items) {
+        for (int i = 0; i < manager->menu_count; i++) {
+            if (manager->menu_items[i]) free_item(manager->menu_items[i]);
+        }
+        free(manager->menu_items);
+        manager->menu_items = NULL;
+    }
+
+    // 새 메뉴 아이템 생성
+    manager->menu_items = (ITEM**)calloc(count + 1, sizeof(ITEM*));
+    if (!manager->menu_items) {
+        LOG_ERROR("UI", "메뉴 아이템 메모리 할당 실패");
+        pthread_mutex_unlock(&manager->mutex);
+        return false;
+    }
+
+    for (int i = 0; i < count; i++) {
+        manager->menu_items[i] = new_item(items[i], "");
+    }
+    manager->menu_items[count] = NULL;
+
+    // 메뉴 생성 및 설정
+    manager->menu = new_menu(manager->menu_items);
+    set_menu_win(manager->menu, manager->menu_win);
+    
+    WINDOW* menu_sub = derwin(manager->menu_win, LINES - 8, COLS - 4, 1, 2);
+    set_menu_sub(manager->menu, menu_sub);
+    
+    set_menu_mark(manager->menu, " > ");
+    set_menu_fore(manager->menu, COLOR_PAIR(COLOR_PAIR_MENU_SELECTED));
+    set_menu_back(manager->menu, COLOR_PAIR(COLOR_PAIR_MENU));
+    
+    // 메뉴 윈도우 설정
+    werase(manager->menu_win);
+    box(manager->menu_win, 0, 0);
+    if (title) {
+        mvwprintw(manager->menu_win, 0, 2, " %s ", title);
+    }
+    post_menu(manager->menu);
+    manager->menu_count = count;
+
+    // 메뉴 이벤트 처리
+    int ch;
+    while ((ch = wgetch(manager->menu_win)) != KEY_F(1)) {
+        switch (ch) {
+            case KEY_DOWN:
+                menu_driver(manager->menu, REQ_DOWN_ITEM);
+                break;
+            case KEY_UP:
+                menu_driver(manager->menu, REQ_UP_ITEM);
+                break;
+            case 10: // Enter
+                {
+                    ITEM* cur_item = current_item(manager->menu);
+                    for (int i = 0; i < count; i++) {
+                        if (manager->menu_items[i] == cur_item) {
+                            if (item_handler) {
+                                item_handler(i, user_data);
+                            }
+                            break;
+                        }
+                    }
+                }
+                break;
+            case 27: // ESC
+                pthread_mutex_unlock(&manager->mutex);
+                return true;
+        }
+        wrefresh(manager->menu_win);
+    }
+
+    pthread_mutex_unlock(&manager->mutex);
+    return true;
 }

@@ -66,8 +66,10 @@ void show_success_message(const char* message);
 void display_device_list(UIManager* manager, const Device* devices, int count);
 void show_reservation_info(const Reservation* reservation);
 int show_reservation_list_and_select(const Reservation* reservations, int count);
+bool create_generic_menu(UIManager* manager, const char* title, const char** items, int count, 
+                        void (*item_handler)(int index, void* data), void* user_data);
 
 UIManager* init_ui_manager(void);
 void cleanup_ui_manager(UIManager* manager);
-
+int createMenu(UIManager* manager, const char* title, const char** items, int count);
 #endif /* UI_H */
