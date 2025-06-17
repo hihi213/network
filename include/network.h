@@ -57,4 +57,4 @@ bool is_connection_alive(SSL* ssl, int socket_fd);
 int set_socket_options(int socket_fd);
 void update_ssl_activity(SSLHandler* handler);
 
-#endif /* NETWORK_H */
+#endif /* NETWORK_H */ 

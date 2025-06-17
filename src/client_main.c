@@ -269,7 +269,7 @@ int main(int argc, char* argv[]) {
     signal(SIGTERM, signal_handler);
 
     // 로거 초기화
-    if (init_logger("client.log") < 0) {
+    if (init_logger("logs/client.log") < 0) {
         fprintf(stderr, "로거 초기화 실패\n");
         return 1;
     }

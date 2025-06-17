@@ -36,4 +36,4 @@ Device* get_device(ResourceManager* manager, const char* id);
 int get_device_list(ResourceManager* manager, Device* devices, int max_devices);
 bool is_device_available(ResourceManager* manager, const char* id);
 
-#endif /* RESOURCE_H */
+#endif /* RESOURCE_H */ 

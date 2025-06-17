@@ -41,9 +41,9 @@ void cleanup_resource_manager(ResourceManager* manager) {
 /* 장치 추가 */
 bool add_device(ResourceManager* manager, const char* id, const char* type, const char* name) {
     if (!manager || !id || !type || !name) return false;
-    
+
     pthread_mutex_lock(&manager->mutex);
-    
+
     // 이미 존재하는 장비인지 확인
     for (int i = 0; i < manager->device_count; i++) {
         if (strcmp(manager->devices[i].id, id) == 0) {
@@ -51,18 +51,18 @@ bool add_device(ResourceManager* manager, const char* id, const char* type, cons
             return false;
         }
     }
-    
+
     // 새 장비 추가
     if (manager->device_count < MAX_DEVICES) {
-        Device* device = &manager->devices[manager->device_count];
-        strncpy(device->id, id, MAX_ID_LENGTH - 1);
+    Device* device = &manager->devices[manager->device_count];
+    strncpy(device->id, id, MAX_ID_LENGTH - 1);
         strncpy(device->type, type, MAX_DEVICE_TYPE_LENGTH - 1);
         strncpy(device->name, name, MAX_DEVICE_NAME_LENGTH - 1);
         device->status = DEVICE_AVAILABLE;  // enum 값 직접 할당
-        device->reserved_by[0] = '\0';
-        manager->device_count++;
-        pthread_mutex_unlock(&manager->mutex);
-        return true;
+    device->reserved_by[0] = '\0';
+    manager->device_count++;
+    pthread_mutex_unlock(&manager->mutex);
+    return true;
     }
     
     pthread_mutex_unlock(&manager->mutex);
@@ -117,9 +117,9 @@ bool remove_device(ResourceManager* manager, const char* id) {
 /* 장치 상태 업데이트 */
 bool update_device_status(ResourceManager* manager, const char* id, const char* status, const char* username) {
     if (!manager || !id || !status) return false;
-    
+
     pthread_mutex_lock(&manager->mutex);
-    
+
     // 장비 찾기
     int index = -1;
     for (int i = 0; i < manager->device_count; i++) {
@@ -128,7 +128,7 @@ bool update_device_status(ResourceManager* manager, const char* id, const char* 
             break;
         }
     }
-    
+
     if (index == -1) {
         pthread_mutex_unlock(&manager->mutex);
         return false;
@@ -146,7 +146,7 @@ bool update_device_status(ResourceManager* manager, const char* id, const char* 
         pthread_mutex_unlock(&manager->mutex);
         return false;
     }
-    
+
     // 예약자 정보 업데이트
     if (username) {
         strncpy(device->reserved_by, username, MAX_USERNAME_LENGTH - 1);
@@ -154,7 +154,7 @@ bool update_device_status(ResourceManager* manager, const char* id, const char* 
     } else {
         device->reserved_by[0] = '\0';
     }
-    
+
     pthread_mutex_unlock(&manager->mutex);
     return true;
 }
@@ -183,12 +183,12 @@ Device* get_device(ResourceManager* manager, const char* id) {
 /* 장치 목록 조회 */
 int get_device_list(ResourceManager* manager, Device* devices, int max_devices) {
     if (!manager || !devices || max_devices <= 0) return -1;
-    
+
     pthread_mutex_lock(&manager->mutex);
-    
+
     int count = (manager->device_count < max_devices) ? manager->device_count : max_devices;
     memcpy(devices, manager->devices, count * sizeof(Device));
-    
+
     pthread_mutex_unlock(&manager->mutex);
     return count;
 }
@@ -196,9 +196,9 @@ int get_device_list(ResourceManager* manager, Device* devices, int max_devices) 
 /* 장치 상태 확인 */
 bool is_device_available(ResourceManager* manager, const char* id) {
     if (!manager || !id) return false;
-    
+
     pthread_mutex_lock(&manager->mutex);
-    
+
     for (int i = 0; i < manager->device_count; i++) {
         if (strcmp(manager->devices[i].id, id) == 0) {
             bool available = (manager->devices[i].status == DEVICE_AVAILABLE);
@@ -206,7 +206,7 @@ bool is_device_available(ResourceManager* manager, const char* id) {
             return available;
         }
     }
-    
+
     pthread_mutex_unlock(&manager->mutex);
     return false;
 }
