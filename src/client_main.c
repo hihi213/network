@@ -5,8 +5,6 @@
 #include "../include/ui.h"
 #include "../include/resource.h"
 #include "../include/reservation.h"
-#include <unistd.h> // self-pipe 및 close 함수를 위해 추가
-#include <signal.h> // signal 함수를 위해 추가
 
 /* --- 함수 프로토타입 --- */
 static void signal_handler(int signum);
@@ -73,11 +71,16 @@ int main(int argc, char* argv[]) {
             continue;
         }
         if (fds[0].revents & POLLIN) {
-            Message msg;
-            if (receive_message(client_session.ssl, &msg) > 0) {
-                handle_server_message(&msg);
-                cleanup_message(&msg);
+            // [수정] Message 포인터로 반환값을 받도록 변경
+            Message* msg = receive_message(client_session.ssl); 
+            
+            // [수정] 포인터가 NULL이 아닌지 확인하여 성공 여부 판단
+            if (msg) { 
+                handle_server_message(msg);
+                cleanup_message(msg); // 메시지 내부의 동적 할당된 args 해제
+                free(msg);            // 메시지 구조체 자체의 메모리 해제
             } else {
+                // 수신 실패 또는 연결 종료로 간주
                 running = false;
             }
         }
@@ -155,7 +158,7 @@ static void handle_server_message(const Message* message) {
  * @brief 시그널(Ctrl+C)을 안전하게 처리하는 핸들러 (Self-Pipe 트릭 사용)
  */
 static void signal_handler(int signum) {
-    (void)signum;
+    
     // 핸들러 내에서는 async-signal-safe 함수인 write만 호출
     (void)write(self_pipe[1], "s", 1);
 }

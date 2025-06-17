@@ -128,14 +128,16 @@ static void* client_thread_func(void* arg) {
     LOG_INFO("Thread", "클라이언트 스레드 시작 및 핸드셰이크 성공: %s", client->ip);
 
     while (running) {
-        Message msg;
-        int result = receive_message(client->ssl, &msg);
+        // [수정 1] message.c의 receive_message는 Message 포인터를 반환하므로, 그에 맞게 수정합니다.
+        Message* msg = receive_message(client->ssl);
         
-        if (result > 0) {
-            handle_client_message(client, &msg);
-            cleanup_message(&msg);
+        if (msg) {
+            handle_client_message(client, msg);
+            cleanup_message(msg);
+            free(msg); // receive_message가 동적 할당한 메모리를 해제합니다.
             client->last_activity = time(NULL);
         } else {
+            // 수신 실패는 연결 종료로 간주합니다.
             break;
         }
 
@@ -179,35 +181,7 @@ static int handle_client_message(Client* client, const Message* message) {
  * @param error_message 전송할 에러 메시지 문자열.
  * @return 성공 시 0, 실패 시 음수를 반환.
  */
-static int send_error_response(SSL* ssl, const char* error_message) {
-    // 1. 파라미터 유효성 검사
-    if (!ssl || !error_message) {
-        LOG_ERROR("Server", "send_error_response: 잘못된 파라미터");
-        return -1;
-    }
 
-    // 2. message.c의 헬퍼 함수를 사용하여 에러 메시지 객체 생성
-    // create_error_message는 내부적으로 create_message(MSG_ERROR, error_message)를 호출합니다.
-    Message* response = create_error_message(error_message);
-    if (!response) {
-        LOG_ERROR("Server", "에러 응답 메시지 생성 실패");
-        return -1;
-    }
-
-    // 3. network.c의 send_message를 사용하여 메시지 전송
-    int ret = send_message(ssl, response);
-    if (ret < 0) {
-        LOG_ERROR("Server", "에러 응답 메시지 전송 실패");
-    }
-
-    // 4. 메시지 객체 자원 정리
-    // create_message에서 malloc으로 할당된 Message 구조체 자체를 해제합니다.
-    // cleanup_message는 Message 구조체 내부의 동적 할당된 필드(예: args)를 해제합니다.
-    cleanup_message(response);
-    free(response); // Message 구조체 자체의 메모리 해제
-
-    return ret;
-}
 static int handle_login_request(Client* client, const Message* message) {
     if (message->arg_count < 2) return send_error_response(client->ssl, "로그인 정보 부족");
 
@@ -232,22 +206,32 @@ static int handle_login_request(Client* client, const Message* message) {
 }
 
 static int handle_status_request(Client* client, const Message* message) {
-    (void)message; // [수정] message 매개변수를 의도적으로 사용하지 않음을 명시
+    // 이 함수는 message 파라미터를 사용하지 않으므로 경고를 방지합니다.
+    (void)message; 
 
+    // 1. resource_manager에서 장비 목록을 가져옵니다.
     Device devices[MAX_DEVICES];
     int count = get_device_list(resource_manager, devices, MAX_DEVICES);
     if (count < 0) {
-        return send_error_response(client->ssl, "장비 목록 조회 실패");
+        LOG_ERROR("Handler", "장비 목록 조회 실패");
+        return send_error_response(client->ssl, "서버에서 장비 목록을 가져오는 데 실패했습니다.");
     }
-    
+
+    // 2. 가져온 장비 목록으로 응답 메시지를 생성합니다.
     Message* response = create_status_response_message(devices, count);
     if (!response) {
-        return send_error_response(client->ssl, "응답 메시지 생성 실패");
+        LOG_ERROR("Handler", "상태 응답 메시지 생성 실패");
+        return send_error_response(client->ssl, "응답 메시지를 생성하는 데 실패했습니다.");
     }
-    
+
+    // 3. 생성한 메시지를 클라이언트에게 전송합니다.
     send_message(client->ssl, response);
+
+    // 4. 메시지 생성 시 할당된 메모리를 정리합니다.
     cleanup_message(response);
-    free(response); // create_... 함수는 malloc을 사용하므로 free 필요
+    free(response); // Message 구조체 자체 메모리 해제
+
+    LOG_INFO("Handler", "장비 상태 요청 처리 완료, %d개 장비 정보 전송", count);
     return 0;
 }
 
@@ -287,11 +271,8 @@ static int init_server(int port) {
     signal(SIGINT, signal_handler);
     signal(SIGTERM, signal_handler);
 
-       if (init_logger("logs/server.log") < 0) return -1;
-
-    // [수정] init_server_ui() 호출을 init_ui()로 변경
-    if (init_ui() < 0) return -1; 
-
+    if (init_logger("logs/server.log") < 0) return -1;
+    if (init_ui() < 0) return -1;
     if (init_ssl_manager(&ssl_manager, true, "certs/server.crt", "certs/server.key") < 0) return -1;
 
     resource_manager = init_resource_manager();
@@ -321,4 +302,34 @@ static void cleanup_server(void) {
     close(self_pipe[0]);
     close(self_pipe[1]);
     LOG_INFO("Server", "서버 정리 완료");
+}
+
+static int send_error_response(SSL* ssl, const char* error_message) {
+    // 1. 파라미터 유효성 검사
+    if (!ssl || !error_message) {
+        LOG_ERROR("Server", "send_error_response: 잘못된 파라미터");
+        return -1;
+    }
+
+    // 2. message.c의 헬퍼 함수를 사용하여 에러 메시지 객체 생성
+    // create_error_message는 내부적으로 create_message(MSG_ERROR, error_message)를 호출합니다.
+    Message* response = create_error_message(error_message);
+    if (!response) {
+        LOG_ERROR("Server", "에러 응답 메시지 생성 실패");
+        return -1;
+    }
+
+    // 3. network.c의 send_message를 사용하여 메시지 전송
+    int ret = send_message(ssl, response);
+    if (ret < 0) {
+        LOG_ERROR("Server", "에러 응답 메시지 전송 실패");
+    }
+
+    // 4. 메시지 객체 자원 정리
+    // create_message에서 malloc으로 할당된 Message 구조체 자체를 해제합니다.
+    // cleanup_message는 Message 구조체 내부의 동적 할당된 필드(예: args)를 해제합니다.
+    cleanup_message(response);
+    free(response); // Message 구조체 자체의 메모리 해제
+
+    return ret;
 }

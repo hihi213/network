@@ -24,47 +24,6 @@ Message* create_message(MessageType type, const char* data) {
     return msg;
 }
 
-Message* create_reserve_request_message(const char* device_id, time_t start_time,
-                                     time_t end_time, const char* reason) {
-    Message* msg = create_message(MSG_RESERVE_REQUEST, NULL);
-    if (!msg) return NULL;
-    
-    // strdup 대신 strncpy를 사용하여 배열에 안전하게 복사
-    strncpy(msg->args[0], device_id, MAX_ARG_LENGTH - 1);
-    msg->args[0][MAX_ARG_LENGTH - 1] = '\0';
-    
-    strncpy(msg->args[1], ctime(&start_time), MAX_ARG_LENGTH - 1);
-    msg->args[1][MAX_ARG_LENGTH - 1] = '\0';
-    
-    strncpy(msg->args[2], ctime(&end_time), MAX_ARG_LENGTH - 1);
-    msg->args[2][MAX_ARG_LENGTH - 1] = '\0';
-
-    strncpy(msg->args[3], reason, MAX_ARG_LENGTH - 1);
-    msg->args[3][MAX_ARG_LENGTH - 1] = '\0';
-
-    msg->arg_count = 4;
-    
-    return msg;
-}
-
-Message* create_reserve_response_message(uint32_t reservation_id, bool success,
-                                      const char* message) {
-    Message* msg = create_message(MSG_RESERVE_RESPONSE, NULL);
-    if (!msg) return NULL;
-
-    snprintf(msg->args[0], MAX_ARG_LENGTH, "%s", success ? "success" : "failure");
-    snprintf(msg->args[1], MAX_ARG_LENGTH, "%u", reservation_id);
-    strncpy(msg->args[2], message, MAX_ARG_LENGTH - 1);
-    msg->args[2][MAX_ARG_LENGTH - 1] = '\0';
-    msg->arg_count = 3;
-
-    return msg;
-}
-
-Message* create_status_request_message(void) {
-    return create_message(MSG_STATUS_REQUEST, NULL);
-}
-
 Message* create_status_response_message(const Device* devices, int device_count) {
     Message* message = create_message(MSG_STATUS_RESPONSE, NULL);
     if (!message) return NULL;
@@ -86,27 +45,7 @@ Message* create_status_response_message(const Device* devices, int device_count)
     return message;
 }
 
-Message* create_error_message(const char* error_message) {
-    Message* message = create_message(MSG_ERROR, error_message);
-    if (!message) return NULL;
-    return message;
-}
 
-Message* create_ping_message(void) {
-    LOG_INFO("Message", "Ping 메시지 생성");
-    Message* message = create_message(MSG_PING, NULL);
-    if (!message) return NULL;
-    message->arg_count = 0;
-    return message;
-}
-
-Message* create_ping_response_message(void) {
-    LOG_INFO("Message", "Ping 응답 메시지 생성");
-    Message* message = create_message(MSG_PING_RESPONSE, NULL);
-    if (!message) return NULL;
-    message->arg_count = 0;
-    return message;
-}
 
 /* 예약 요청 메시지 생성 */
 Message* create_reservation_message(const char* device_id) {
@@ -117,90 +56,10 @@ Message* create_reservation_message(const char* device_id) {
     return msg;
 }
 
-/* 메시지 파싱 함수 */
-int parse_message(const char* buffer, size_t len, Message* message) {
-    (void)len; // unused
-    if (!buffer || !message) return -1;
-    char type_str[16] = {0};
-    // 개행 전까지 읽도록 포맷 수정
-    sscanf(buffer, "%15[^|]|%1023[^\n]", type_str, message->data);
-    message->type = atoi(type_str);
-    message->arg_count = 0;
-    // 실제 구현은 필요에 따라 확장
-    return 0;
-}
-
-/* 메시지 직렬화/역직렬화 함수 */
-int serialize_message(const Message* message, char* buffer, size_t buffer_size) {
-    if (!message || !buffer) {
-        LOG_ERROR("Message", "잘못된 파라미터");
-        return -1;
-    }
-
-    size_t offset = snprintf(buffer, buffer_size, "%d", message->type);
-    if (offset >= buffer_size) {
-        LOG_ERROR("Message", "버퍼 오버플로우");
-        return -1;
-    }
-
-    for (int i = 0; i < message->arg_count; i++) {
-        int len = snprintf(buffer + offset, buffer_size - offset, "|%s",
-                         message->args[i]);
-        if (len < 0 || (size_t)len > buffer_size - offset) {
-            LOG_ERROR("Message", "버퍼 오버플로우");
-            return -1;
-        }
-        offset += (size_t)len;
-    }
-
-    if (message->data[0] != '\0') {
-        int len = snprintf(buffer + offset, buffer_size - offset, "|%s",
-                         message->data);
-        if (len < 0 || (size_t)len >= buffer_size - offset) {
-            LOG_ERROR("Message", "버퍼 오버플로우");
-            return -1;
-        }
-        offset += (size_t)len;
-    }
-
-    return (int)offset;
-}
-
-Message* deserialize_message(const char* buffer, size_t buffer_size) {
-    if (!buffer || buffer_size == 0) return NULL;
-    Message* message = (Message*)malloc(sizeof(Message));
+Message* create_error_message(const char* error_message) {
+    Message* message = create_message(MSG_ERROR, error_message);
     if (!message) return NULL;
-    if (parse_message(buffer, buffer_size, message) != 0) {
-        free(message);
-        return NULL;
-    }
     return message;
-}
-
-/* 메시지 유효성 검사 함수 */
-bool is_valid_message(const Message* message) {
-    if (!message) return false;
-    switch (message->type) {
-        case MSG_STATUS_REQUEST:
-            return message->arg_count == 0;
-        case MSG_STATUS_RESPONSE:
-            return message->arg_count >= 0;
-        case MSG_RESERVE_REQUEST:
-            return message->arg_count == 1;
-        case MSG_RESERVE_RESPONSE:
-            return message->arg_count == 1;
-        case MSG_ERROR:
-            return true;
-        case MSG_PING:
-        case MSG_PING_RESPONSE:
-            return message->arg_count == 0;
-        default:
-            return false;
-    }
-}
-
-bool validate_message_args(const Message* message, int expected_args) {
-    return message && message->arg_count == expected_args;
 }
 
 /* 메시지 타입 문자열 변환 함수 */
@@ -233,53 +92,8 @@ void cleanup_message(Message* msg) {
     }
 }
 
-/* 메시지 타입 문자열 변환 */
-const char* message_type_to_string(int type) {
-    switch (type) {
-        case MSG_STATUS_REQUEST: return "STATUS_REQUEST";
-        case MSG_STATUS_RESPONSE: return "STATUS_RESPONSE";
-        case MSG_RESERVE_REQUEST: return "RESERVE_REQUEST";
-        case MSG_RESERVE_RESPONSE: return "RESERVE_RESPONSE";
-        case MSG_ERROR: return "ERROR";
-        case MSG_PING: return "PING";
-        case MSG_PONG: return "PONG";
-        default: return "UNKNOWN";
-    }
-}
 
-/* 버퍼에 데이터 쓰기 */
-int write_to_buffer(MessageBuffer* buffer, const void* data, size_t offset, size_t len) {
-    if (!buffer || !data) {
-        LOG_ERROR("Message", "잘못된 파라미터");
-        return -1;
-    }
 
-    size_t buffer_size = buffer->size;
-    if (offset >= buffer_size) {
-        LOG_ERROR("Message", "잘못된 오프셋");
-        return -1;
-    }
-
-    if (len == 0) {
-        return 0;
-    }
-
-    if (buffer->is_reading) {
-        if (offset + len > buffer_size) {
-            LOG_ERROR("Message", "버퍼 범위 초과");
-            return -1;
-        }
-        memcpy(buffer->buffer + offset, data, len);
-    } else {
-        if (offset + len > buffer_size) {
-            LOG_ERROR("Message", "버퍼 범위 초과");
-            return -1;
-        }
-        memcpy(buffer->buffer + offset, data, len);
-    }
-
-    return (int)len;
-}
 
 Message* receive_message(SSL* ssl) {
     if (!ssl) {
@@ -429,13 +243,7 @@ Message* receive_message(SSL* ssl) {
     return message;
 }
 
-Message* create_pong_message(void) {
-    LOG_INFO("Message", "Pong 메시지 생성");
-    Message* message = create_message(MSG_PONG, NULL);
-    if (!message) return NULL;
-    message->arg_count = 0;
-    return message;
-}
+
 
 /* DeviceStatus를 문자열로 변환하는 함수 */
 const char* get_device_status_string(DeviceStatus status) {

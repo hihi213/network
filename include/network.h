@@ -49,7 +49,6 @@ int handle_ssl_handshake(SSLHandler* handler);
 
 /* 메시지 송수신 함수 */
 int send_message(SSL* ssl, const Message* message);
-int receive_message(SSL* ssl, Message* message);
 
 /* 유틸리티 함수 */
 int set_nonblocking(int socket_fd);
