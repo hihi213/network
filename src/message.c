@@ -230,6 +230,7 @@ for (uint32_t i = 0; i < arg_count; i++) {
     if (ret <= 0) {
         LOG_ERROR("Message", "데이터 길이 수신 실패");
         cleanup_message(message);
+        free(message); // 메모리 해제 추가
         return NULL;
     }
     data_len = ntohl(data_len);
@@ -246,6 +247,7 @@ for (uint32_t i = 0; i < arg_count; i++) {
         if (ret <= 0) {
             LOG_ERROR("Message", "데이터 내용 수신 실패");
             cleanup_message(message);
+            free(message); // 메모리 해제 추가
             return NULL;
         }
         message->data[data_len] = '\0';

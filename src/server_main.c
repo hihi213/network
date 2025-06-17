@@ -259,8 +259,12 @@ static int handle_reserve_request(Client* client, const Message* message) {
     update_device_status(resource_manager, device_id, DEVICE_RESERVED);
 
     Message* response = create_message(MSG_RESERVE_RESPONSE, "success");
-    send_message(client->ssl, response);
-    cleanup_message(response);
+    if (response) { // 생성 성공 여부 확인
+        send_message(client->ssl, response);
+        cleanup_message(response);
+        free(response); // Message 구조체 자체 메모리 해제
+    }
+    
     LOG_INFO("Handler", "예약 성공: 장비=%s, 사용자=%s", device_id, client->username);
     return 0;
 }

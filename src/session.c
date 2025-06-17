@@ -170,15 +170,18 @@ ServerSession* get_user_session(SessionManager* manager, const char* username) {
         return NULL;
     }
 
-    // 뮤텍스는 이 함수를 호출하는 쪽에서 관리합니다. (client_thread_func에서 lock/unlock)
+    pthread_mutex_lock(&manager->mutex); // 함수 내부에서 Lock
 
+    ServerSession* found_session = NULL;
     for (int i = 0; i < manager->session_count; i++) {
         if (strcmp(manager->sessions[i].username, username) == 0 && manager->sessions[i].state == SESSION_ACTIVE) {
-            return &manager->sessions[i];
+            found_session = &manager->sessions[i];
+            break; // 찾았으면 루프 종료
         }
     }
 
-    return NULL;
+    pthread_mutex_unlock(&manager->mutex); // 함수 내부에서 Unlock
+    return found_session;
 }
 
 /* 만료된 세션 정리 */

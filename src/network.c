@@ -496,60 +496,80 @@ void cleanup_ssl_manager(SSLManager* manager) {
 }
 
 int send_message(SSL* ssl, const Message* message) {
-    if (!ssl || !message) {
-        LOG_ERROR("Network", "잘못된 파라미터");
+if (!ssl || !message) {
+        LOG_ERROR("Network", "send_message: 잘못된 파라미터");
         return -1;
     }
 
-    // 1. 메시지 타입 전송
-    uint32_t type = htonl(message->type);
-    int ret = SSL_write(ssl, &type, sizeof(type));
-    if (ret <= 0) {
-        LOG_ERROR("Network", "메시지 타입 전송 실패");
-        return -1;
-    }
+    // 1. 전송에 필요한 총 버퍼 크기 계산
+    size_t total_size = sizeof(uint32_t); // Message Type
+    total_size += sizeof(uint32_t);      // Argument Count
 
-    // 2. 인자 개수 전송
-    uint32_t arg_count = htonl(message->arg_count);
-    ret = SSL_write(ssl, &arg_count, sizeof(arg_count));
-    if (ret <= 0) {
-        LOG_ERROR("Network", "인자 개수 전송 실패");
-        return -1;
-    }
-
-    // 3. 각 인자 전송
     for (int i = 0; i < message->arg_count; i++) {
-        uint32_t arg_len = htonl(strlen(message->args[i]));
-        ret = SSL_write(ssl, &arg_len, sizeof(arg_len));
-        if (ret <= 0) {
-            LOG_ERROR("Network", "인자 길이 전송 실패");
-            return -1;
-        }
-
-        ret = SSL_write(ssl, message->args[i], strlen(message->args[i]));
-        if (ret <= 0) {
-            LOG_ERROR("Network", "인자 내용 전송 실패");
-            return -1;
-        }
+        total_size += sizeof(uint32_t);         // Argument Length
+        total_size += strlen(message->args[i]); // Argument Content
     }
+    total_size += sizeof(uint32_t);      // Data Length
+    total_size += strlen(message->data); // Data Content
 
-    // 4. 데이터 길이와 내용 전송
-    uint32_t data_len = htonl(strlen(message->data));
-    ret = SSL_write(ssl, &data_len, sizeof(data_len));
-    if (ret <= 0) {
-        LOG_ERROR("Network", "데이터 길이 전송 실패");
+    // 2. 계산된 크기만큼 단일 버퍼 할당
+    char* buffer = (char*)malloc(total_size);
+    if (!buffer) {
+        LOG_ERROR("Network", "메시지 전송 버퍼 메모리 할당 실패");
         return -1;
     }
 
-    if (strlen(message->data) > 0) {
-        ret = SSL_write(ssl, message->data, strlen(message->data));
-        if (ret <= 0) {
-            LOG_ERROR("Network", "데이터 내용 전송 실패");
-            return -1;
-        }
+    // 버퍼를 순회하며 데이터를 채워넣을 포인터
+    char* ptr = buffer;
+
+    // 3. 버퍼에 메시지 데이터 직렬화
+    // 3-1. 메시지 타입
+    uint32_t net_type = htonl(message->type);
+    memcpy(ptr, &net_type, sizeof(net_type));
+    ptr += sizeof(net_type);
+
+    // 3-2. 인자 개수
+    uint32_t net_arg_count = htonl(message->arg_count);
+    memcpy(ptr, &net_arg_count, sizeof(net_arg_count));
+    ptr += sizeof(net_arg_count);
+
+    // 3-3. 각 인자 (길이 + 내용)
+    for (int i = 0; i < message->arg_count; i++) {
+        size_t arg_len = strlen(message->args[i]);
+        uint32_t net_arg_len = htonl(arg_len);
+
+        memcpy(ptr, &net_arg_len, sizeof(net_arg_len));
+        ptr += sizeof(net_arg_len);
+
+        memcpy(ptr, message->args[i], arg_len);
+        ptr += arg_len;
     }
 
-    LOG_INFO("Network", "메시지 전송 완료: 타입=%s", get_message_type_string(message->type));
+    // 3-4. 데이터 (길이 + 내용)
+    size_t data_len = strlen(message->data);
+    uint32_t net_data_len = htonl(data_len);
+    memcpy(ptr, &net_data_len, sizeof(net_data_len));
+    ptr += sizeof(net_data_len);
+
+    if (data_len > 0) {
+        memcpy(ptr, message->data, data_len);
+        ptr += data_len;
+    }
+
+    // 4. 직렬화된 버퍼를 한 번에 전송
+    int ret = SSL_write(ssl, buffer, total_size);
+
+    // 5. 사용한 버퍼 메모리 해제
+    free(buffer);
+
+    // 6. 전송 결과 확인
+    if (ret <= 0) {
+        int ssl_error = SSL_get_error(ssl, ret);
+        LOG_ERROR("Network", "메시지 전송 실패 (SSL_write failed with error: %d)", ssl_error);
+        return -1;
+    }
+
+    LOG_INFO("Network", "메시지 전송 완료: 타입=%s, 크기=%zu bytes", get_message_type_string(message->type), total_size);
     return 0;
 }
 

@@ -51,7 +51,6 @@ typedef struct {
 /* 로그 함수 선언 */
 int init_logger(const char* filename);
 void cleanup_logger(void);
-void set_log_level(LogLevel level);
 void log_message(LogLevel level, const char* category, const char* format, ...);
 
 /* 로그 버퍼 관리 함수 */
