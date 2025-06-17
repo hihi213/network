@@ -148,7 +148,7 @@ void cleanup_ui_manager(UIManager* manager) {
     free(manager);
 }
 
-int createMenu(UIManager* manager, const char* title, const char** items, int count) {
+int create_menu(UIManager* manager, const char* title, const char** items, int count) {
     if (!manager || !items || count <= 0) {
         LOG_ERROR("UI", "createMenu: 잘못된 파라미터");
         return -1;

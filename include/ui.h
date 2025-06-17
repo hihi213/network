@@ -71,5 +71,5 @@ bool create_generic_menu(UIManager* manager, const char* title, const char** ite
 
 UIManager* init_ui_manager(void);
 void cleanup_ui_manager(UIManager* manager);
-int createMenu(UIManager* manager, const char* title, const char** items, int count);
+int create_menu(UIManager* manager, const char* title, const char** items, int count);
 #endif /* UI_H */
