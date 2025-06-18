@@ -4,6 +4,7 @@
 #include "common.h"
 #include "resource.h" // Device 구조체 사용을 위해 포함
 
+
 /* 메시지 타입 열거형 */
 typedef enum {
     MSG_LOGIN,
@@ -52,9 +53,10 @@ Message* create_status_response_message(const Device* devices, int count);
 Message* create_error_message(const char* error_msg);
 Message *create_reservation_message(const char *device_id, const char* duration_str);
 Message* receive_message(SSL* ssl);
-
+Message* create_login_message(const char* username, const char* password);
 /* 메시지 유효성 검사 함수 */
 bool is_valid_message(const Message* message);
 bool validate_message_args(const Message* message, int expected_args);
-
+/* DeviceStatus를 문자열로 변환하는 함수 */
+const char* get_device_status_string(DeviceStatus status);
 #endif /* MESSAGE_H */

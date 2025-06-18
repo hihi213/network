@@ -1,72 +1,76 @@
 #ifndef SESSION_H
 #define SESSION_H
 
-
-#include "network.h"  // SSLHandler 타입을 위해 추가
 #include "common.h"
+#include "utils.h"
 
-/* 세션 상태 열거형 */
+
+// --- [수정] 전방 선언 추가 ---
+// 실제 정의는 다른 헤더파일에 있지만, 여기서는 포인터만 사용하므로
+// 컴파일러에게 해당 이름의 구조체가 존재한다는 것만 알려줍니다.
+typedef struct ssl_st SSL;
+struct SSLHandler;
+// ----------------------------
+
+#define MAX_USERNAME_LENGTH 32
+#define MAX_IP_LENGTH 46 // IPv6 주소를 고려
+#define MAX_TOKEN_LENGTH 128
+#define SESSION_TIMEOUT 300 // 세션 타임아웃 (초)
+
+// 서버 측에서 관리하는 세션의 상태
+typedef enum {
+    SESSION_ACTIVE,
+    SESSION_EXPIRED,
+    SESSION_ENDED
+} ServerSessionState;
+
+// 클라이언트 측에서 관리하는 세션의 상태
 typedef enum {
     SESSION_DISCONNECTED,
     SESSION_CONNECTING,
-    SESSION_LOGGED_IN,
-    SESSION_ACTIVE,
-    SESSION_ENDED,
-    SESSION_EXPIRED
+    SESSION_LOGGED_IN
 } SessionState;
 
-/* 사용자 정보 구조체 */
-typedef struct {
-    char username[MAX_USERNAME_LENGTH];
-    char password[MAX_PASSWORD_LENGTH]; // 실제 시스템에서는 해시값이어야 함
-    time_t last_login;
-    bool is_active;
-} User;
 
-/* 클라이언트 세션 구조체 */
+// 서버가 관리하는 사용자 세션 정보
 typedef struct {
-    SSL* ssl;
-    SSLHandler* ssl_handler;
-    int socket_fd;
-    char username[MAX_USERNAME_LENGTH];
-    char server_ip[MAX_IP_LENGTH];
-    int server_port;
-    SessionState state;
-    time_t last_activity;
-} ClientSession;
-
-/* 서버 세션 구조체 */
-typedef struct {
-    char token[MAX_TOKEN_LENGTH];
     char username[MAX_USERNAME_LENGTH];
     char client_ip[MAX_IP_LENGTH];
     int client_port;
+    char token[MAX_TOKEN_LENGTH];
+    ServerSessionState state;
     time_t created_at;
     time_t last_activity;
-    time_t expiry_time;
-    SessionState state;
 } ServerSession;
 
-/* 세션 관리자 구조체 */
+// 클라이언트 프로그램이 서버와의 연결 정보를 담는 구조체
 typedef struct {
-    ServerSession* sessions;
-    int session_count;
+    int socket_fd;
+    SSL* ssl;
+    struct SSLHandler* ssl_handler; // [수정] struct 키워드 추가
+    char server_ip[MAX_IP_LENGTH];
+    int server_port;
+    SessionState state;
+    char username[MAX_USERNAME_LENGTH];
+    time_t last_activity;
+} ClientSession;
+
+// 서버의 세션 매니저
+typedef struct {
+    HashTable* sessions;  // Key: username, Value: ServerSession*
     pthread_mutex_t mutex;
 } SessionManager;
 
-/* 클라이언트 세션 관리 함수 */
-int init_client_session(ClientSession* session);
-void cleanup_client_session(ClientSession* session);
-int update_session_state(ClientSession* session, SessionState state);
-bool is_session_connected(const ClientSession* session);
-bool is_session_logged_in(const ClientSession* session);
 
-/* 서버 세션 관리 함수 */
+/* 함수 프로토타입 */
+
+// 서버용 세션 관리 함수
 SessionManager* init_session_manager(void);
 void cleanup_session_manager(SessionManager* manager);
-ServerSession* create_session(SessionManager* manager, const char* username, const char* ip, int port);
+ServerSession* create_session(SessionManager* manager, const char* username, const char* client_ip, int client_port);
 int close_session(SessionManager* manager, const char* username);
-void cleanup_expired_sessions(SessionManager* manager);
-bool is_session_expired(const ServerSession* session);
 
-#endif /* SESSION_H */
+// 클라이언트용 세션 정리 함수
+void cleanup_client_session(ClientSession* session);
+
+#endif // SESSION_H

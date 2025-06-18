@@ -57,13 +57,13 @@ make
 ### 서버 실행
 
 ```bash
-./bin/server <포트>
+./network <포트>
 ```
 
 ### 클라이언트 실행
 
 ```bash
-./bin/client <서버 IP> <포트>
+./network <서버 IP> <포트>
 ```
 
 ## 프로젝트 구조
@@ -77,26 +77,24 @@ make
 │   ├── resource.h    # 자원 관리
 │   ├── reservation.h # 예약 관리
 │   ├── session.h     # 세션 관리
-│   ├── logger.h      # 로깅
 │   ├── ui.h          # 사용자 인터페이스
-│   └── performance.h # 성능 측정
+│   └── utils.h       # 유틸리티(로깅, 해시테이블, 성능 등 통합)
 ├── src/              # 소스 파일들
 │   ├── message.c
 │   ├── network.c
 │   ├── resource.c
 │   ├── reservation.c
 │   ├── session.c
-│   ├── logger.c
 │   ├── ui.c
-│   ├── performance.c
+│   ├── utils.c       # 유틸리티(로깅, 해시테이블, 성능 등 통합)
 │   ├── client_main.c
 │   └── server_main.c
 ├── certs/            # SSL 인증서
-├── bin/              # 실행 파일
-├── obj/              # 오브젝트 파일
 ├── Makefile         # 빌드 스크립트
 └── README.md        # 프로젝트 설명
 ```
+
+- **bin/**, **obj/** 디렉토리는 더 이상 사용하지 않습니다. 빌드 결과는 `network` 실행 파일로 생성됩니다.**
 
 ## 메시지 프로토콜
 

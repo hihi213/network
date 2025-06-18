@@ -1,6 +1,5 @@
 #include "../include/ui.h"
-#include "../include/logger.h"
-
+#include "../include/message.h"
 
 /* --- 전역 변수 --- */
 UIManager* global_ui_manager = NULL;

@@ -1,4 +1,3 @@
-#include "../include/logger.h"
 #include "../include/message.h"
 #include "../include/network.h"
 #include "../include/session.h"
@@ -244,7 +243,7 @@ static void handle_server_message(const Message* message) {
  * @brief 시그널(Ctrl+C)을 안전하게 처리하는 핸들러 (Self-Pipe 트릭 사용)
  */
 static void signal_handler(int signum) {
-    
+    (void)signum;
     // 핸들러 내에서는 async-signal-safe 함수인 write만 호출
     (void)write(self_pipe[1], "s", 1);
 }
@@ -364,20 +363,14 @@ static bool handle_login() {
     const char* username = "test";
     const char* password = "1234";
 
-    show_success_message("로그인 시도 중...");
+show_success_message("로그인 시도 중...");
 
-    // 로그인 메시지 생성
-    Message* msg = create_message(MSG_LOGIN, NULL);
+    // 헬퍼 함수를 사용하여 로그인 메시지 생성
+    Message* msg = create_login_message("test", "1234"); //
     if (!msg) {
         show_error_message("메시지 생성 실패");
         return false;
     }
-
-    // 인자에 아이디와 비밀번호 추가
-    msg->args[0] = strdup(username);
-    msg->args[1] = strdup(password);
-    msg->arg_count = 2;
-
     // 메시지 전송
     if (send_message(client_session.ssl, msg) < 0) {
         running = false;
@@ -389,6 +382,5 @@ static bool handle_login() {
     cleanup_message(msg);
     free(msg);
     
-    // 이 함수는 메시지 전송까지만 담당. 결과는 handle_server_message 에서 처리.
     return true; 
 }

@@ -1,7 +1,13 @@
 #ifndef RESOURCE_H
 #define RESOURCE_H
 
-#include "common.h"
+#include "utils.h" // 해시 테이블 헤더 추가
+
+typedef struct ResourceManager {
+    HashTable* devices; // [개선] 배열 대신 해시 테이블 사용
+    pthread_mutex_t mutex;
+} ResourceManager;
+
 typedef enum {
     DEVICE_AVAILABLE,
     DEVICE_RESERVED,
@@ -16,13 +22,6 @@ typedef struct {
     DeviceStatus status;
     char reserved_by[MAX_USERNAME_LENGTH];
 } Device;
-
-/* 자원 관리자 구조체 */
-typedef struct {
-    Device devices[MAX_DEVICES];
-    int device_count;
-    pthread_mutex_t mutex;
-} ResourceManager;
 
 /* 함수 선언 */
 ResourceManager* init_resource_manager(void);

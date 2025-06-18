@@ -1,6 +1,8 @@
 {
     "files.associations": {
         "resource.h": "c",
-        "logger.h": "c"
+        "ui.h": "c",
+        "utils.h": "c",
+        "message.h": "c"
     }
 }

@@ -1,5 +1,5 @@
 #include "../include/message.h"
-#include "../include/logger.h"
+
 
 /* 메시지 생성 함수 */
 Message *create_message(MessageType type, const char *data)
@@ -51,8 +51,31 @@ Message *create_status_response_message(const Device *devices, int device_count)
         message->arg_count += 4;
     }
     return message;
-}
+}/**
+ * @brief 로그인 요청 메시지를 생성합니다.
+ * @param username 사용자 이름.
+ * @param password 비밀번호.
+ * @return 생성된 Message 객체 포인터.
+ */
+Message* create_login_message(const char* username, const char* password) { //
+    Message* msg = create_message(MSG_LOGIN, NULL); //
+    if (!msg) {
+        return NULL;
+    }
 
+    msg->args[0] = strdup(username); //
+    msg->args[1] = strdup(password); //
+
+    // strdup 실패 시 메모리 정리
+    if (!msg->args[0] || !msg->args[1]) {
+        cleanup_message(msg);
+        free(msg);
+        return NULL;
+    }
+    msg->arg_count = 2; //
+
+    return msg;
+}
 /**
  * @brief 에러 메시지 객체를 생성합니다.
  * @param error_message 에러 메시지 문자열.

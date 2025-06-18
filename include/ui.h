@@ -72,4 +72,5 @@ UIManager* init_ui_manager(void);
 void cleanup_ui_manager(UIManager* manager);
 int create_menu(UIManager* manager, const char* title, const char** items, int count);
 void set_status_message(UIManager* manager, const char* message);
+
 #endif /* UI_H */

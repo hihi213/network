@@ -1,9 +1,8 @@
-#include "../include/logger.h"
+
 #include "../include/message.h"
 #include "../include/network.h"
 #include "../include/session.h"
 #include "../include/ui.h"
-#include "../include/performance.h"
 #include "../include/resource.h"
 #include "../include/reservation.h" 
 
@@ -30,6 +29,7 @@ static int handle_reserve_request(Client* client, const Message* message);
 static int handle_login_request(Client* client, const Message* message);
 static int send_error_response(SSL* ssl, const char* error_message);
 static void client_message_loop(Client* client);
+static void cleanup_client(Client* client);
 /* --- 전역 변수 --- */
 static int server_sock;
 static bool running = true;
@@ -73,7 +73,7 @@ int main(int argc, char* argv[]) {
             Device devices[MAX_DEVICES];
             int count = get_device_list(resource_manager, devices, MAX_DEVICES);
             if (count >= 0) update_server_devices(devices, count);
-            update_server_status(session_manager->session_count, atoi(argv[1]));
+            update_server_status(session_manager->sessions->count, atoi(argv[1]));
             refresh_all_windows();
             continue;
         }
@@ -132,8 +132,32 @@ static void client_message_loop(Client* client) {
         }
     }
 }
+// 새로운 정리 함수 (server_main.c 내부에 추가)
+static void cleanup_client(Client* client) {
+    if (!client) return;
 
-// [수정] 간결해진 스레드 메인 함수
+    LOG_INFO("Thread", "클라이언트 자원 정리: %s", client->ip);
+    
+    // 1. 세션 종료
+    if (client->state == SESSION_LOGGED_IN) {
+        close_session(session_manager, client->username);
+    }
+    
+    // 2. SSL 및 소켓 정리
+    if (client->ssl_handler) {
+        cleanup_ssl_handler(client->ssl_handler);
+    }
+    
+    // 3. 소켓 파일 디스크립터 닫기
+    if (client->socket_fd >= 0) {
+        close(client->socket_fd);
+    }
+    
+    // 4. Client 구조체 메모리 해제
+    free(client);
+}
+
+// 간결해진 스레드 함수
 static void* client_thread_func(void* arg) {
     Client* client = (Client*)arg;
     
@@ -141,9 +165,8 @@ static void* client_thread_func(void* arg) {
     client->ssl_handler = create_ssl_handler(&ssl_manager, client->socket_fd);
     if (!client->ssl_handler || handle_ssl_handshake(client->ssl_handler) != 0) {
         LOG_ERROR("Thread", "SSL 핸드셰이크 실패: %s", client->ip);
-        if(client->ssl_handler) cleanup_ssl_handler(client->ssl_handler);
-        close(client->socket_fd);
-        free(client);
+        // 핸들러가 생성되었을 수 있으므로 cleanup_client 호출
+        cleanup_client(client);
         return NULL;
     }
     client->ssl = client->ssl_handler->ssl;
@@ -153,12 +176,9 @@ static void* client_thread_func(void* arg) {
     // 2. 메시지 루프 실행
     client_message_loop(client);
 
-    // 3. 자원 정리
-    LOG_INFO("Thread", "클라이언트 자원 정리: %s", client->ip);
-    if (client->state == SESSION_LOGGED_IN) close_session(session_manager, client->username);
-    cleanup_ssl_handler(client->ssl_handler);
-    close(client->socket_fd);
-    free(client);
+    // 3. 자원 정리 (헬퍼 함수 호출)
+    cleanup_client(client);
+    
     return NULL;
 }
 /**
@@ -171,9 +191,9 @@ static void* client_thread_func(void* arg) {
  * @param client 요청을 보낸 클라이언트의 정보.
  * @param device_id 예약할 장비의 ID.
  * @return 예약의 모든 과정이 성공했을 때 true, 하나라도 실패하면 false를 반환합니다.
- */
-static bool process_device_reservation(Client* client, const char* device_id, int duration_sec) {
-    // 1. 장비가 사용 가능한지 확인 (자원 매니저)
+ */// process_device_reservation 함수가 bool 대신 int를 반환하도록 변경하고, 성공 응답까지 처리
+static int process_device_reservation(Client* client, const char* device_id, int duration_sec) {
+    // 1. 장비 사용 가능 여부 확인
     if (!is_device_available(resource_manager, device_id)) {
         char error_msg[256];
         // 사용 불가 시, 다른 사용자가 이미 예약했는지 확인하여 더 구체적인 에러 메시지 제공
@@ -183,19 +203,18 @@ static bool process_device_reservation(Client* client, const char* device_id, in
         } else {
             strncpy(error_msg, "현재 사용 불가 또는 점검 중인 장비입니다.", sizeof(error_msg)-1);
         }
-        send_error_response(client->ssl, error_msg);
-        return false;
+        return send_error_response(client->ssl, error_msg);
+
     }
 
-   // 2. 예약 생성 (예약 매니저)
+   // 2. 예약 생성
     time_t start = time(NULL);
-    time_t end = start + duration_sec; // <<<<<<<< 고정된 3600초 대신 전달받은 시간 사용
+    time_t end = start + duration_sec;
     if (!create_reservation(reservation_manager, device_id, client->username, start, end, "User Reservation")) {
-        send_error_response(client->ssl, "예약 생성에 실패했습니다 (시간 중복 등).");
-        return false;
+        return send_error_response(client->ssl, "예약 생성에 실패했습니다 (시간 중복 등).");
     }
 
-    // 3. 장비 상태를 '예약됨'으로 변경 (자원 매니저)
+    // 3. 장비 상태 변경
     if (!update_device_status(resource_manager, device_id, DEVICE_RESERVED)) {
         // [중요] 예약은 생성되었으나 장비 상태 변경에 실패한 크리티컬한 상황
         // 이 경우, 방금 생성한 예약을 롤백(취소)하는 로직이 필요합니다.
@@ -203,12 +222,17 @@ static bool process_device_reservation(Client* client, const char* device_id, in
         // 향후 create_reservation 함수가 예약 ID를 반환하도록 수정하여 롤백 기능을 추가해야 합니다.
         LOG_ERROR("Logic", "CRITICAL: 예약은 생성했으나 장비 상태 업데이트 실패. 롤백이 필요합니다!");
         // 예: cancel_reservation(reservation_manager, new_reservation_id, client->username);
-        send_error_response(client->ssl, "서버 내부 오류: 예약 상태 동기화 실패");
-        return false;
+         return send_error_response(client->ssl, "서버 내부 오류: 예약 상태 동기화 실패");
     }
-
-    LOG_INFO("Logic", "예약 트랜잭션 성공: 장비=%s, 사용자=%s", device_id, client->username);
-    return true;
+    // 4. 성공 응답 전송 (새로 추가된 부분)
+    Message* response = create_message(MSG_RESERVE_RESPONSE, "success");
+    if (response) {
+        send_message(client->ssl, response);
+        cleanup_message(response);
+        free(response);
+    }
+    LOG_INFO("Logic", "예약 트랜잭션 성공 및 응답 전송: 장비=%s, 사용자=%s", device_id, client->username);
+    return 0;
 }
 /**
  * @brief 클라이언트에게 에러 응답 메시지를 전송하는 헬퍼 함수.
