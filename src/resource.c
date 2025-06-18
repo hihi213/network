@@ -1,5 +1,4 @@
 #include "../include/resource.h"
-
 #include "../include/logger.h"
 
 /* 리소스 매니저 초기화 */

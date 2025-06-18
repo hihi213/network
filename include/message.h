@@ -50,7 +50,7 @@ const char* get_device_status_string(DeviceStatus status);
 /* 메시지 생성 헬퍼 함수 */
 Message* create_status_response_message(const Device* devices, int count);
 Message* create_error_message(const char* error_msg);
-Message* create_reservation_message(const char* device_id);
+Message *create_reservation_message(const char *device_id, const char* duration_str);
 Message* receive_message(SSL* ssl);
 
 /* 메시지 유효성 검사 함수 */

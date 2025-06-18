@@ -2,7 +2,7 @@
 #define RESERVATION_H
 
 #include "common.h"
-
+#include "resource.h" // [수정] 전방 선언 대신 직접 포함
 /* 예약 상태 열거형 */
 typedef enum {
     RESERVATION_PENDING,
@@ -34,12 +34,11 @@ typedef struct {
 } ReservationManager;
 
 /* 함수 선언 */
-ReservationManager* init_reservation_manager(void);
 void cleanup_reservation_manager(ReservationManager* manager);
+ReservationManager* init_reservation_manager(ResourceManager* res_manager);
 bool create_reservation(ReservationManager* manager, const char* device_id, const char* username, time_t start_time, time_t end_time, const char* reason);
 bool cancel_reservation(ReservationManager* manager, uint32_t reservation_id, const char* username);
 int get_device_reservations(ReservationManager* manager, const char* device_id, Reservation* reservations, int max_reservations);
-void cleanup_expired_reservations(ReservationManager* manager);
 Reservation* get_active_reservation_for_device(ReservationManager* manager, const char* device_id);
-
+void cleanup_expired_reservations(ReservationManager* manager, ResourceManager* res_manager);
 #endif /* RESERVATION_H */

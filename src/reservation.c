@@ -1,25 +1,19 @@
 #include "../include/reservation.h"
 #include "../include/logger.h"
+#include "../include/resource.h"
 
 // 만료 예약 정리 스레드 관련 변수
 static pthread_t cleanup_thread;
 static bool cleanup_thread_running = false;
 static ReservationManager* global_manager = NULL;
+static ResourceManager* global_resource_manager = NULL;
+static void* cleanup_thread_function(void* arg);
 
-// 만료 예약 정리 스레드 함수
-static void* cleanup_thread_function(void* arg) {
-    (void)arg;  // 사용되지 않는 매개변수 경고 제거
-    while (cleanup_thread_running) {
-        if (global_manager) {
-            cleanup_expired_reservations(global_manager);
-        }
-        sleep(60); // 1분마다 실행
-    }
-    return NULL;
-}
 
 /* 예약 매니저 초기화 */
-ReservationManager* init_reservation_manager(void) {
+/* 예약 매니저 초기화 */
+ReservationManager* init_reservation_manager(ResourceManager* res_manager) {
+    // ... (기존 코드) ...
     ReservationManager* manager = (ReservationManager*)malloc(sizeof(ReservationManager));
     if (!manager) {
         LOG_ERROR("Reservation", "예약 관리자 메모리 할당 실패");
@@ -36,7 +30,9 @@ ReservationManager* init_reservation_manager(void) {
 
     // 만료 예약 정리 스레드 시작
     global_manager = manager;
+    global_resource_manager = res_manager; // <<<<<<< 이 라인을 추가하세요.
     cleanup_thread_running = true;
+
     if (pthread_create(&cleanup_thread, NULL, cleanup_thread_function, NULL) != 0) {
         LOG_ERROR("Reservation", "만료 예약 정리 스레드 생성 실패");
         cleanup_thread_running = false;
@@ -50,6 +46,19 @@ ReservationManager* init_reservation_manager(void) {
     return manager;
 }
 
+/* 예약 매니저 정리 */
+// 만료 예약 정리 스레드 함수 수정
+static void* cleanup_thread_function(void* arg) {
+    (void)arg;
+    while (cleanup_thread_running) {
+        if (global_manager && global_resource_manager) {
+            // 이제 리소스 매니저를 함께 넘겨줄 수 있습니다.
+            cleanup_expired_reservations(global_manager, global_resource_manager);
+        }
+        sleep(1); // <<<<<<<<<<<< 중요: 60초에서 1초로 변경
+    }
+    return NULL;
+}
 /* 예약 매니저 정리 */
 void cleanup_reservation_manager(ReservationManager* manager) {
     if (!manager) return;
@@ -65,7 +74,6 @@ void cleanup_reservation_manager(ReservationManager* manager) {
     free(manager);
     LOG_INFO("Reservation", "예약 관리자 정리 완료");
 }
-
 /* 예약 생성 */
 bool create_reservation(ReservationManager* manager, const char* device_id,
                           const char* username, time_t start_time,
@@ -177,33 +185,49 @@ bool cancel_reservation(ReservationManager* manager, uint32_t reservation_id,
     return true;
 }
 
-
-/* 만료된 예약 정리 */
-void cleanup_expired_reservations(ReservationManager* manager) {
-    if (!manager) {
+/**
+ * @brief 만료된 예약을 정리하고, 해당 장비의 상태를 '사용 가능'으로 변경합니다.
+ * @param manager 예약 관리자 포인터
+ * @param res_manager 자원 관리자 포인터
+ */
+void cleanup_expired_reservations(ReservationManager* manager, ResourceManager* res_manager) {
+    if (!manager || !res_manager) {
         LOG_ERROR("Reservation", "잘못된 파라미터");
         return;
     }
 
-    LOG_INFO("Reservation", "만료된 예약 정리 시작");
     time_t current_time = time(NULL);
-    int removed_count = 0;
+    char expired_device_ids[MAX_RESERVATIONS][MAX_DEVICE_ID_LEN];
+    int expired_count = 0;
 
+    // 1. 만료된 예약을 찾아 장비 ID를 수집합니다. (뮤텍스 잠금 구간)
     pthread_mutex_lock(&manager->mutex);
-
     for (int i = 0; i < manager->reservation_count; i++) {
+        // 상태가 '승인'이고, 종료 시간이 현재 시간 이전인 예약을 찾습니다.
         if (manager->reservations[i].status == RESERVATION_APPROVED &&
             manager->reservations[i].end_time < current_time) {
-            manager->reservations[i].status = RESERVATION_COMPLETED;
-            removed_count++;
+            
+            manager->reservations[i].status = RESERVATION_COMPLETED; // 상태를 '완료'로 변경
+            
+            // 나중에 처리할 장비 ID를 복사해둡니다.
+            strncpy(expired_device_ids[expired_count], manager->reservations[i].device_id, MAX_DEVICE_ID_LEN -1);
+            expired_count++;
+            
+            LOG_INFO("Reservation", "예약 만료 감지: 장비 ID=%s", manager->reservations[i].device_id);
         }
     }
-
     pthread_mutex_unlock(&manager->mutex);
 
-    LOG_INFO("Reservation", "만료된 예약 정리 완료: %d개 정리됨", removed_count);
+    // 2. 수집된 ID를 바탕으로 장비 상태를 업데이트합니다. (뮤텍스 잠금 해제 구간)
+    // 이 로직은 각 매니저의 뮤텍스를 따로 잠그므로 데드락 위험이 없습니다.
+    if (expired_count > 0) {
+        for (int i = 0; i < expired_count; i++) {
+            update_device_status(res_manager, expired_device_ids[i], DEVICE_AVAILABLE);
+            LOG_INFO("Reservation", "장비 반납 처리 완료: 장비 ID=%s", expired_device_ids[i]);
+        }
+        LOG_INFO("Reservation", "만료된 예약 정리 완료: 총 %d개 정리됨", expired_count);
+    }
 }
-
 
 Reservation* get_active_reservation_for_device(ReservationManager* manager, const char* device_id) {
     if (!manager || !device_id) return NULL;

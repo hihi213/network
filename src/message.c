@@ -53,25 +53,44 @@ Message *create_status_response_message(const Device *devices, int device_count)
     return message;
 }
 
-/* 예약 요청 메시지 생성 */
-Message *create_reservation_message(const char *device_id)
+/**
+ * @brief 에러 메시지 객체를 생성합니다.
+ * @param error_message 에러 메시지 문자열.
+ * @return 생성된 Message 객체 포인터.
+ */
+Message* create_error_message(const char* error_message)
+{
+    // 내부적으로는 data 필드에 에러 메시지를 담는 MSG_ERROR 타입 메시지를 생성합니다.
+    return create_message(MSG_ERROR, error_message);
+}
+// 개선된 함수: 예약 시간(duration)을 함께 처리
+/**
+ * @brief 예약 요청 메시지를 생성합니다.
+ * @param device_id 예약할 장비의 ID.
+ * @param duration_str 예약할 시간(초)을 나타내는 문자열.
+ * @return 생성된 Message 객체 포인터.
+ */
+Message *create_reservation_message(const char *device_id, const char* duration_str)
 {
     Message *msg = create_message(MSG_RESERVE_REQUEST, NULL);
     if (!msg)
+    {
         return NULL;
+    }
 
-    msg->args[msg->arg_count++] = strdup(device_id);
+    // 인자에 장비 ID와 예약 시간(초) 추가
+    msg->args[0] = strdup(device_id);
+    msg->args[1] = strdup(duration_str);
+    if (!msg->args[0] || !msg->args[1]) {
+        // strdup 실패 시 메모리 정리
+        cleanup_message(msg);
+        free(msg);
+        return NULL;
+    }
+    msg->arg_count = 2;
+
     return msg;
 }
-
-Message *create_error_message(const char *error_message)
-{
-    Message *message = create_message(MSG_ERROR, error_message);
-    if (!message)
-        return NULL;
-    return message;
-}
-
 /* 메시지 타입 문자열 변환 함수 */
 const char *get_message_type_string(MessageType type)
 {

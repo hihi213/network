@@ -2,8 +2,6 @@
 #define RESOURCE_H
 
 #include "common.h"
-
-/* 장비 상태 열거형 */
 typedef enum {
     DEVICE_AVAILABLE,
     DEVICE_RESERVED,
@@ -28,12 +26,12 @@ typedef struct {
 
 /* 함수 선언 */
 ResourceManager* init_resource_manager(void);
-void cleanup_resource_manager(ResourceManager* manager);
 bool add_device(ResourceManager* manager, const char* id, const char* type, const char* name);
 bool remove_device(ResourceManager* manager, const char* id);
 bool update_device_status(ResourceManager* manager, const char* device_id, DeviceStatus new_status);
 Device* get_device(ResourceManager* manager, const char* id);
 int get_device_list(ResourceManager* manager, Device* devices, int max_devices);
 bool is_device_available(ResourceManager* manager, const char* id);
+void cleanup_resource_manager(ResourceManager* manager);
 
 #endif /* RESOURCE_H */ 

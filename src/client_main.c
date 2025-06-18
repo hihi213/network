@@ -315,17 +315,37 @@ static void handle_device_reservation(int device_index) {
         return;
     }
 
-    Message* msg = create_reservation_message(device_list[device_index].id);
-    if (!msg) {
-        show_error_message("예약 요청 생성 실패");
+    // 사용자에게 예약 시간 입력받기
+    char duration_str[10];
+    int duration_sec = 0;
+    mvprintw(LINES - 5, 2, "예약할 시간(초)을 입력하세요 (예: 30): ");
+    echo();
+    getnstr(duration_str, sizeof(duration_str) - 1);
+    noecho();
+    sscanf(duration_str, "%d", &duration_sec);
+
+    if (duration_sec <= 0) {
+        show_error_message("유효하지 않은 시간입니다.");
         getch();
         return;
     }
+    
+    // [개선] message.c의 헬퍼 함수를 사용하여 메시지 생성
+    Message* msg = create_reservation_message(device_list[device_index].id, duration_str);
+    if (!msg) {
+        show_error_message("메시지 생성에 실패했습니다.");
+        getch();
+        return;
+    }
+
     if (send_message(client_session.ssl, msg) < 0) {
         show_error_message("예약 요청 전송 실패");
         getch();
     }
+    
+    // 자원 정리
     cleanup_message(msg);
+    free(msg);
 }
 
 /**
