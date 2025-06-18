@@ -1,6 +1,30 @@
 #include "../include/message.h"
 
+/**
+ * @brief 두 개의 문자열 인자를 갖는 메시지를 생성하는 정적 헬퍼 함수.
+ * @param type 메시지 타입.
+ * @param arg1 첫 번째 인자 문자열.
+ * @param arg2 두 번째 인자 문자열.
+ * @return 생성된 Message 객체 포인터, 실패 시 NULL.
+ */
+static Message* create_message_with_two_args(MessageType type, const char* arg1, const char* arg2) {
+    Message* msg = create_message(type, NULL);
+    if (!msg) {
+        return NULL;
+    }
 
+    msg->args[0] = strdup(arg1);
+    msg->args[1] = strdup(arg2);
+
+    if (!msg->args[0] || !msg->args[1]) {
+        cleanup_message(msg);
+        free(msg);
+        return NULL;
+    }
+    msg->arg_count = 2;
+
+    return msg;
+}
 /* 메시지 생성 함수 */
 Message *create_message(MessageType type, const char *data)
 {
@@ -57,24 +81,12 @@ Message *create_status_response_message(const Device *devices, int device_count)
  * @param password 비밀번호.
  * @return 생성된 Message 객체 포인터.
  */
-Message* create_login_message(const char* username, const char* password) { //
-    Message* msg = create_message(MSG_LOGIN, NULL); //
-    if (!msg) {
-        return NULL;
-    }
+Message* create_login_message(const char* username, const char* password) {
+    return create_message_with_two_args(MSG_LOGIN, username, password); //
+}
 
-    msg->args[0] = strdup(username); //
-    msg->args[1] = strdup(password); //
-
-    // strdup 실패 시 메모리 정리
-    if (!msg->args[0] || !msg->args[1]) {
-        cleanup_message(msg);
-        free(msg);
-        return NULL;
-    }
-    msg->arg_count = 2; //
-
-    return msg;
+Message* create_reservation_message(const char *device_id, const char* duration_str) {
+    return create_message_with_two_args(MSG_RESERVE_REQUEST, device_id, duration_str); //
 }
 /**
  * @brief 에러 메시지 객체를 생성합니다.
@@ -86,34 +98,7 @@ Message* create_error_message(const char* error_message)
     // 내부적으로는 data 필드에 에러 메시지를 담는 MSG_ERROR 타입 메시지를 생성합니다.
     return create_message(MSG_ERROR, error_message);
 }
-// 개선된 함수: 예약 시간(duration)을 함께 처리
-/**
- * @brief 예약 요청 메시지를 생성합니다.
- * @param device_id 예약할 장비의 ID.
- * @param duration_str 예약할 시간(초)을 나타내는 문자열.
- * @return 생성된 Message 객체 포인터.
- */
-Message *create_reservation_message(const char *device_id, const char* duration_str)
-{
-    Message *msg = create_message(MSG_RESERVE_REQUEST, NULL);
-    if (!msg)
-    {
-        return NULL;
-    }
 
-    // 인자에 장비 ID와 예약 시간(초) 추가
-    msg->args[0] = strdup(device_id);
-    msg->args[1] = strdup(duration_str);
-    if (!msg->args[0] || !msg->args[1]) {
-        // strdup 실패 시 메모리 정리
-        cleanup_message(msg);
-        free(msg);
-        return NULL;
-    }
-    msg->arg_count = 2;
-
-    return msg;
-}
 /* 메시지 타입 문자열 변환 함수 */
 const char *get_message_type_string(MessageType type)
 {

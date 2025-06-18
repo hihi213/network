@@ -53,5 +53,5 @@ int send_message(SSL* ssl, const Message* message);
 /* 유틸리티 함수 */
 int set_socket_options(int socket_fd);
 void update_ssl_activity(SSLHandler* handler);
-
+static void set_common_ssl_ctx_options(SSL_CTX* ctx);
 #endif /* NETWORK_H */ 

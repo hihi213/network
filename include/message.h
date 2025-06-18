@@ -49,6 +49,7 @@ const char* get_message_type_string(MessageType type);
 const char* get_device_status_string(DeviceStatus status);
 
 /* 메시지 생성 헬퍼 함수 */
+static Message* create_message_with_two_args(MessageType type, const char* arg1, const char* arg2);
 Message* create_status_response_message(const Device* devices, int count);
 Message* create_error_message(const char* error_msg);
 Message *create_reservation_message(const char *device_id, const char* duration_str);

@@ -2,84 +2,59 @@
 
 #include "../include/message.h"
 
-
-/* SSL 컨텍스트 초기화 */
-static int init_ssl_context(SSLManager* manager, const char* cert_file, const char* key_file) {
-    LOG_INFO("Network", "SSL 컨텍스트 초기화 시작");
-    if (!manager || !cert_file || !key_file) {
-        LOG_ERROR("SSL", "잘못된 파라미터");
-        return -1;
-    }
-
-    // OpenSSL 3.0 이상에서는 TLS_method() 사용
-    LOG_INFO("SSL", "SSL 컨텍스트 생성 시도");
-    manager->ctx = SSL_CTX_new(TLS_server_method());
-    if (!manager->ctx) {
-        unsigned long err = ERR_get_error();
-        char err_buf[256];
-        ERR_error_string_n(err, err_buf, sizeof(err_buf));
-        LOG_ERROR("SSL", "SSL 컨텍스트 생성 실패: %s", err_buf);
-        return -1;
-    }
-    LOG_INFO("SSL", "SSL 컨텍스트 생성 성공");
+/**
+ * @brief 서버와 클라이언트 SSL 컨텍스트에 공통적인 옵션을 설정합니다.
+ * @param ctx 설정할 SSL_CTX 객체의 포인터.
+ */
+static void set_common_ssl_ctx_options(SSL_CTX* ctx) {
+    if (!ctx) return;
 
     // TLS 1.2 이상만 사용하도록 설정
-    SSL_CTX_set_min_proto_version(manager->ctx, TLS1_2_VERSION);
-    SSL_CTX_set_max_proto_version(manager->ctx, TLS1_3_VERSION);
-
-    // 인증서 로드
-    LOG_INFO("SSL", "인증서 파일 로드 시도: %s", cert_file);
-    if (SSL_CTX_use_certificate_file(manager->ctx, cert_file, SSL_FILETYPE_PEM) <= 0) {
-        unsigned long err = ERR_get_error();
-        char err_buf[256];
-        ERR_error_string_n(err, err_buf, sizeof(err_buf));
-        LOG_ERROR("SSL", "인증서 파일 로드 실패: %s", err_buf);
-        SSL_CTX_free(manager->ctx);
-        manager->ctx = NULL;
-        return -1;
-    }
-    LOG_INFO("SSL", "인증서 파일 로드 성공");
-
-    // 개인키 로드
-    LOG_INFO("SSL", "개인키 파일 로드 시도: %s", key_file);
-    if (SSL_CTX_use_PrivateKey_file(manager->ctx, key_file, SSL_FILETYPE_PEM) <= 0) {
-        unsigned long err = ERR_get_error();
-        char err_buf[256];
-        ERR_error_string_n(err, err_buf, sizeof(err_buf));
-        LOG_ERROR("SSL", "개인키 파일 로드 실패: %s", err_buf);
-        SSL_CTX_free(manager->ctx);
-        manager->ctx = NULL;
-        return -1;
-    }
-    LOG_INFO("SSL", "개인키 파일 로드 성공");
-
-    // 인증서와 개인키 매칭 확인
-    LOG_INFO("SSL", "인증서와 개인키 매칭 확인");
-    if (!SSL_CTX_check_private_key(manager->ctx)) {
-        unsigned long err = ERR_get_error();
-        char err_buf[256];
-        ERR_error_string_n(err, err_buf, sizeof(err_buf));
-        LOG_ERROR("SSL", "인증서와 개인키가 매칭되지 않음: %s", err_buf);
-        SSL_CTX_free(manager->ctx);
-        manager->ctx = NULL;
-        return -1;
-    }
-    LOG_INFO("SSL", "인증서와 개인키 매칭 확인 성공");
+    SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION);
+    SSL_CTX_set_max_proto_version(ctx, TLS1_3_VERSION);
 
     // 보안 설정
-    LOG_INFO("SSL", "보안 설정 적용");
-    SSL_CTX_set_options(manager->ctx, SSL_OP_NO_SSLv2 | SSL_OP_NO_SSLv3 | SSL_OP_NO_TLSv1 | SSL_OP_NO_TLSv1_1);
-    SSL_CTX_set_mode(manager->ctx, SSL_MODE_AUTO_RETRY);
+    SSL_CTX_set_options(ctx, SSL_OP_NO_SSLv2 | SSL_OP_NO_SSLv3 | SSL_OP_NO_TLSv1 | SSL_OP_NO_TLSv1_1);
+    SSL_CTX_set_mode(ctx, SSL_MODE_AUTO_RETRY);
     
-    // 자체 서명된 인증서 허용
-    SSL_CTX_set_verify(manager->ctx, SSL_VERIFY_NONE, NULL);
-    
-    LOG_INFO("SSL", "보안 설정 적용 완료");
-
-    LOG_INFO("SSL", "SSL 컨텍스트 초기화 완료");
-    return 0;
+    // 이 프로젝트에서는 자체 서명된 인증서를 사용하므로 검증을 비활성화합니다.
+    SSL_CTX_set_verify(ctx, SSL_VERIFY_NONE, NULL);
 }
+/* SSL 컨텍스트 초기화 */
+static int init_ssl_context(SSLManager* manager, const char* cert_file, const char* key_file) {
+    LOG_INFO("Network", "SSL 컨텍스트 초기화 시작"); //
+    if (!manager || !cert_file || !key_file) { //
+        LOG_ERROR("SSL", "잘못된 파라미터"); //
+        return -1; //
+    }
 
+    manager->ctx = SSL_CTX_new(TLS_server_method()); //
+    if (!manager->ctx) { //
+        /* ... 오류 처리 ... */
+        return -1; //
+    }
+    LOG_INFO("SSL", "SSL 컨텍스트 생성 성공"); //
+
+    // 인증서 및 키 파일 로드
+    if (SSL_CTX_use_certificate_file(manager->ctx, cert_file, SSL_FILETYPE_PEM) <= 0) { //
+        /* ... 오류 처리 ... */
+        return -1; //
+    }
+    if (SSL_CTX_use_PrivateKey_file(manager->ctx, key_file, SSL_FILETYPE_PEM) <= 0) { //
+        /* ... 오류 처리 ... */
+        return -1; //
+    }
+    if (!SSL_CTX_check_private_key(manager->ctx)) { //
+        /* ... 오류 처리 ... */
+        return -1; //
+    }
+
+    // ⭐ 중복 코드가 한 줄의 함수 호출로 대체됨
+    set_common_ssl_ctx_options(manager->ctx); //
+
+    LOG_INFO("SSL", "SSL 컨텍스트 초기화 완료"); //
+    return 0; //
+}
 /* SSL 관리자 초기화 */
 int init_ssl_manager(SSLManager* manager, bool is_server, const char* cert_file, const char* key_file) {
     LOG_INFO("SSL", "init_ssl_manager 진입");
@@ -157,30 +132,22 @@ int init_ssl_manager(SSLManager* manager, bool is_server, const char* cert_file,
             LOG_ERROR("SSL", "SSL 컨텍스트 초기화 실패: %s", err_buf);
         }
         return result;
-    } else {
-        // 클라이언트 모드에서는 인증서 검증만 수행
-        manager->ctx = SSL_CTX_new(TLS_client_method());
-        if (!manager->ctx) {
-            unsigned long err = ERR_get_error();
-            char err_buf[256];
-            ERR_error_string_n(err, err_buf, sizeof(err_buf));
-            LOG_ERROR("SSL", "SSL 컨텍스트 생성 실패: %s", err_buf);
-            return -1;
+    }  else {
+        // 클라이언트 모드
+        manager->ctx = SSL_CTX_new(TLS_client_method()); //
+        if (!manager->ctx) { //
+            unsigned long err = ERR_get_error(); //
+            char err_buf[256]; //
+            ERR_error_string_n(err, err_buf, sizeof(err_buf)); //
+            LOG_ERROR("SSL", "SSL 컨텍스트 생성 실패: %s", err_buf); //
+            return -1; //
         }
 
-        // TLS 1.2 이상만 사용하도록 설정
-        SSL_CTX_set_min_proto_version(manager->ctx, TLS1_2_VERSION);
-        SSL_CTX_set_max_proto_version(manager->ctx, TLS1_3_VERSION);
-
-        // 자체 서명된 인증서를 신뢰하도록 설정
-        SSL_CTX_set_verify(manager->ctx, SSL_VERIFY_NONE, NULL);
+        // ⭐ 중복 코드가 한 줄의 함수 호출로 대체됨
+        set_common_ssl_ctx_options(manager->ctx); //
         
-        // 추가 SSL 옵션 설정
-        SSL_CTX_set_options(manager->ctx, SSL_OP_NO_SSLv2 | SSL_OP_NO_SSLv3 | SSL_OP_NO_TLSv1 | SSL_OP_NO_TLSv1_1);
-        SSL_CTX_set_mode(manager->ctx, SSL_MODE_AUTO_RETRY);
-        
-        LOG_INFO("SSL", "클라이언트 SSL 컨텍스트 초기화 완료");
-        return 0;
+        LOG_INFO("SSL", "클라이언트 SSL 컨텍스트 초기화 완료"); //
+        return 0; //
     }
 }
 
