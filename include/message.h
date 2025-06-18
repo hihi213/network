@@ -14,6 +14,7 @@ typedef enum {
     MSG_CANCEL_REQUEST,
     MSG_CANCEL_RESPONSE,
     MSG_STATUS_REQUEST,
+    MSG_STATUS_UPDATE, // [추가] 서버가 먼저 보내는 상태 업데이트 메시지
     MSG_STATUS_RESPONSE,
     MSG_PING,
     MSG_PONG,
@@ -59,4 +60,5 @@ bool is_valid_message(const Message* message);
 bool validate_message_args(const Message* message, int expected_args);
 /* DeviceStatus를 문자열로 변환하는 함수 */
 const char* get_device_status_string(DeviceStatus status);
+bool fill_status_response_args(Message* msg, const Device* devices, int count, ResourceManager* rm, ReservationManager* rvm) ;
 #endif /* MESSAGE_H */

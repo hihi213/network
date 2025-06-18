@@ -19,7 +19,7 @@ static void null_free_func(void* data) { (void)data; }
  * @return 성공 시 초기화된 ReservationManager 포인터, 실패 시 NULL.
  */
 
-ReservationManager* init_reservation_manager(ResourceManager* res_manager) {
+ReservationManager* init_reservation_manager(ResourceManager* res_manager, void (*callback)(void)) {
     ReservationManager* manager = (ReservationManager*)malloc(sizeof(ReservationManager));
     if (!manager) {
         LOG_ERROR("Reservation", "예약 관리자 메모리 할당 실패");
@@ -28,7 +28,7 @@ ReservationManager* init_reservation_manager(ResourceManager* res_manager) {
 
     manager->reservation_count = 0;
     manager->next_reservation_id = 1;
-
+manager->broadcast_callback = callback; 
     // 예약 ID를 키로 빠른 조회를 위한 해시 테이블 생성
     manager->reservation_map = ht_create(MAX_RESERVATIONS, null_free_func);
     if (!manager->reservation_map) {
@@ -297,12 +297,13 @@ void cleanup_expired_reservations(ReservationManager* manager, ResourceManager* 
     // 카운트 기반 시스템에서는 상태 플래그로 비활성화를 표시하는 것이 더 간단할 수 있습니다.
     pthread_mutex_unlock(&manager->mutex);
 
-    // [개선] 2. 수집된 ID의 장비 상태만 한 번에 업데이트 (중첩 루프 없음)
     if (expired_count > 0) {
         for (int i = 0; i < expired_count; i++) {
-            // 이 함수는 내부적으로 해시 테이블을 사용하므로 빠릅니다.
-update_device_status(res_manager, expired_device_ids[i], DEVICE_AVAILABLE, 0);
-            LOG_INFO("Reservation", "장비 반납 처리 완료: 장비 ID=%s", expired_device_ids[i]);
+            update_device_status(res_manager, expired_device_ids[i], DEVICE_AVAILABLE, 0);
+        }
+        // [추가] 등록된 콜백 함수 호출
+        if (manager->broadcast_callback) {
+            manager->broadcast_callback();
         }
         LOG_INFO("Reservation", "만료된 예약 정리 완료: 총 %d개 정리됨", expired_count);
     }

@@ -2,7 +2,7 @@
 #define RESERVATION_H
 
 #include "utils.h"
-
+#include "resource.h"
 
 // [수정] ReservationStatus 열거형 정의 추가
 typedef enum {
@@ -30,13 +30,14 @@ typedef struct ReservationManager {
     int reservation_count;
     uint32_t next_reservation_id;
     pthread_mutex_t mutex;
+    void (*broadcast_callback)(void);
 } ReservationManager;
 
 // forward declaration
 struct ResourceManager;
 
 // 함수 프로토타입
-ReservationManager* init_reservation_manager(struct ResourceManager* res_manager);
+ReservationManager* init_reservation_manager(ResourceManager* res_manager, void (*callback)(void));
 void cleanup_reservation_manager(ReservationManager* manager);
 uint32_t create_reservation(ReservationManager* manager, const char* device_id,
                             const char* username, time_t start_time,

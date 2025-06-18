@@ -3,6 +3,11 @@
         "resource.h": "c",
         "ui.h": "c",
         "utils.h": "c",
-        "message.h": "c"
+        "message.h": "c",
+        "reservation.h": "c",
+        "session.h": "c",
+        "network.h": "c",
+        "common.h": "c",
+        "stdio.h": "c"
     }
 }

@@ -30,6 +30,9 @@ static int handle_login_request(Client* client, const Message* message);
 static int send_error_response(SSL* ssl, const char* error_message);
 static void client_message_loop(Client* client);
 static void cleanup_client(Client* client);
+static void add_client_to_list(Client* client);
+static void remove_client_from_list(Client* client);
+static void broadcast_status_update(void);
 /* --- 전역 변수 --- */
 static int server_sock;
 static bool running = true;
@@ -40,6 +43,10 @@ static ResourceManager* resource_manager = NULL;
 static ReservationManager* reservation_manager = NULL;
 static SessionManager* session_manager = NULL;
 
+// [추가] 연결된 모든 클라이언트를 관리하기 위한 전역 목록
+static Client* client_list[MAX_CLIENTS];
+static int num_clients = 0;
+static pthread_mutex_t client_list_mutex;
 
 /* --- 함수 정의 --- */
 
@@ -110,6 +117,51 @@ int main(int argc, char* argv[]) {
     cleanup_server();
     return 0;
 }
+
+
+/**
+ * @brief 로그인된 모든 클라이언트에게 최신 장비 상태를 브로드캐스트합니다.
+ */
+static void broadcast_status_update(void) {
+    LOG_INFO("Broadcast", "상태 변경, 모든 클라이언트에 브로드캐스트 시작");
+
+    Device devices[MAX_DEVICES];
+    int count = get_device_list(resource_manager, devices, MAX_DEVICES);
+    if (count < 0) {
+        LOG_ERROR("Broadcast", "브로드캐스트를 위한 장비 목록 조회 실패");
+        return;
+    }
+
+    // [수정] 이제 메시지 타입만 지정하여 생성
+    Message* response = create_message(MSG_STATUS_UPDATE, NULL);
+    if (!response) {
+        LOG_ERROR("Broadcast", "브로드캐스트 메시지 생성 실패");
+        return;
+    }
+
+    // [수정] 헬퍼 함수를 호출하여 메시지 내용 채우기
+    if (!fill_status_response_args(response, devices, count, resource_manager, reservation_manager)) {
+        LOG_ERROR("Broadcast", "브로드캐스트 메시지 내용 채우기 실패");
+        cleanup_message(response);
+        free(response);
+        return;
+    }
+
+    // 클라이언트 목록을 잠그고 순회하며 메시지 전송
+    pthread_mutex_lock(&client_list_mutex);
+    for (int i = 0; i < num_clients; i++) {
+        if (client_list[i] && client_list[i]->state == SESSION_LOGGED_IN) {
+            send_message(client_list[i]->ssl, response);
+        }
+    }
+    pthread_mutex_unlock(&client_list_mutex);
+
+    // 사용한 메시지 자원 정리
+    cleanup_message(response);
+    free(response);
+    
+    LOG_INFO("Broadcast", "브로드캐스트 완료");
+}
 // [신규] 메시지 처리 루프를 담당하는 함수
 static void client_message_loop(Client* client) {
     while (running) {
@@ -131,6 +183,35 @@ static void client_message_loop(Client* client) {
             break;
         }
     }
+}
+
+/**
+ * @brief 전역 클라이언트 목록에 새 클라이언트를 추가합니다. (스레드 안전)
+ */
+static void add_client_to_list(Client* client) {
+    pthread_mutex_lock(&client_list_mutex);
+    if (num_clients < MAX_CLIENTS) {
+        client_list[num_clients++] = client;
+    } else {
+        LOG_ERROR("Main", "클라이언트 최대 수용 인원 초과");
+    }
+    pthread_mutex_unlock(&client_list_mutex);
+}
+
+/**
+ * @brief 전역 클라이언트 목록에서 클라이언트를 제거합니다. (스레드 안전)
+ */
+static void remove_client_from_list(Client* client) {
+    pthread_mutex_lock(&client_list_mutex);
+    for (int i = 0; i < num_clients; i++) {
+        if (client_list[i] == client) {
+            // 마지막 클라이언트를 현재 위치로 이동시켜 배열을 압축
+            client_list[i] = client_list[num_clients - 1];
+            num_clients--;
+            break;
+        }
+    }
+    pthread_mutex_unlock(&client_list_mutex);
 }
 // 새로운 정리 함수 (server_main.c 내부에 추가)
 static void cleanup_client(Client* client) {
@@ -173,10 +254,14 @@ static void* client_thread_func(void* arg) {
     client->last_activity = time(NULL);
     LOG_INFO("Thread", "클라이언트 스레드 시작: %s", client->ip);
 
+    // [추가] 핸드셰이크 성공 후 클라이언트 목록에 추가
+    add_client_to_list(client);
+
     // 2. 메시지 루프 실행
     client_message_loop(client);
 
-    // 3. 자원 정리 (헬퍼 함수 호출)
+    // [수정] 자원 정리 전에 클라이언트 목록에서 제거
+    remove_client_from_list(client);
     cleanup_client(client);
     
     return NULL;
@@ -227,6 +312,8 @@ static int process_device_reservation(Client* client, const char* device_id, int
         cancel_reservation(reservation_manager, new_res_id, "system"); // 시스템 권한으로 롤백
         return send_error_response(client->ssl, "서버 내부 오류: 예약 상태 동기화 실패");
     }
+    // [추가] 상태 변경이 성공했으므로, 모든 클라이언트에게 알림
+    broadcast_status_update();
     // 4. 성공 응답 전송 (새로 추가된 부분)
     Message* response = create_message(MSG_RESERVE_RESPONSE, "success");
     if (response) {
@@ -380,10 +467,15 @@ static int init_server(int port) {
     if (init_logger("logs/server.log") < 0) return -1;
     if (init_ui() < 0) return -1;
     if (init_ssl_manager(&ssl_manager, true, "certs/server.crt", "certs/server.key") < 0) return -1;
-
+    
+    // [추가] 클라이언트 목록 뮤텍스 초기화
+    if (pthread_mutex_init(&client_list_mutex, NULL) != 0) {
+        LOG_ERROR("Main", "클라이언트 목록 뮤텍스 초기화 실패");
+        return -1;
+    }
     resource_manager = init_resource_manager();
     // resource_manager를 reservation_manager 초기화 시 전달합니다.
-    reservation_manager = init_reservation_manager(resource_manager);
+    reservation_manager = init_reservation_manager(resource_manager, broadcast_status_update);
     session_manager = init_session_manager();
 
     if (!resource_manager || !reservation_manager || !session_manager) return -1;
@@ -407,6 +499,10 @@ static void cleanup_server(void) {
     cleanup_ssl_manager(&ssl_manager);
     cleanup_ui();
     cleanup_logger();
+    
+    // [추가] 클라이언트 목록 뮤텍스 파괴
+    pthread_mutex_destroy(&client_list_mutex);
+
     close(self_pipe[0]);
     close(self_pipe[1]);
     LOG_INFO("Server", "서버 정리 완료");

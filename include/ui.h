@@ -55,6 +55,7 @@ void refresh_all_windows(void);
 void update_server_status(int session_count, int port);
 void update_server_devices(const Device* devices, int count, ResourceManager* resource_manager, ReservationManager* reservation_manager);
 
+
 /* 클라이언트 UI 함수 */
 void update_client_status(const ClientSession* session);
 void show_client_menu(const UIMenuItem* menu_items, int item_count);
@@ -71,4 +72,6 @@ UIManager* init_ui_manager(void);
 void cleanup_ui_manager(UIManager* manager);
 int create_menu(UIManager* manager, const char* title, const char** items, int count);
 void set_status_message(UIManager* manager, const char* message);
+
+
 #endif /* UI_H */
