@@ -3,7 +3,7 @@
 
 #include "common.h"
 #include "resource.h" // Device 구조체 사용을 위해 포함
-
+#include "reservation.h" // ReservationManager 구조체 사용을 위해 포함
 
 /* 메시지 타입 열거형 */
 typedef enum {
@@ -49,8 +49,7 @@ const char* get_message_type_string(MessageType type);
 const char* get_device_status_string(DeviceStatus status);
 
 /* 메시지 생성 헬퍼 함수 */
-static Message* create_message_with_two_args(MessageType type, const char* arg1, const char* arg2);
-Message* create_status_response_message(const Device* devices, int count);
+Message *create_status_response_message(const Device *devices, int device_count, ResourceManager* resource_manager, ReservationManager* reservation_manager);
 Message* create_error_message(const char* error_msg);
 Message *create_reservation_message(const char *device_id, const char* duration_str);
 Message* receive_message(SSL* ssl);

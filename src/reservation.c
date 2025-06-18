@@ -68,33 +68,33 @@ ReservationManager* init_reservation_manager(ResourceManager* res_manager) {
  * @param device_id 검색할 장비의 ID.
  * @return 활성화된 예약이 있으면 Reservation 포인터를, 없으면 NULL을 반환합니다.
  */
-Reservation* get_active_reservation_for_device(ReservationManager* manager, const char* device_id) {
-    if (!manager || !device_id) {
+Reservation* get_active_reservation_for_device(ReservationManager* resv_manager, ResourceManager* rsrc_manager, const char* device_id) {
+    if (!resv_manager || !rsrc_manager || !device_id) {
         return NULL;
     }
 
-    pthread_mutex_lock(&manager->mutex);
-    
-    time_t now = time(NULL);
-    // reservation_map이 아닌 실제 데이터가 저장된 배열을 순회해야 합니다.
-    for (int i = 0; i < manager->reservation_count; i++) {
-        Reservation* r = &manager->reservations[i];
-
-        // 장비 ID가 일치하는지 확인
-        if (strcmp(r->device_id, device_id) == 0) {
-            
-            // 상태가 '승인'이고, 현재 시간이 예약 시간 범위 안에 있는지 확인
-            if (r->status == RESERVATION_APPROVED && now >= r->start_time && now < r->end_time) {
-                pthread_mutex_unlock(&manager->mutex);
-                return r; // 활성화된 예약을 찾았으므로 즉시 반환
-            }
-        }
+    // 1. ResourceManager에서 장치 정보를 O(1)로 가져온다.
+    Device* device = (Device*)ht_get(rsrc_manager->devices, device_id);
+    if (!device || device->active_reservation_id == 0) {
+        return NULL; // 장치가 없거나 활성 예약 ID가 없음
     }
 
-    pthread_mutex_unlock(&manager->mutex);
-    return NULL; // 활성화된 예약 없음
-}
+    // 2. 장치에 저장된 예약 ID를 이용해 ReservationManager에서 예약 정보를 O(1)로 가져온다.
+    char id_str[16];
+    snprintf(id_str, sizeof(id_str), "%u", device->active_reservation_id);
+    
+    // ht_get은 lock을 요구하지 않지만, 데이터 일관성을 위해 manager의 lock을 사용
+    pthread_mutex_lock(&resv_manager->mutex);
+    Reservation* reservation = (Reservation*)ht_get(resv_manager->reservation_map, id_str);
+    pthread_mutex_unlock(&resv_manager->mutex);
 
+    // 3. (안전장치) 찾은 예약이 정말 유효한지 최종 확인
+    if (reservation && reservation->status == RESERVATION_APPROVED) {
+        return reservation;
+    }
+
+    return NULL;
+}
 /* 만료 예약 정리 스레드 함수 (개선됨) */
 static void* cleanup_thread_function(void* arg) {
     (void)arg;
@@ -143,12 +143,12 @@ void cleanup_reservation_manager(ReservationManager* manager) {
  * @param reason 예약 사유.
  * @return 성공 시 true, 실패 시 false.
  */
-bool create_reservation(ReservationManager* manager, const char* device_id,
-                          const char* username, time_t start_time,
-                          time_t end_time, const char* reason) {
+uint32_t create_reservation(ReservationManager* manager, const char* device_id,
+                            const char* username, time_t start_time,
+                            time_t end_time, const char* reason)   {
     if (!manager || !device_id || !username || !reason) {
         LOG_ERROR("Reservation", "잘못된 파라미터");
-        return false;
+        return 0; // 실패 시 0 반환
     }
 
     LOG_INFO("Reservation", "예약 생성 시작: 장치=%s, 사용자=%s", device_id, username);
@@ -158,15 +158,14 @@ bool create_reservation(ReservationManager* manager, const char* device_id,
     if (manager->reservation_count >= MAX_RESERVATIONS) {
         LOG_ERROR("Reservation", "예약 최대 개수 초과");
         pthread_mutex_unlock(&manager->mutex);
-        return false;
+         return 0; // 실패 시 0 반환
     }
-
     // 시간 유효성 검사
     time_t current_time = time(NULL);
     if (start_time < current_time || end_time <= start_time) {
         LOG_ERROR("Reservation", "잘못된 예약 시간");
         pthread_mutex_unlock(&manager->mutex);
-        return false;
+         return 0; // 실패 시 0 반환
     }
 
     // 예약 중복 검사 (특정 장비에 대해 시간이 겹치는지 확인)
@@ -179,7 +178,7 @@ bool create_reservation(ReservationManager* manager, const char* device_id,
                   start_time >= manager->reservations[i].end_time)) {
                 LOG_ERROR("Reservation", "해당 장비는 요청된 시간에 이미 예약이 존재합니다.");
                 pthread_mutex_unlock(&manager->mutex);
-                return false;
+                return 0; // 실패 시 0 반환
             }
         }
     }
@@ -210,7 +209,8 @@ bool create_reservation(ReservationManager* manager, const char* device_id,
 
     pthread_mutex_unlock(&manager->mutex);
     LOG_INFO("Reservation", "예약 생성 성공: ID=%u", reservation_id);
-    return true;
+    return reservation_id; // [수정] 성공 시 생성된 ID 반환
+    
 }
 
 /**
@@ -301,7 +301,7 @@ void cleanup_expired_reservations(ReservationManager* manager, ResourceManager* 
     if (expired_count > 0) {
         for (int i = 0; i < expired_count; i++) {
             // 이 함수는 내부적으로 해시 테이블을 사용하므로 빠릅니다.
-            update_device_status(res_manager, expired_device_ids[i], DEVICE_AVAILABLE);
+update_device_status(res_manager, expired_device_ids[i], DEVICE_AVAILABLE, 0);
             LOG_INFO("Reservation", "장비 반납 처리 완료: 장비 ID=%s", expired_device_ids[i]);
         }
         LOG_INFO("Reservation", "만료된 예약 정리 완료: 총 %d개 정리됨", expired_count);

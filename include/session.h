@@ -3,7 +3,7 @@
 
 #include "common.h"
 #include "utils.h"
-
+#include "network.h"
 
 // --- [수정] 전방 선언 추가 ---
 // 실제 정의는 다른 헤더파일에 있지만, 여기서는 포인터만 사용하므로
@@ -14,8 +14,8 @@ struct SSLHandler;
 
 #define MAX_USERNAME_LENGTH 32
 #define MAX_IP_LENGTH 46 // IPv6 주소를 고려
-#define MAX_TOKEN_LENGTH 128
-#define SESSION_TIMEOUT 300 // 세션 타임아웃 (초)
+// #define MAX_TOKEN_LENGTH 128
+// #define SESSION_TIMEOUT 300 // 세션 타임아웃 (초)
 
 // 서버 측에서 관리하는 세션의 상태
 typedef enum {
@@ -47,7 +47,7 @@ typedef struct {
 typedef struct {
     int socket_fd;
     SSL* ssl;
-    struct SSLHandler* ssl_handler; // [수정] struct 키워드 추가
+    SSLHandler* ssl_handler;
     char server_ip[MAX_IP_LENGTH];
     int server_port;
     SessionState state;

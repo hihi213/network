@@ -20,14 +20,15 @@ typedef struct {
     char name[MAX_DEVICE_NAME_LENGTH];
     char type[MAX_DEVICE_TYPE_LENGTH];
     DeviceStatus status;
-    char reserved_by[MAX_USERNAME_LENGTH];
+    uint32_t active_reservation_id; 
+    time_t reservation_end_time; // [추가] 예약 종료 시각 저장 필드
 } Device;
 
 /* 함수 선언 */
 ResourceManager* init_resource_manager(void);
 bool add_device(ResourceManager* manager, const char* id, const char* type, const char* name);
 bool remove_device(ResourceManager* manager, const char* id);
-bool update_device_status(ResourceManager* manager, const char* device_id, DeviceStatus new_status);
+bool update_device_status(ResourceManager* manager, const char* device_id, DeviceStatus new_status, uint32_t active_res_id);
 Device* get_device(ResourceManager* manager, const char* id);
 int get_device_list(ResourceManager* manager, Device* devices, int max_devices);
 bool is_device_available(ResourceManager* manager, const char* id);

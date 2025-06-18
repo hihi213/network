@@ -133,7 +133,7 @@ void update_server_status(int session_count, int port) {
 /**
  * @brief 서버의 장비 목록을 UI에 '비상호작용' 형태로 표시합니다.
  */
-void update_server_devices(const Device* devices, int count) {
+void update_server_devices(const Device* devices, int count, ResourceManager* resource_manager, ReservationManager* reservation_manager){
     if (!global_ui_manager || !devices) return;
 
     pthread_mutex_lock(&global_ui_manager->mutex);
@@ -144,11 +144,30 @@ void update_server_devices(const Device* devices, int count) {
     mvwprintw(win, 1, 2, "%-10s | %-25s | %-15s | %s", "ID", "Name", "Type", "Status");
     wattroff(win, A_BOLD);
     mvwaddstr(win, 2, 2, "------------------------------------------------------------------");
+    
     for (int i = 0; i < count; i++) {
         if (i + 3 >= LINES - 6) break;
-        const char* status_str = get_device_status_string(devices[i].status);
+        
+        char status_display_str[128];
+        const char* base_status_str = get_device_status_string(devices[i].status);
+
+        // [추가] 예약된 장비의 경우 남은 시간 계산
+        if (devices[i].status == DEVICE_RESERVED && reservation_manager) {
+             Reservation* res = get_active_reservation_for_device(reservation_manager, resource_manager, devices[i].id);
+            if (res) {
+                time_t now = time(NULL);
+                long remaining_sec = (res->end_time > now) ? (res->end_time - now) : 0;
+                snprintf(status_display_str, sizeof(status_display_str), "%s (%lds left)", base_status_str, remaining_sec);
+            } else {
+                strncpy(status_display_str, base_status_str, sizeof(status_display_str) - 1);
+            }
+        } else {
+            strncpy(status_display_str, base_status_str, sizeof(status_display_str) - 1);
+        }
+        status_display_str[sizeof(status_display_str) - 1] = '\0';
+        
         mvwprintw(win, i + 3, 2, "%-10s | %-25s | %-15s | %s",
-                  devices[i].id, devices[i].name, devices[i].type, status_str);
+                  devices[i].id, devices[i].name, devices[i].type, status_display_str);
     }
     pthread_mutex_unlock(&global_ui_manager->mutex);
 }

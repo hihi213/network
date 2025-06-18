@@ -53,8 +53,7 @@ void refresh_all_windows(void);
 
 /* 서버 UI 함수 */
 void update_server_status(int session_count, int port);
-void update_server_devices(const Device* devices, int count);
-void append_server_log(const char* message);
+void update_server_devices(const Device* devices, int count, ResourceManager* resource_manager, ReservationManager* reservation_manager);
 
 /* 클라이언트 UI 함수 */
 void update_client_status(const ClientSession* session);
@@ -72,5 +71,4 @@ UIManager* init_ui_manager(void);
 void cleanup_ui_manager(UIManager* manager);
 int create_menu(UIManager* manager, const char* title, const char** items, int count);
 void set_status_message(UIManager* manager, const char* message);
-
 #endif /* UI_H */

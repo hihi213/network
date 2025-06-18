@@ -16,6 +16,8 @@ static DeviceStatus string_to_device_status(const char* status_str);
 static void handle_logged_in_menu(void);
 static bool handle_login(void);
 static void process_and_display_device_list(const Message* message);
+static int create_countdown_menu(UIManager* manager, const char* title, const Device* devices, int count);
+
 /* --- 전역 변수 --- */
 extern UIManager* global_ui_manager;
 static ClientSession client_session;
@@ -141,71 +143,127 @@ static void handle_logged_in_menu(void) {
             break;
     }
 }
+static int create_countdown_menu(UIManager* manager, const char* title, const Device* devices, int count) {
+    if (!manager || !devices || count <= 0) return -1;
+
+    pthread_mutex_lock(&manager->mutex);
+
+    int highlight = 0;
+    int choice = -1;
+    int ch;
+
+    keypad(manager->menu_win, TRUE);
+    // getch가 즉시 리턴되지 않고 100ms 동안 입력을 기다리게 설정
+    // 1초(1000ms)로 하면 키 반응성이 낮으므로 100ms 정도로 설정
+    timeout(100); 
+
+    while (1) {
+        werase(manager->menu_win);
+        box(manager->menu_win, 0, 0);
+        if (title) {
+            mvwprintw(manager->menu_win, 0, 2, " %s ", title);
+        }
+
+        // 메뉴 아이템들을 매번 새로 그림
+        for (int i = 0; i < count; i++) {
+            char display_str[256];
+            char status_str[128];
+            
+            // 남은 시간 계산
+            if (devices[i].status == DEVICE_RESERVED && devices[i].reservation_end_time > 0) {
+                time_t now = time(NULL);
+                long remaining_sec = (devices[i].reservation_end_time > now) ? (devices[i].reservation_end_time - now) : 0;
+                snprintf(status_str, sizeof(status_str), "reserved (%lds left)", remaining_sec);
+            } else {
+                // get_device_status_string은 message.h에 선언되어 있다고 가정
+                strncpy(status_str, get_device_status_string(devices[i].status), sizeof(status_str) - 1);
+            }
+
+            snprintf(display_str, sizeof(display_str), "%-10s | %-25s | %-15s | %s",
+                     devices[i].id, devices[i].name, devices[i].type, status_str);
+
+            // 현재 하이라이트된 항목에 다른 색상 적용
+            if (i == highlight) {
+                wattron(manager->menu_win, A_REVERSE);
+                mvwprintw(manager->menu_win, i + 2, 2, " > %s", display_str);
+                wattroff(manager->menu_win, A_REVERSE);
+            } else {
+                mvwprintw(manager->menu_win, i + 2, 4, "%s", display_str);
+            }
+        }
+        wrefresh(manager->menu_win);
+
+        ch = wgetch(manager->menu_win);
+        switch (ch) {
+            case KEY_UP:
+                highlight = (highlight == 0) ? count - 1 : highlight - 1;
+                break;
+            case KEY_DOWN:
+                highlight = (highlight == count - 1) ? 0 : highlight + 1;
+                break;
+            case 10: // KEY_ENTER
+                choice = highlight;
+                goto end_loop;
+            case 27: // ESC
+                choice = -1;
+                goto end_loop;
+            default:
+                break;
+        }
+    }
+
+end_loop:
+    timeout(-1); // getch 동작을 원래의 블로킹 모드로 복원
+    pthread_mutex_unlock(&manager->mutex);
+    return choice;
+}
+
+
 /**
- * @brief 서버로부터 받은 장비 목록 응답을 파싱하고, UI 메뉴로 표시한 후 사용자 입력을 처리합니다.
+ * @brief 서버로부터 받은 장비 목록 응답을 파싱하고, 실시간 카운트다운 UI를 표시합니다.
  * @param message 서버로부터 수신한 MSG_STATUS_RESPONSE 메시지.
  */
 static void process_and_display_device_list(const Message* message) {
-    // 이전에 할당된 장비 리스트가 있다면 메모리 해제
     if (device_list) {
         free(device_list);
         device_list = NULL;
     }
 
-    // 메시지의 인자 개수를 기반으로 장비 수 계산 (ID, Name, Type, Status - 4개씩)
-    device_count = message->arg_count / 4;
+    // [수정] 장비당 5개의 인자를 기반으로 계산
+    device_count = message->arg_count / 5;
     if (device_count <= 0) {
         show_error_message("수신된 장비 목록이 없습니다.");
         getch();
         return;
     }
 
-    // 장비 목록을 저장할 메모리 할당
     device_list = (Device*)malloc(sizeof(Device) * device_count);
-    // UI 메뉴에 표시될 항목들을 위한 메모리 할당
-    const char** menu_items = (const char**)malloc(sizeof(char*) * device_count);
-
-    if (!device_list || !menu_items) {
-        LOG_ERROR("Client", "장비 목록 또는 메뉴 아이템 메모리 할당 실패");
-        if (device_list) free(device_list);
-        if (menu_items) free(menu_items);
-        device_list = NULL;
+    if (!device_list) {
+        LOG_ERROR("Client", "장비 목록 메모리 할당 실패");
         device_count = 0;
         return;
     }
 
-    // 메시지 인자를 파싱하여 장비 목록과 메뉴 아이템 문자열을 채움
+    // 메시지 인자를 파싱하여 장비 목록 채우기
     for (int i = 0; i < device_count; i++) {
-        int base_idx = i * 4;
-        // 장비 정보 파싱
+        int base_idx = i * 5;
         strncpy(device_list[i].id, message->args[base_idx], MAX_ID_LENGTH - 1);
         strncpy(device_list[i].name, message->args[base_idx + 1], MAX_DEVICE_NAME_LENGTH - 1);
         strncpy(device_list[i].type, message->args[base_idx + 2], MAX_DEVICE_TYPE_LENGTH - 1);
         device_list[i].status = string_to_device_status(message->args[base_idx + 3]);
-
-        // UI에 표시될 메뉴 아이템 문자열 생성
-        char* item_str = (char*)malloc(256);
-        if (item_str) {
-            snprintf(item_str, 256, "%-10s | %-25s | %-15s | %s",
-                     device_list[i].id, device_list[i].name, device_list[i].type, message->args[base_idx+3]);
-        }
-        menu_items[i] = item_str;
+        // [추가] 문자열로 된 타임스탬프를 time_t 타입으로 변환하여 저장
+        device_list[i].reservation_end_time = (time_t)atol(message->args[base_idx + 4]);
     }
 
-    // 생성된 아이템으로 UI 메뉴 출력
-    int choice = create_menu(global_ui_manager, "장비 목록 (Enter: 예약, ESC: 뒤로)", menu_items, device_count);
+    // [수정] 범용 create_menu 대신 새로 만든 카운트다운 메뉴 함수 호출
+    int choice = create_countdown_menu(global_ui_manager, "장비 목록 (Enter: 예약, ESC: 뒤로)", device_list, device_count);
 
-    // 메뉴 아이템 문자열을 위해 동적 할당된 메모리 해제
-    for (int i = 0; i < device_count; i++) {
-        free((void*)menu_items[i]);
-    }
-    free(menu_items);
-
-    // 사용자가 항목을 선택한 경우(ESC가 아닌 경우), 예약 처리 함수 호출
     if (choice >= 0) {
         handle_device_reservation(choice);
     }
-}/**
+}
+
+/**
  * @brief 서버로부터 수신한 메시지를 타입에 따라 적절한 핸들러에게 전달합니다.
  * @param message 서버로부터 수신한 메시지.
  */
@@ -367,7 +425,8 @@ static bool handle_login() {
 show_success_message("로그인 시도 중...");
 
     // 헬퍼 함수를 사용하여 로그인 메시지 생성
-    Message* msg = create_login_message("test", "1234"); //
+    Message* msg = create_login_message(username, password);
+    
     if (!msg) {
         show_error_message("메시지 생성 실패");
         return false;

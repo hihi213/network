@@ -70,11 +70,11 @@ bool add_device(ResourceManager* manager, const char* id, const char* type, cons
     
     strncpy(device->id, id, MAX_ID_LENGTH - 1);
     strncpy(device->type, type, MAX_DEVICE_TYPE_LENGTH - 1);
-    strncpy(device->name, name, MAX_DEVICE_NAME_LENGTH - 1);
+     strncpy(device->name, name, MAX_DEVICE_NAME_LENGTH - 1);
     device->status = DEVICE_AVAILABLE;
-    device->reserved_by[0] = '\0';
+    
+    device->active_reservation_id = 0; // [추가] 필드 초기화
 
-    // [개선] 해시 테이블에 삽입
     bool success = ht_insert(manager->devices, id, device);
     if (!success) {
         free(device); // 삽입 실패 시 메모리 해제
@@ -116,12 +116,11 @@ bool remove_device(ResourceManager* manager, const char* id) {
 }
 
 /* 장치 상태 변경 */
-bool update_device_status(ResourceManager* manager, const char* device_id, DeviceStatus new_status) {
+bool update_device_status(ResourceManager* manager, const char* device_id, DeviceStatus new_status, uint32_t active_res_id) {
     if (!manager || !device_id) return false;
 
     pthread_mutex_lock(&manager->mutex);
     
-    // [개선] 해시 테이블에서 O(1)에 장치 검색
     Device* device_to_update = (Device*)ht_get(manager->devices, device_id);
     if (device_to_update == NULL) {
         LOG_WARNING("Resource", "상태를 업데이트할 장비를 찾지 못함: ID=%s", device_id);
@@ -129,12 +128,22 @@ bool update_device_status(ResourceManager* manager, const char* device_id, Devic
         return false;
     }
     
+  
     device_to_update->status = new_status;
-    LOG_INFO("Resource", "장비 상태 업데이트 성공: ID=%s, 새 상태=%d", device_id, new_status);
+    
+    // [추가] 상태에 따라 예약 ID 필드 업데이트
+    if (new_status == DEVICE_AVAILABLE) {
+        device_to_update->active_reservation_id = 0; // 예약이 끝나면 ID를 0으로 초기화
+    } else if (new_status == DEVICE_RESERVED) {
+        device_to_update->active_reservation_id = active_res_id;
+    }
+
+    LOG_INFO("Resource", "장비 상태 업데이트 성공: ID=%s, 새 상태=%d, 예약ID=%u", device_id, new_status, active_res_id);
 
     pthread_mutex_unlock(&manager->mutex);
     return true;
 }
+
 
 // [개선] 해시 테이블 순회 콜백을 위한 데이터 구조
 typedef struct {

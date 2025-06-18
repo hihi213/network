@@ -1,5 +1,5 @@
 #include "../include/message.h"
-
+#include "../include/reservation.h"
 /**
  * @brief 두 개의 문자열 인자를 갖는 메시지를 생성하는 정적 헬퍼 함수.
  * @param type 메시지 타입.
@@ -52,8 +52,18 @@ Message *create_message(MessageType type, const char *data)
     return msg;
 }
 
-Message *create_status_response_message(const Device *devices, int device_count)
+// message.c
+
+/**
+ * @brief 장비 목록으로 상태 응답 메시지를 생성합니다. (종료 시각 타임스탬프 전송 기능 추가)
+ * @param devices 장비 목록 배열.
+ * @param device_count 장비 개수.
+ * @param reservation_manager 예약 관리자 포인터 (예약 정보 조회를 위해 필요).
+ * @return 생성된 Message 객체 포인터.
+ */
+Message *create_status_response_message(const Device *devices, int device_count, ResourceManager* resource_manager, ReservationManager* reservation_manager)
 {
+    // [수정] 장비당 5개의 인자(id, name, type, status, end_time)를 보내도록 변경
     Message *message = create_message(MSG_STATUS_RESPONSE, NULL);
     if (!message)
         return NULL;
@@ -61,21 +71,40 @@ Message *create_status_response_message(const Device *devices, int device_count)
     message->arg_count = 0;
     for (int i = 0; i < device_count && i < MAX_DEVICES; i++)
     {
-        int base_idx = i * 4;
-        if (base_idx + 3 >= MAX_ARGS)
+        // [수정] 장비당 5개의 인자를 위한 공간 확인
+        int base_idx = i * 5;
+        if (base_idx + 4 >= MAX_ARGS)
             break;
-        // ID
-        message->args[base_idx] = strdup(devices[i].id);
-        // Name
+
+        const char* status_str = get_device_status_string(devices[i].status);
+        char end_time_str[32] = "0"; // 기본값 "0"
+
+        // 장비가 예약된 상태이면, 종료 시각을 가져와 문자열로 변환
+        if (devices[i].status == DEVICE_RESERVED && reservation_manager) {
+            Reservation* res = get_active_reservation_for_device(reservation_manager, resource_manager, devices[i].id);
+            if (res) {
+                snprintf(end_time_str, sizeof(end_time_str), "%ld", res->end_time);
+            }
+        }
+
+        message->args[base_idx]     = strdup(devices[i].id);
         message->args[base_idx + 1] = strdup(devices[i].name);
-        // Type
         message->args[base_idx + 2] = strdup(devices[i].type);
-        // Status
-        message->args[base_idx + 3] = strdup(get_device_status_string(devices[i].status));
-        message->arg_count += 4;
+        message->args[base_idx + 3] = strdup(status_str);
+        message->args[base_idx + 4] = strdup(end_time_str); // [추가] 종료 시각 인자
+
+        // 모든 필드가 정상적으로 할당되었는지 확인
+        if (!message->args[base_idx] || !message->args[base_idx+1] || !message->args[base_idx+2] || !message->args[base_idx+3] || !message->args[base_idx+4]) {
+            cleanup_message(message);
+            free(message);
+            return NULL;
+        }
+
+        message->arg_count += 5; // [수정] 인자 카운트 5 증가
     }
     return message;
-}/**
+}
+/**
  * @brief 로그인 요청 메시지를 생성합니다.
  * @param username 사용자 이름.
  * @param password 비밀번호.

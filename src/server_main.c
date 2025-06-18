@@ -72,7 +72,7 @@ int main(int argc, char* argv[]) {
         if (ret == 0) { // 타임아웃 시 UI 업데이트 등 주기적 작업 수행
             Device devices[MAX_DEVICES];
             int count = get_device_list(resource_manager, devices, MAX_DEVICES);
-            if (count >= 0) update_server_devices(devices, count);
+            if (count >= 0)  update_server_devices(devices, count, resource_manager, reservation_manager);
             update_server_status(session_manager->sessions->count, atoi(argv[1]));
             refresh_all_windows();
             continue;
@@ -193,36 +193,39 @@ static void* client_thread_func(void* arg) {
  * @return 예약의 모든 과정이 성공했을 때 true, 하나라도 실패하면 false를 반환합니다.
  */// process_device_reservation 함수가 bool 대신 int를 반환하도록 변경하고, 성공 응답까지 처리
 static int process_device_reservation(Client* client, const char* device_id, int duration_sec) {
-    // 1. 장비 사용 가능 여부 확인
+    // 1. 장비 사용 가능 여부 확인 (기존과 동일)
     if (!is_device_available(resource_manager, device_id)) {
         char error_msg[256];
         // 사용 불가 시, 다른 사용자가 이미 예약했는지 확인하여 더 구체적인 에러 메시지 제공
-        Reservation* active_res = get_active_reservation_for_device(reservation_manager, device_id);
+        Reservation* active_res = get_active_reservation_for_device(reservation_manager, resource_manager, device_id);
         if (active_res) {
             snprintf(error_msg, sizeof(error_msg), "사용 불가: '%s'님이 사용 중입니다.", active_res->username);
         } else {
             strncpy(error_msg, "현재 사용 불가 또는 점검 중인 장비입니다.", sizeof(error_msg)-1);
         }
-        return send_error_response(client->ssl, error_msg);
-
+       return send_error_response(client->ssl, error_msg);
     }
 
-   // 2. 예약 생성
+    // 2. 예약 생성
     time_t start = time(NULL);
     time_t end = start + duration_sec;
-    if (!create_reservation(reservation_manager, device_id, client->username, start, end, "User Reservation")) {
+    
+    // [수정] create_reservation이 bool 대신 생성된 예약 ID를 반환하도록 변경 필요 (reservation.c 수정 참고)
+    uint32_t new_res_id = create_reservation(reservation_manager, device_id, client->username, start, end, "User Reservation");
+
+    if (new_res_id == 0) { // 생성 실패 시 0 반환
         return send_error_response(client->ssl, "예약 생성에 실패했습니다 (시간 중복 등).");
     }
 
     // 3. 장비 상태 변경
-    if (!update_device_status(resource_manager, device_id, DEVICE_RESERVED)) {
+    if (!update_device_status(resource_manager, device_id, DEVICE_RESERVED, new_res_id)) { // [수정] 예약 ID 전달 // [수정] 예약 ID 전달
         // [중요] 예약은 생성되었으나 장비 상태 변경에 실패한 크리티컬한 상황
         // 이 경우, 방금 생성한 예약을 롤백(취소)하는 로직이 필요합니다.
         // 현재 create_reservation이 생성된 ID를 반환하지 않아 롤백 구현이 어려우므로,
         // 향후 create_reservation 함수가 예약 ID를 반환하도록 수정하여 롤백 기능을 추가해야 합니다.
-        LOG_ERROR("Logic", "CRITICAL: 예약은 생성했으나 장비 상태 업데이트 실패. 롤백이 필요합니다!");
-        // 예: cancel_reservation(reservation_manager, new_reservation_id, client->username);
-         return send_error_response(client->ssl, "서버 내부 오류: 예약 상태 동기화 실패");
+        LOG_ERROR("Logic", "CRITICAL: 예약은 생성했으나 장비 상태 업데이트 실패. 롤백을 시작합니다!");
+        cancel_reservation(reservation_manager, new_res_id, "system"); // 시스템 권한으로 롤백
+        return send_error_response(client->ssl, "서버 내부 오류: 예약 상태 동기화 실패");
     }
     // 4. 성공 응답 전송 (새로 추가된 부분)
     Message* response = create_message(MSG_RESERVE_RESPONSE, "success");
@@ -280,7 +283,8 @@ static int handle_status_request(Client* client, const Message* message) {
     }
 
     // 2. 가져온 장비 목록으로 응답 메시지를 생성합니다.
-    Message* response = create_status_response_message(devices, count);
+    Message* response = create_status_response_message(devices, count, resource_manager, reservation_manager);
+    
     if (!response) {
         LOG_ERROR("Handler", "상태 응답 메시지 생성 실패");
         return send_error_response(client->ssl, "응답 메시지를 생성하는 데 실패했습니다.");
