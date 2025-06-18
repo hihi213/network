@@ -308,19 +308,21 @@ static void handle_device_reservation(int device_index) {
         getch();
         return;
     }
-    if (device_list[device_index].status != DEVICE_AVAILABLE) {
-        show_error_message("예약할 수 없는 장비입니다.");
-        getch();
-        return;
-    }
 
     // 사용자에게 예약 시간 입력받기
     char duration_str[10];
     int duration_sec = 0;
+    
     mvprintw(LINES - 5, 2, "예약할 시간(초)을 입력하세요 (예: 30): ");
+    
+    /* --- [수정] 시작 --- */
+    timeout(-1); // 타임아웃을 비활성화하여 사용자가 입력할 때까지 무한정 대기
     echo();
     getnstr(duration_str, sizeof(duration_str) - 1);
     noecho();
+    timeout(100); // 다른 UI에 영향을 주지 않도록 원래의 타임아웃(100ms)으로 복원
+    /* --- [수정] 끝 --- */
+
     sscanf(duration_str, "%d", &duration_sec);
 
     if (duration_sec <= 0) {
@@ -329,22 +331,21 @@ static void handle_device_reservation(int device_index) {
         return;
     }
     
-    // [개선] message.c의 헬퍼 함수를 사용하여 메시지 생성
-    Message* msg = create_reservation_message(device_list[device_index].id, duration_str);
-    if (!msg) {
-        show_error_message("메시지 생성에 실패했습니다.");
-        getch();
-        return;
+    
+    Message* msg = create_reservation_message(device_list[device_index].id, duration_str); //
+    if (!msg) { //
+        show_error_message("메시지 생성에 실패했습니다."); //
+        getch(); //
+        return; //
     }
 
-    if (send_message(client_session.ssl, msg) < 0) {
-        show_error_message("예약 요청 전송 실패");
-        getch();
+    if (send_message(client_session.ssl, msg) < 0) { //
+        show_error_message("예약 요청 전송 실패"); //
+        getch(); //
     }
     
-    // 자원 정리
-    cleanup_message(msg);
-    free(msg);
+    cleanup_message(msg); //
+    free(msg); //
 }
 
 /**
