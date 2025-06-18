@@ -113,6 +113,5 @@ typedef struct {
 /* 성능 모니터링 함수 */
 void* performance_monitor_thread(void* arg);
 int create_performance_monitor(PerformanceMonitor* monitor, PerformanceStats* stats, int interval);
-void cleanup_performance_monitor(PerformanceMonitor* monitor);
 
 #endif /* PERFORMANCE_H */ 

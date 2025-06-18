@@ -50,8 +50,6 @@ const char* get_device_status_string(DeviceStatus status);
 /* 메시지 생성 헬퍼 함수 */
 Message* create_status_response_message(const Device* devices, int count);
 Message* create_error_message(const char* error_msg);
-Message* create_ping_message(void);
-Message* create_pong_message(void);
 Message* create_reservation_message(const char* device_id);
 Message* receive_message(SSL* ssl);
 

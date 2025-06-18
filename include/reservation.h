@@ -38,11 +38,8 @@ ReservationManager* init_reservation_manager(void);
 void cleanup_reservation_manager(ReservationManager* manager);
 bool create_reservation(ReservationManager* manager, const char* device_id, const char* username, time_t start_time, time_t end_time, const char* reason);
 bool cancel_reservation(ReservationManager* manager, uint32_t reservation_id, const char* username);
-Reservation* get_reservation(ReservationManager* manager, uint32_t reservation_id);
-int get_user_reservations(ReservationManager* manager, const char* username, Reservation* reservations, int max_reservations);
 int get_device_reservations(ReservationManager* manager, const char* device_id, Reservation* reservations, int max_reservations);
 void cleanup_expired_reservations(ReservationManager* manager);
-const char* get_reservation_status_string(ReservationStatus status);
 Reservation* get_active_reservation_for_device(ReservationManager* manager, const char* device_id);
 
 #endif /* RESERVATION_H */

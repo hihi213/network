@@ -177,107 +177,6 @@ bool cancel_reservation(ReservationManager* manager, uint32_t reservation_id,
     return true;
 }
 
-/* 예약 정보 조회 */
-Reservation* get_reservation(ReservationManager* manager, uint32_t reservation_id) {
-    if (!manager) {
-        LOG_ERROR("Reservation", "잘못된 파라미터");
-        return NULL;
-    }
-
-    pthread_mutex_lock(&manager->mutex);
-
-    Reservation* reservation = NULL;
-    for (int i = 0; i < manager->reservation_count; i++) {
-        if (manager->reservations[i].id == reservation_id) {
-            reservation = &manager->reservations[i];
-            break;
-        }
-    }
-
-    pthread_mutex_unlock(&manager->mutex);
-    return reservation;
-}
-
-/* 사용자의 예약 목록 조회 */
-int get_user_reservations(ReservationManager* manager, const char* username,
-                         Reservation* reservations, int max_reservations) {
-    if (!manager || !username || !reservations) {
-        LOG_ERROR("Reservation", "잘못된 파라미터");
-        return -1;
-    }
-
-    pthread_mutex_lock(&manager->mutex);
-
-    int count = 0;
-    for (int i = 0; i < manager->reservation_count && count < max_reservations; i++) {
-        if (strcmp(manager->reservations[i].username, username) == 0) {
-            memcpy(&reservations[count], &manager->reservations[i], sizeof(Reservation));
-            count++;
-        }
-    }
-
-    pthread_mutex_unlock(&manager->mutex);
-    return count;
-}
-
-/* 장치의 예약 목록 조회 */
-int get_device_reservations(ReservationManager* manager, const char* device_id,
-                          Reservation* reservations, int max_reservations) {
-    if (!manager || !device_id || !reservations) {
-        LOG_ERROR("Reservation", "잘못된 파라미터");
-        return -1;
-    }
-
-    pthread_mutex_lock(&manager->mutex);
-
-    int count = 0;
-    for (int i = 0; i < manager->reservation_count && count < max_reservations; i++) {
-        if (strcmp(manager->reservations[i].device_id, device_id) == 0) {
-            memcpy(&reservations[count], &manager->reservations[i], sizeof(Reservation));
-            count++;
-        }
-    }
-
-    pthread_mutex_unlock(&manager->mutex);
-    return count;
-}
-
-/* 예약 상태 확인 */
-bool is_reservation_active(ReservationManager* manager, uint32_t reservation_id) {
-    if (!manager) {
-        LOG_ERROR("Reservation", "잘못된 파라미터");
-        return false;
-    }
-
-    LOG_INFO("Reservation", "예약 상태 확인: ID=%u", reservation_id);
-
-    pthread_mutex_lock(&manager->mutex);
-
-    bool active = false;
-    for (int i = 0; i < manager->reservation_count; i++) {
-        if (manager->reservations[i].id == reservation_id) {
-            active = (manager->reservations[i].status == RESERVATION_APPROVED);
-            break;
-        }
-    }
-
-    pthread_mutex_unlock(&manager->mutex);
-    return active;
-}
-
-/* 예약 상태 문자열 변환 */
-const char* get_reservation_status_string(ReservationStatus status) {
-    switch (status) {
-        case RESERVATION_APPROVED:
-            return "Approved";
-        case RESERVATION_CANCELLED:
-            return "Cancelled";
-        case RESERVATION_COMPLETED:
-            return "Completed";
-        default:
-            return "Unknown";
-    }
-}
 
 /* 만료된 예약 정리 */
 void cleanup_expired_reservations(ReservationManager* manager) {
@@ -305,26 +204,6 @@ void cleanup_expired_reservations(ReservationManager* manager) {
     LOG_INFO("Reservation", "만료된 예약 정리 완료: %d개 정리됨", removed_count);
 }
 
-/* 장비 ID로 예약 조회 */
-Reservation* get_reservation_by_device(ReservationManager* manager, const char* device_id) {
-    if (!manager || !device_id) {
-        LOG_ERROR("Reservation", "잘못된 파라미터");
-        return NULL;
-    }
-
-    pthread_mutex_lock(&manager->mutex);
-
-    for (int i = 0; i < manager->reservation_count; i++) {
-        if (strcmp(manager->reservations[i].device_id, device_id) == 0) {
-            Reservation* reservation = &manager->reservations[i];
-            pthread_mutex_unlock(&manager->mutex);
-            return reservation;
-        }
-    }
-
-    pthread_mutex_unlock(&manager->mutex);
-    return NULL;
-} 
 
 Reservation* get_active_reservation_for_device(ReservationManager* manager, const char* device_id) {
     if (!manager || !device_id) return NULL;
