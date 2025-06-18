@@ -236,39 +236,87 @@ static int handle_status_request(Client* client, const Message* message) {
 
     LOG_INFO("Handler", "장비 상태 요청 처리 완료, %d개 장비 정보 전송", count);
     return 0;
+}/**
+ * @brief 장비 예약을 처리하는 통합 트랜잭션 함수.
+ * 이 함수는 자원과 예약이라는 두 매니저를 모두 사용하여 예약의 전체 과정을 책임집니다.
+ * 1. 장비 사용 가능 여부 확인
+ * 2. 예약 생성
+ * 3. 장비 상태 변경
+ * 4. 과정 중 실패 시 에러 응답 전송
+ * @param client 요청을 보낸 클라이언트의 정보.
+ * @param device_id 예약할 장비의 ID.
+ * @return 예약의 모든 과정이 성공했을 때 true, 하나라도 실패하면 false를 반환합니다.
+ */
+static bool process_device_reservation(Client* client, const char* device_id) {
+    // 1. 장비가 사용 가능한지 확인 (자원 매니저)
+    if (!is_device_available(resource_manager, device_id)) {
+        char error_msg[256];
+        // 사용 불가 시, 다른 사용자가 이미 예약했는지 확인하여 더 구체적인 에러 메시지 제공
+        Reservation* active_res = get_active_reservation_for_device(reservation_manager, device_id);
+        if (active_res) {
+            snprintf(error_msg, sizeof(error_msg), "사용 불가: '%s'님이 사용 중입니다.", active_res->username);
+        } else {
+            strncpy(error_msg, "현재 사용 불가 또는 점검 중인 장비입니다.", sizeof(error_msg)-1);
+        }
+        send_error_response(client->ssl, error_msg);
+        return false;
+    }
+
+    // 2. 예약 생성 (예약 매니저)
+    time_t start = time(NULL);
+    time_t end = start + 3600; // 예약 시간은 1시간으로 고정
+    if (!create_reservation(reservation_manager, device_id, client->username, start, end, "User Reservation")) {
+        send_error_response(client->ssl, "예약 생성에 실패했습니다 (시간 중복 등).");
+        return false;
+    }
+
+    // 3. 장비 상태를 '예약됨'으로 변경 (자원 매니저)
+    if (!update_device_status(resource_manager, device_id, DEVICE_RESERVED)) {
+        // [중요] 예약은 생성되었으나 장비 상태 변경에 실패한 크리티컬한 상황
+        // 이 경우, 방금 생성한 예약을 롤백(취소)하는 로직이 필요합니다.
+        // 현재 create_reservation이 생성된 ID를 반환하지 않아 롤백 구현이 어려우므로,
+        // 향후 create_reservation 함수가 예약 ID를 반환하도록 수정하여 롤백 기능을 추가해야 합니다.
+        LOG_ERROR("Logic", "CRITICAL: 예약은 생성했으나 장비 상태 업데이트 실패. 롤백이 필요합니다!");
+        // 예: cancel_reservation(reservation_manager, new_reservation_id, client->username);
+        send_error_response(client->ssl, "서버 내부 오류: 예약 상태 동기화 실패");
+        return false;
+    }
+
+    LOG_INFO("Logic", "예약 트랜잭션 성공: 장비=%s, 사용자=%s", device_id, client->username);
+    return true;
 }
 
+/**
+ * @brief 클라이언트의 예약 요청 메시지를 처리하는 핸들러. (리팩토링된 버전)
+ * 실제 예약 처리 로직은 process_device_reservation 함수에 위임합니다.
+ * @param client 요청을 보낸 클라이언트 정보.
+ * @param message 클라이언트로부터 수신한 메시지.
+ * @return 항상 0을 반환합니다.
+ */
 static int handle_reserve_request(Client* client, const Message* message) {
-    if (message->arg_count < 1) return send_error_response(client->ssl, "인자 부족");
-
+    // 메시지 유효성 검사
+    if (message->arg_count < 1) {
+        return send_error_response(client->ssl, "예약 요청에 필요한 정보(장비 ID)가 부족합니다.");
+    }
+    
     const char* device_id = message->args[0];
 
-    if (!is_device_available(resource_manager, device_id)) {
-        Reservation* active_res = get_active_reservation_for_device(reservation_manager, device_id);
-        char error_msg[256];
-        if (active_res) snprintf(error_msg, sizeof(error_msg), "사용 불가: '%s'님이 사용 중", active_res->username);
-        else strncpy(error_msg, "현재 사용 불가 상태입니다.", sizeof(error_msg)-1);
-        return send_error_response(client->ssl, error_msg);
+    // 예약 처리 함수 호출
+    if (process_device_reservation(client, device_id)) {
+        // 성공 시, 클라이언트에게 성공 메시지 전송
+        Message* response = create_message(MSG_RESERVE_RESPONSE, "success");
+        if (response) {
+            send_message(client->ssl, response);
+            cleanup_message(response);
+            free(response);
+        }
+        LOG_INFO("Handler", "예약 성공 응답 전송: 장비=%s, 사용자=%s", device_id, client->username);
     }
+    // 실패 시의 에러 응답은 process_device_reservation 함수 내부에서 이미 처리되었으므로
+    // 이 핸들러에서는 별도의 처리를 하지 않습니다.
     
-    time_t start = time(NULL), end = start + 3600; // 1시간
-    if (!create_reservation(reservation_manager, device_id, client->username, start, end, "User Reservation")) {
-        return send_error_response(client->ssl, "예약 생성 실패");
-    }
-    
-    update_device_status(resource_manager, device_id, DEVICE_RESERVED);
-
-    Message* response = create_message(MSG_RESERVE_RESPONSE, "success");
-    if (response) { // 생성 성공 여부 확인
-        send_message(client->ssl, response);
-        cleanup_message(response);
-        free(response); // Message 구조체 자체 메모리 해제
-    }
-    
-    LOG_INFO("Handler", "예약 성공: 장비=%s, 사용자=%s", device_id, client->username);
     return 0;
 }
-
 static void signal_handler(int signum) {
     (void)write(self_pipe[1], "s", 1);
 }

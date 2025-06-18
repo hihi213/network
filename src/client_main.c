@@ -16,7 +16,7 @@ static void handle_device_reservation(int device_index);
 static DeviceStatus string_to_device_status(const char* status_str);
 static void handle_logged_in_menu(void);
 static bool handle_login(void);
-
+static void process_and_display_device_list(const Message* message);
 /* --- 전역 변수 --- */
 extern UIManager* global_ui_manager;
 static ClientSession client_session;
@@ -142,55 +142,99 @@ static void handle_logged_in_menu(void) {
             break;
     }
 }
+/**
+ * @brief 서버로부터 받은 장비 목록 응답을 파싱하고, UI 메뉴로 표시한 후 사용자 입력을 처리합니다.
+ * @param message 서버로부터 수신한 MSG_STATUS_RESPONSE 메시지.
+ */
+static void process_and_display_device_list(const Message* message) {
+    // 이전에 할당된 장비 리스트가 있다면 메모리 해제
+    if (device_list) {
+        free(device_list);
+        device_list = NULL;
+    }
 
+    // 메시지의 인자 개수를 기반으로 장비 수 계산 (ID, Name, Type, Status - 4개씩)
+    device_count = message->arg_count / 4;
+    if (device_count <= 0) {
+        show_error_message("수신된 장비 목록이 없습니다.");
+        getch();
+        return;
+    }
+
+    // 장비 목록을 저장할 메모리 할당
+    device_list = (Device*)malloc(sizeof(Device) * device_count);
+    // UI 메뉴에 표시될 항목들을 위한 메모리 할당
+    const char** menu_items = (const char**)malloc(sizeof(char*) * device_count);
+
+    if (!device_list || !menu_items) {
+        LOG_ERROR("Client", "장비 목록 또는 메뉴 아이템 메모리 할당 실패");
+        if (device_list) free(device_list);
+        if (menu_items) free(menu_items);
+        device_list = NULL;
+        device_count = 0;
+        return;
+    }
+
+    // 메시지 인자를 파싱하여 장비 목록과 메뉴 아이템 문자열을 채움
+    for (int i = 0; i < device_count; i++) {
+        int base_idx = i * 4;
+        // 장비 정보 파싱
+        strncpy(device_list[i].id, message->args[base_idx], MAX_ID_LENGTH - 1);
+        strncpy(device_list[i].name, message->args[base_idx + 1], MAX_DEVICE_NAME_LENGTH - 1);
+        strncpy(device_list[i].type, message->args[base_idx + 2], MAX_DEVICE_TYPE_LENGTH - 1);
+        device_list[i].status = string_to_device_status(message->args[base_idx + 3]);
+
+        // UI에 표시될 메뉴 아이템 문자열 생성
+        char* item_str = (char*)malloc(256);
+        if (item_str) {
+            snprintf(item_str, 256, "%-10s | %-25s | %-15s | %s",
+                     device_list[i].id, device_list[i].name, device_list[i].type, message->args[base_idx+3]);
+        }
+        menu_items[i] = item_str;
+    }
+
+    // 생성된 아이템으로 UI 메뉴 출력
+    int choice = create_menu(global_ui_manager, "장비 목록 (Enter: 예약, ESC: 뒤로)", menu_items, device_count);
+
+    // 메뉴 아이템 문자열을 위해 동적 할당된 메모리 해제
+    for (int i = 0; i < device_count; i++) {
+        free((void*)menu_items[i]);
+    }
+    free(menu_items);
+
+    // 사용자가 항목을 선택한 경우(ESC가 아닌 경우), 예약 처리 함수 호출
+    if (choice >= 0) {
+        handle_device_reservation(choice);
+    }
+}/**
+ * @brief 서버로부터 수신한 메시지를 타입에 따라 적절한 핸들러에게 전달합니다.
+ * @param message 서버로부터 수신한 메시지.
+ */
 static void handle_server_message(const Message* message) {
-       switch (message->type) {
-        // [추가] 로그인 응답 처리
+    switch (message->type) {
         case MSG_LOGIN:
             if (strcmp(message->data, "success") == 0) {
                 client_session.state = SESSION_LOGGED_IN;
                 show_success_message("로그인 성공!");
-                sleep(1); // 1초간 메시지 표시
+                sleep(1);
             }
-            // 에러의 경우 MSG_ERROR로 오므로 별도 처리 필요 없음
             break;
-        case MSG_STATUS_RESPONSE: {
-          if (device_list) free(device_list);
-            
-            device_count = message->arg_count / 4;
-            device_list = (Device*)malloc(sizeof(Device) * device_count);
-            const char** menu_items = (const char**)malloc(sizeof(char*) * device_count);
-            if (!device_list || !menu_items) { /* 메모리 할당 실패 처리 */ return; }
 
-            for (int i = 0; i < device_count; i++) {
-                int base_idx = i * 4;
-                strncpy(device_list[i].id, message->args[base_idx], MAX_ID_LENGTH - 1);
-                strncpy(device_list[i].name, message->args[base_idx + 1], MAX_DEVICE_NAME_LENGTH - 1);
-                strncpy(device_list[i].type, message->args[base_idx + 2], MAX_DEVICE_TYPE_LENGTH - 1);
-                device_list[i].status = string_to_device_status(message->args[base_idx + 3]);
-
-                char* item_str = (char*)malloc(256);
-                snprintf(item_str, 256, "%-10s | %-25s | %-15s | %s",
-                         device_list[i].id, device_list[i].name, device_list[i].type, message->args[base_idx+3]);
-                menu_items[i] = item_str;
-            }
-
-            int choice = create_menu(global_ui_manager, "장비 목록 (Enter: 예약, ESC: 뒤로)", menu_items, device_count);
-
-            for (int i = 0; i < device_count; i++) free((void*)menu_items[i]);
-            free(menu_items);
-
-            if (choice >= 0) handle_device_reservation(choice);
+        case MSG_STATUS_RESPONSE:
+            // 장비 목록 처리 로직을 별도 함수로 분리하여 호출
+            process_and_display_device_list(message);
             break;
-        }
+
         case MSG_RESERVE_RESPONSE:
             show_success_message(message->data);
             getch();
             break;
+
         case MSG_ERROR:
             show_error_message(message->data);
             getch();
             break;
+
         default:
             LOG_ERROR("Message", "알 수 없는 메시지 타입: %d", message->type);
             break;
