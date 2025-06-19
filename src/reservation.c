@@ -1,3 +1,9 @@
+/**
+ * @file reservation.c
+ * @brief 예약 관리 모듈 - 장비 예약 시스템의 핵심 기능
+ * @details 예약 생성, 취소, 만료 처리 및 백그라운드 정리 스레드를 담당합니다.
+ */
+
 #include "../include/reservation.h"
 #include "../include/resource.h"
 
@@ -16,6 +22,7 @@ static void null_free_func(void* data) { (void)data; }
 /**
  * @brief 예약 관리자를 초기화하고 만료 예약 정리 스레드를 시작합니다.
  * @param res_manager 리소스 매니저의 포인터.
+ * @param callback 예약 상태 변경 시 호출될 콜백 함수.
  * @return 성공 시 초기화된 ReservationManager 포인터, 실패 시 NULL.
  */
 
@@ -28,7 +35,7 @@ ReservationManager* init_reservation_manager(ResourceManager* res_manager, void 
 
     manager->reservation_count = 0;
     manager->next_reservation_id = 1;
-manager->broadcast_callback = callback; 
+    manager->broadcast_callback = callback; 
     // 예약 ID를 키로 빠른 조회를 위한 해시 테이블 생성
     manager->reservation_map = ht_create(MAX_RESERVATIONS, null_free_func);
     if (!manager->reservation_map) {

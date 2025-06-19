@@ -1,3 +1,9 @@
+/**
+ * @file network.c
+ * @brief 네트워크 통신 모듈 - SSL/TLS 기반의 안전한 소켓 통신 기능
+ * @details 서버/클라이언트 소켓 초기화, SSL 핸드셰이크, 메시지 전송/수신을 담당합니다.
+ */
+
 #include "../include/network.h"
 
 #include "../include/message.h"
@@ -9,18 +15,25 @@
 static void set_common_ssl_ctx_options(SSL_CTX* ctx) {
     if (!ctx) return;
 
-    // TLS 1.2 이상만 사용하도록 설정
+    // TLS 1.2 이상만 사용하도록 설정 (보안 강화)
     SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION);
     SSL_CTX_set_max_proto_version(ctx, TLS1_3_VERSION);
 
-    // 보안 설정
+    // 보안 설정 - 취약한 프로토콜 버전 비활성화
     SSL_CTX_set_options(ctx, SSL_OP_NO_SSLv2 | SSL_OP_NO_SSLv3 | SSL_OP_NO_TLSv1 | SSL_OP_NO_TLSv1_1);
     SSL_CTX_set_mode(ctx, SSL_MODE_AUTO_RETRY);
     
     // 이 프로젝트에서는 자체 서명된 인증서를 사용하므로 검증을 비활성화합니다.
     SSL_CTX_set_verify(ctx, SSL_VERIFY_NONE, NULL);
 }
-/* SSL 컨텍스트 초기화 */
+
+/**
+ * @brief SSL 컨텍스트를 초기화하는 함수
+ * @param manager SSL 매니저 객체
+ * @param cert_file 인증서 파일 경로
+ * @param key_file 개인키 파일 경로
+ * @return 성공 시 0, 실패 시 -1
+ */
 static int init_ssl_context(SSLManager* manager, const char* cert_file, const char* key_file) {
     LOG_INFO("Network", "SSL 컨텍스트 초기화 시작"); //
     if (!manager || !cert_file || !key_file) { //
@@ -28,6 +41,7 @@ static int init_ssl_context(SSLManager* manager, const char* cert_file, const ch
         return -1; //
     }
 
+    // 서버용 SSL 컨텍스트 생성
     manager->ctx = SSL_CTX_new(TLS_server_method()); //
     if (!manager->ctx) { //
         /* ... 오류 처리 ... */
@@ -55,7 +69,15 @@ static int init_ssl_context(SSLManager* manager, const char* cert_file, const ch
     LOG_INFO("SSL", "SSL 컨텍스트 초기화 완료"); //
     return 0; //
 }
-/* SSL 관리자 초기화 */
+
+/**
+ * @brief SSL 관리자를 초기화하는 함수
+ * @param manager 초기화할 SSL 매니저 객체
+ * @param is_server 서버 모드 여부 (true: 서버, false: 클라이언트)
+ * @param cert_file 인증서 파일 경로 (서버 모드에서만 사용)
+ * @param key_file 개인키 파일 경로 (서버 모드에서만 사용)
+ * @return 성공 시 0, 실패 시 -1
+ */
 int init_ssl_manager(SSLManager* manager, bool is_server, const char* cert_file, const char* key_file) {
     LOG_INFO("SSL", "init_ssl_manager 진입");
     
@@ -151,7 +173,11 @@ int init_ssl_manager(SSLManager* manager, bool is_server, const char* cert_file,
     }
 }
 
-/* 서버 소켓 초기화 */
+/**
+ * @brief 서버 소켓을 초기화하는 함수
+ * @param port 서버가 리스닝할 포트 번호
+ * @return 성공 시 소켓 파일 디스크립터, 실패 시 -1
+ */
 int init_server_socket(int port) {
     LOG_INFO("Network", "서버 소켓 초기화 시작: 포트=%d", port);
     int server_fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -160,25 +186,28 @@ int init_server_socket(int port) {
         return -1;
     }
 
-    // 소켓 옵션 설정
+    // 소켓 옵션 설정 (주소 재사용 등)
     if (set_socket_options(server_fd) < 0) {
         LOG_ERROR("Network", "소켓 옵션 설정 실패: %s", strerror(errno));
         close(server_fd);
         return -1;
     }
 
+    // 서버 주소 구조체 설정
     struct sockaddr_in server_addr;
     memset(&server_addr, 0, sizeof(server_addr));
     server_addr.sin_family = AF_INET;
-    server_addr.sin_addr.s_addr = INADDR_ANY;
+    server_addr.sin_addr.s_addr = INADDR_ANY; // 모든 인터페이스에서 수신
     server_addr.sin_port = htons(port);
 
+    // 소켓을 주소에 바인딩
     if (bind(server_fd, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
         LOG_ERROR("Network", "서버 소켓 바인딩 실패");
         close(server_fd);
         return -1;
     }
 
+    // 연결 대기열 설정
     if (listen(server_fd, SOMAXCONN) < 0) {
         LOG_ERROR("Network", "서버 소켓 리스닝 실패");
         close(server_fd);
@@ -189,7 +218,12 @@ int init_server_socket(int port) {
     return server_fd;
 }
 
-/* 클라이언트 소켓 초기화 */
+/**
+ * @brief 클라이언트 소켓을 초기화하고 서버에 연결하는 함수
+ * @param server_ip 서버의 IP 주소
+ * @param port 서버의 포트 번호
+ * @return 성공 시 소켓 파일 디스크립터, 실패 시 -1
+ */
 int init_client_socket(const char* server_ip, int port) {
     LOG_INFO("Network", "클라이언트 소켓 초기화 시작: 서버=%s, 포트=%d", server_ip, port);
     int client_fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -205,17 +239,20 @@ int init_client_socket(const char* server_ip, int port) {
         return -1;
     }
 
+    // 서버 주소 구조체 설정
     struct sockaddr_in server_addr;
     memset(&server_addr, 0, sizeof(server_addr));
     server_addr.sin_family = AF_INET;
     server_addr.sin_port = htons(port);
 
+    // IP 주소 문자열을 바이너리로 변환
     if (inet_pton(AF_INET, server_ip, &server_addr.sin_addr) <= 0) {
         LOG_ERROR("Network", "IP 주소 변환 실패: %s", strerror(errno));
         close(client_fd);
         return -1;
     }
 
+    // 서버에 연결
     if (connect(client_fd, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
         LOG_ERROR("Network", "서버 연결 실패");
         close(client_fd);
@@ -226,7 +263,11 @@ int init_client_socket(const char* server_ip, int port) {
     return client_fd;
 }
 
-/* SSL 핸드셰이크 처리 함수 */
+/**
+ * @brief SSL 핸드셰이크를 처리하는 함수
+ * @param handler SSL 핸들러 객체
+ * @return 성공 시 0, 실패 시 -1
+ */
 int handle_ssl_handshake(SSLHandler* handler) {
     if (!handler || !handler->ssl) {
         LOG_ERROR("SSL", "잘못된 SSL 핸들러");
@@ -237,9 +278,9 @@ int handle_ssl_handshake(SSLHandler* handler) {
 
     int ret;
     if (handler->is_server) {
-        ret = SSL_accept(handler->ssl);
+        ret = SSL_accept(handler->ssl); // 서버 측 SSL 수락
     } else {
-        ret = SSL_connect(handler->ssl);
+        ret = SSL_connect(handler->ssl); // 클라이언트 측 SSL 연결
     }
 
     if (ret <= 0) {
@@ -292,8 +333,12 @@ int handle_ssl_handshake(SSLHandler* handler) {
     return 0;
 }
 
-
-
+/**
+ * @brief SSL 핸들러를 생성하는 함수
+ * @param manager SSL 매니저 객체
+ * @param socket_fd 소켓 파일 디스크립터
+ * @return 생성된 SSL 핸들러 포인터, 실패 시 NULL
+ */
 SSLHandler* create_ssl_handler(SSLManager* manager, int socket_fd) {
     if (!manager || !manager->ctx) {
         LOG_ERROR("SSL", "잘못된 SSL Manager 또는 Context");
@@ -307,11 +352,13 @@ SSLHandler* create_ssl_handler(SSLManager* manager, int socket_fd) {
     }
     memset(handler, 0, sizeof(SSLHandler));
 
+    // 핸들러 초기화
     handler->socket_fd = socket_fd;
     handler->ctx = manager->ctx;
     handler->handshake_state = SSL_HANDSHAKE_INIT;
     handler->is_server = manager->is_server;  // 서버/클라이언트 모드 설정
 
+    // SSL 객체 생성
     handler->ssl = SSL_new(manager->ctx);
     if (!handler->ssl) {
         LOG_ERROR("SSL", "SSL 객체 생성 실패: %s", ERR_error_string(ERR_get_error(), NULL));
@@ -319,6 +366,7 @@ SSLHandler* create_ssl_handler(SSLManager* manager, int socket_fd) {
         return NULL;
     }
 
+    // SSL 객체에 소켓 연결
     if (!SSL_set_fd(handler->ssl, socket_fd)) {
         LOG_ERROR("SSL", "SSL 소켓 설정 실패: %s", ERR_error_string(ERR_get_error(), NULL));
         SSL_free(handler->ssl);
@@ -329,6 +377,10 @@ SSLHandler* create_ssl_handler(SSLManager* manager, int socket_fd) {
     return handler;
 }
 
+/**
+ * @brief SSL 핸들러의 메모리를 정리하는 함수
+ * @param handler 정리할 SSL 핸들러 포인터
+ */
 void cleanup_ssl_handler(SSLHandler* handler) {
     if (!handler) return;
     if (handler->ssl) {
@@ -339,13 +391,21 @@ void cleanup_ssl_handler(SSLHandler* handler) {
     free(handler); // SSLHandler 자체의 메모리 해제
 }
 
-/* 유틸리티 함수 */
+/**
+ * @brief SSL 활동 시간을 업데이트하는 유틸리티 함수
+ * @param handler SSL 핸들러 객체
+ */
 void update_ssl_activity(SSLHandler* handler) {
     if (handler) {
         handler->last_activity = time(NULL);
     }
 }
 
+/**
+ * @brief 소켓 옵션을 설정하는 함수
+ * @param socket_fd 설정할 소켓의 파일 디스크립터
+ * @return 성공 시 0, 실패 시 -1
+ */
 int set_socket_options(int socket_fd) {
     int opt = 1;
     if (setsockopt(socket_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
@@ -355,6 +415,10 @@ int set_socket_options(int socket_fd) {
     return 0;
 }
 
+/**
+ * @brief SSL 매니저의 메모리를 정리하는 함수
+ * @param manager 정리할 SSL 매니저 객체
+ */
 void cleanup_ssl_manager(SSLManager* manager) {
     if (!manager) return;
 
@@ -369,6 +433,12 @@ void cleanup_ssl_manager(SSLManager* manager) {
     ERR_free_strings();
 }
 
+/**
+ * @brief SSL을 통해 메시지를 전송하는 함수
+ * @param ssl SSL 연결 객체
+ * @param message 전송할 메시지 객체
+ * @return 성공 시 0, 실패 시 -1
+ */
 int send_message(SSL* ssl, const Message* message) {
 if (!ssl || !message) {
         LOG_ERROR("Network", "send_message: 잘못된 파라미터");

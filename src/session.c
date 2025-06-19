@@ -1,3 +1,9 @@
+/**
+ * @file session.c
+ * @brief 세션 관리 모듈 - 클라이언트 연결 세션 관리
+ * @details 서버 측 세션 생성/관리 및 클라이언트 세션 정리 기능을 제공합니다.
+ */
+
 #include "../include/session.h"
 #include "../include/network.h"
 
@@ -7,7 +13,10 @@ static void free_session_wrapper(void* session) {
     free(session);
 }
 
-/* 세션 매니저 초기화 */
+/**
+ * @brief 세션 매니저를 초기화합니다.
+ * @return 성공 시 초기화된 SessionManager 포인터, 실패 시 NULL
+ */
 SessionManager* init_session_manager(void) {
     SessionManager* manager = (SessionManager*)malloc(sizeof(SessionManager));
     if (!manager) {
@@ -23,6 +32,7 @@ SessionManager* init_session_manager(void) {
         return NULL;
     }
     
+    // 뮤텍스 초기화
     if (pthread_mutex_init(&manager->mutex, NULL) != 0) {
         LOG_ERROR("Session", "뮤텍스 초기화 실패");
         ht_destroy(manager->sessions);
@@ -30,11 +40,15 @@ SessionManager* init_session_manager(void) {
         return NULL;
     }
     
+    // 랜덤 시드 초기화 (토큰 생성용)
     srand(time(NULL));
     return manager;
 }
 
-/* 세션 매니저 정리 */
+/**
+ * @brief 세션 매니저의 메모리를 정리합니다.
+ * @param manager 정리할 SessionManager 포인터
+ */
 void cleanup_session_manager(SessionManager* manager) {
     if (!manager) return;
     
@@ -44,7 +58,14 @@ void cleanup_session_manager(SessionManager* manager) {
     free(manager);
 }
 
-/* 세션 생성 */
+/**
+ * @brief 새로운 클라이언트 세션을 생성합니다.
+ * @param manager 세션 매니저 포인터
+ * @param username 사용자 이름
+ * @param client_ip 클라이언트 IP 주소
+ * @param client_port 클라이언트 포트 번호
+ * @return 생성된 ServerSession 포인터, 실패 시 NULL
+ */
 ServerSession* create_session(SessionManager* manager, const char* username, const char* client_ip, int client_port) {
     if (!manager || !username || !client_ip) {
         LOG_ERROR("Session", "잘못된 파라미터");
@@ -71,6 +92,8 @@ ServerSession* create_session(SessionManager* manager, const char* username, con
     session->state = SESSION_ACTIVE;
     session->created_at = time(NULL);
     session->last_activity = session->created_at;
+    
+    // 고유한 세션 토큰 생성 (사용자명_타임스탬프 형식)
     snprintf(session->token, MAX_TOKEN_LENGTH, "%s_%ld", username, session->created_at);
 
     // 3. 해시 테이블에 삽입 (키: username). 이미 키가 존재하면 자동으로 덮어씀.
@@ -85,8 +108,12 @@ ServerSession* create_session(SessionManager* manager, const char* username, con
     return session;
 }
 
-
-/* 세션 종료 */
+/**
+ * @brief 클라이언트 세션을 종료합니다.
+ * @param manager 세션 매니저 포인터
+ * @param username 종료할 세션의 사용자 이름
+ * @return 성공 시 0, 실패 시 -1
+ */
 int close_session(SessionManager* manager, const char* username) {
     if (!manager || !username) {
         LOG_ERROR("Session", "잘못된 매개변수");
@@ -107,26 +134,33 @@ int close_session(SessionManager* manager, const char* username) {
     }
 }
 
-// ... (cleanup_client_session 함수는 변경 없음) ...
+/**
+ * @brief 클라이언트 세션의 메모리를 정리합니다.
+ * @param session 정리할 ClientSession 포인터
+ */
 void cleanup_client_session(ClientSession* session) {
     if (!session) return;
 
+    // SSL 핸들러 정리
     if (session->ssl_handler) {
         cleanup_ssl_handler(session->ssl_handler);
         session->ssl_handler = NULL;
     }
     
+    // SSL 연결 정리
     if (session->ssl) {
         SSL_shutdown(session->ssl);
         SSL_free(session->ssl);
         session->ssl = NULL;
     }
 
+    // 소켓 정리
     if (session->socket_fd >= 0) {
         close(session->socket_fd);
         session->socket_fd = -1;
     }
 
+    // 세션 정보 초기화
     session->state = SESSION_DISCONNECTED;
     memset(session->username, 0, sizeof(session->username));
     memset(session->server_ip, 0, sizeof(session->server_ip));

@@ -1,3 +1,9 @@
+/**
+ * @file resource.c
+ * @brief 리소스 관리 모듈 - 장비 정보 관리 및 상태 제어
+ * @details 장비 추가/제거, 상태 변경, 목록 조회 기능을 제공합니다.
+ */
+
 #include "../include/resource.h"
 
 
@@ -6,7 +12,10 @@ static void free_device_wrapper(void* device) {
     free(device);
 }
 
-/* 리소스 매니저 초기화 */
+/**
+ * @brief 리소스 매니저를 초기화하고 기본 장비들을 추가합니다.
+ * @return 성공 시 초기화된 ResourceManager 포인터, 실패 시 NULL
+ */
 ResourceManager* init_resource_manager(void) {
     ResourceManager* manager = (ResourceManager*)malloc(sizeof(ResourceManager));
     if (!manager) {
@@ -39,7 +48,10 @@ ResourceManager* init_resource_manager(void) {
     return manager;
 }
 
-/* 리소스 매니저 정리 */
+/**
+ * @brief 리소스 매니저의 메모리를 정리합니다.
+ * @param manager 정리할 ResourceManager 포인터
+ */
 void cleanup_resource_manager(ResourceManager* manager) {
     if (!manager) return;
 
@@ -49,7 +61,14 @@ void cleanup_resource_manager(ResourceManager* manager) {
     free(manager);
 }
 
-/* 장치 추가 */
+/**
+ * @brief 새로운 장비를 시스템에 추가합니다.
+ * @param manager 리소스 매니저 포인터
+ * @param id 장비 고유 ID
+ * @param type 장비 타입 (예: Printer, Scanner 등)
+ * @param name 장비 이름
+ * @return 성공 시 true, 실패 시 false
+ */
 bool add_device(ResourceManager* manager, const char* id, const char* type, const char* name) {
     if (!manager || !id || !type || !name) return false;
 
@@ -84,7 +103,12 @@ bool add_device(ResourceManager* manager, const char* id, const char* type, cons
     return success;
 }
 
-/* 장치 제거 */
+/**
+ * @brief 시스템에서 장비를 제거합니다.
+ * @param manager 리소스 매니저 포인터
+ * @param id 제거할 장비의 ID
+ * @return 성공 시 true, 실패 시 false
+ */
 bool remove_device(ResourceManager* manager, const char* id) {
     if (!manager || !id) {
         LOG_ERROR("Resource", "잘못된 파라미터");
@@ -115,7 +139,14 @@ bool remove_device(ResourceManager* manager, const char* id) {
     return success;
 }
 
-/* 장치 상태 변경 */
+/**
+ * @brief 장비의 상태를 변경합니다.
+ * @param manager 리소스 매니저 포인터
+ * @param device_id 상태를 변경할 장비의 ID
+ * @param new_status 새로운 상태
+ * @param active_res_id 활성 예약 ID (예약 상태일 때만 사용)
+ * @return 성공 시 true, 실패 시 false
+ */
 bool update_device_status(ResourceManager* manager, const char* device_id, DeviceStatus new_status, uint32_t active_res_id) {
     if (!manager || !device_id) return false;
 
@@ -162,7 +193,13 @@ static void copy_device_callback(const char* key, void* value, void* user_data) 
     }
 }
 
-/* 장치 목록 조회 */
+/**
+ * @brief 모든 장비 목록을 조회합니다.
+ * @param manager 리소스 매니저 포인터
+ * @param devices 장비 정보를 저장할 배열
+ * @param max_devices 배열의 최대 크기
+ * @return 조회된 장비 개수, 실패 시 -1
+ */
 int get_device_list(ResourceManager* manager, Device* devices, int max_devices) {
     if (!manager || !devices || max_devices <= 0) return -1;
     
@@ -178,7 +215,12 @@ int get_device_list(ResourceManager* manager, Device* devices, int max_devices) 
 }
 
 
-/* 장치 상태 확인 */
+/**
+ * @brief 특정 장비가 사용 가능한지 확인합니다.
+ * @param manager 리소스 매니저 포인터
+ * @param id 확인할 장비의 ID
+ * @return 사용 가능하면 true, 아니면 false
+ */
 bool is_device_available(ResourceManager* manager, const char* id) {
     if (!manager || !id) return false;
 

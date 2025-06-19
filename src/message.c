@@ -1,3 +1,9 @@
+/**
+ * @file message.c
+ * @brief 메시지 처리 모듈 - 클라이언트와 서버 간 통신을 위한 메시지 생성, 전송, 수신 기능
+ * @details SSL을 통한 안전한 메시지 통신을 지원하며, 다양한 메시지 타입을 처리합니다.
+ */
+
 #include "../include/message.h"
 #include "../include/reservation.h"
 /**
