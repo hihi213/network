@@ -31,6 +31,7 @@ typedef struct {
     char data[MAX_MESSAGE_LENGTH];
     char* args[MAX_ARGS];
     int arg_count;
+    int priority; // 우선순위 필드 추가
 } Message;
 
 /* 메시지 버퍼 구조체 */

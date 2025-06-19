@@ -20,21 +20,21 @@ static void free_session_wrapper(void* session) {
 SessionManager* init_session_manager(void) {
     SessionManager* manager = (SessionManager*)malloc(sizeof(SessionManager));  // 세션 매니저 메모리 할당
     if (!manager) {  // 메모리 할당 실패 시
-        LOG_ERROR("Session", "세션 매니저 메모리 할당 실패");  // 에러 로그 출력
+        error_report(ERROR_MEMORY_ALLOCATION_FAILED, "Session", "세션 매니저 메모리 할당 실패");  // 에러 로그 출력
         return NULL;  // NULL 반환
     }
 
     // [개선] 해시 테이블 초기화. 최대 세션 수(MAX_SESSIONS)를 크기로 지정.
     manager->sessions = ht_create(MAX_SESSIONS, free_session_wrapper);  // 해시 테이블 생성
-    if(!manager->sessions){  // 해시 테이블 생성 실패 시
-        LOG_ERROR("Session", "세션 해시 테이블 생성 실패");  // 에러 로그 출력
+    if (!manager->sessions) {  // 해시 테이블 생성 실패 시
+        error_report(ERROR_HASHTABLE_CREATION_FAILED, "Session", "세션 해시 테이블 생성 실패");  // 에러 로그 출력
         free(manager);  // 매니저 메모리 해제
         return NULL;  // NULL 반환
     }
     
     // 뮤텍스 초기화
     if (pthread_mutex_init(&manager->mutex, NULL) != 0) {  // 뮤텍스 초기화 실패 시
-        LOG_ERROR("Session", "뮤텍스 초기화 실패");  // 에러 로그 출력
+        error_report(ERROR_INVALID_STATE, "Session", "뮤텍스 초기화 실패");  // 에러 로그 출력
         ht_destroy(manager->sessions);  // 해시 테이블 정리
         free(manager);  // 매니저 메모리 해제
         return NULL;  // NULL 반환
@@ -42,6 +42,8 @@ SessionManager* init_session_manager(void) {
     
     // 랜덤 시드 초기화 (토큰 생성용)
     srand(time(NULL));  // 현재 시간으로 랜덤 시드 설정
+
+    LOG_INFO("Session", "세션 매니저 초기화 성공");  // 정보 로그 출력
     return manager;  // 초기화된 매니저 반환
 }
 
@@ -68,49 +70,55 @@ void cleanup_session_manager(SessionManager* manager) {
  */
 ServerSession* create_session(SessionManager* manager, const char* username, const char* client_ip, int client_port) {
     if (!manager || !username || !client_ip) {  // 유효성 검사
-        LOG_ERROR("Session", "create_session: 잘못된 파라미터");
+        error_report(ERROR_INVALID_PARAMETER, "Session", "create_session: 잘못된 파라미터");
         return NULL;  // NULL 반환
     }
 
     pthread_mutex_lock(&manager->mutex);  // 뮤텍스 잠금
     LOG_INFO("Session", "세션 생성 시작: 사용자=%s, IP=%s, 포트=%d", username, client_ip, client_port);
 
-    // [개선] 로직이 매우 단순해짐.
-    // 1. 새 세션 객체를 동적 할당
-    ServerSession* session = (ServerSession*)malloc(sizeof(ServerSession));  // 세션 구조체 메모리 할당
-    if(!session){  // 메모리 할당 실패 시
-        LOG_ERROR("Session", "세션 메모리 할당 실패: 사용자=%s", username);
+    // [개선] 해시 테이블에서 기존 세션 확인
+    ServerSession* existing_session = (ServerSession*)ht_get(manager->sessions, username);
+    if (existing_session) {  // 기존 세션이 존재하는 경우
+        LOG_INFO("Session", "기존 세션 발견, 교체: %s", username);
+        ht_delete(manager->sessions, username);  // 기존 세션 삭제
+    }
+
+    // 새 세션 생성
+    ServerSession* new_session = (ServerSession*)malloc(sizeof(ServerSession));  // 새 세션 메모리 할당
+    if (!new_session) {  // 메모리 할당 실패 시
+        error_report(ERROR_SESSION_CREATION_FAILED, "Session", "세션 메모리 할당 실패: 사용자=%s", username);
         pthread_mutex_unlock(&manager->mutex);  // 뮤텍스 해제
         return NULL;  // NULL 반환
     }
 
-    // 2. 세션 정보 채우기
-    strncpy(session->username, username, MAX_USERNAME_LENGTH - 1);  // 사용자 이름 복사
-    session->username[MAX_USERNAME_LENGTH - 1] = '\0';  // 문자열 종료 문자 보장
-    strncpy(session->client_ip, client_ip, MAX_IP_LENGTH - 1);  // 클라이언트 IP 복사
-    session->client_ip[MAX_IP_LENGTH - 1] = '\0';  // 문자열 종료 문자 보장
-    session->client_port = client_port;  // 클라이언트 포트 설정
-    session->state = SESSION_ACTIVE;  // 세션 상태를 활성으로 설정
-    session->created_at = time(NULL);  // 생성 시간 설정
-    session->last_activity = session->created_at;  // 마지막 활동 시간을 생성 시간으로 초기화
+    // 세션 정보 채우기
+    strncpy(new_session->username, username, MAX_USERNAME_LENGTH - 1);  // 사용자 이름 복사
+    new_session->username[MAX_USERNAME_LENGTH - 1] = '\0';  // 문자열 종료 문자 보장
+    strncpy(new_session->client_ip, client_ip, MAX_IP_LENGTH - 1);  // 클라이언트 IP 복사
+    new_session->client_ip[MAX_IP_LENGTH - 1] = '\0';  // 문자열 종료 문자 보장
+    new_session->client_port = client_port;  // 클라이언트 포트 설정
+    new_session->state = SESSION_ACTIVE;  // 세션 상태를 활성으로 설정
+    new_session->created_at = time(NULL);  // 생성 시간 설정
+    new_session->last_activity = new_session->created_at;  // 마지막 활동 시간을 생성 시간으로 초기화
     
     // 고유한 세션 토큰 생성 (사용자명_타임스탬프 형식)
-    snprintf(session->token, MAX_TOKEN_LENGTH, "%s_%ld", username, session->created_at);  // 세션 토큰 생성
+    snprintf(new_session->token, MAX_TOKEN_LENGTH, "%s_%ld", username, new_session->created_at);  // 세션 토큰 생성
 
     LOG_INFO("Session", "세션 정보 설정 완료: 사용자=%s, 토큰=%s, 생성시간=%ld", 
-             username, session->token, session->created_at);
+             username, new_session->token, new_session->created_at);
 
-    // 3. 해시 테이블에 삽입 (키: username). 이미 키가 존재하면 자동으로 덮어씀.
-    if (!ht_insert(manager->sessions, username, session)) {  // 해시 테이블에 세션 삽입 실패 시
-        LOG_ERROR("Session", "해시 테이블에 세션 삽입 실패: 사용자=%s", username);
-        free(session); // 삽입 실패 시 메모리 해제
-        session = NULL;  // 세션 포인터를 NULL로 설정
-    } else {  // 삽입 성공 시
-        LOG_INFO("Session", "세션 생성/갱신 완료: 사용자=%s", username);  // 정보 로그 출력
+    // [개선] 해시 테이블에 세션 삽입
+    if (!ht_insert(manager->sessions, username, new_session)) {  // 해시 테이블 삽입 실패 시
+        error_report(ERROR_SESSION_CREATION_FAILED, "Session", "해시 테이블에 세션 삽입 실패: 사용자=%s", username);
+        free(new_session);  // 세션 메모리 해제
+        pthread_mutex_unlock(&manager->mutex);  // 뮤텍스 해제
+        return NULL;  // NULL 반환
     }
-    
+
+    LOG_INFO("Session", "세션 생성 성공: %s", username);  // 정보 로그 출력
     pthread_mutex_unlock(&manager->mutex);  // 뮤텍스 해제
-    return session;  // 생성된 세션 반환
+    return new_session;  // 생성된 세션 반환
 }
 
 /**
@@ -121,7 +129,7 @@ ServerSession* create_session(SessionManager* manager, const char* username, con
  */
 int close_session(SessionManager* manager, const char* username) {
     if (!manager || !username) {  // 유효성 검사
-        LOG_ERROR("Session", "close_session: 잘못된 매개변수");
+        error_report(ERROR_INVALID_PARAMETER, "Session", "close_session: 잘못된 매개변수");
         return -1;  // 에러 코드 반환
     }
 

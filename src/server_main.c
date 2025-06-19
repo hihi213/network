@@ -6,6 +6,12 @@
 #include "../include/resource.h"
 #include "../include/reservation.h" 
 
+// 메시지 노드 구조체
+typedef struct MsgNode {
+    Message* msg;
+    struct MsgNode* next;
+} MsgNode;
+
 // Client 구조체 정의
 typedef struct {
     int socket_fd;
@@ -15,6 +21,8 @@ typedef struct {
     SessionState state;
     char username[MAX_USERNAME_LENGTH];
     time_t last_activity;
+    MsgNode* queues[11]; // 우선순위 0~10 (MAX_PRIORITY=10 가정)
+    MsgNode* tails[11];
 } Client;
 
 // 함수 프로토타입
@@ -26,6 +34,7 @@ static int handle_client_message(Client* client, const Message* message);
 static int handle_status_request(Client* client, const Message* message);
 static int handle_reserve_request(Client* client, const Message* message);
 static int handle_login_request(Client* client, const Message* message);
+static int handle_cancel_request(Client* client, const Message* message);
 static int send_error_response(SSL* ssl, const char* error_message);
 static void client_message_loop(Client* client);
 static void cleanup_client(Client* client);
@@ -45,13 +54,61 @@ static Client* client_list[MAX_CLIENTS];
 static int num_clients = 0;
 static pthread_mutex_t client_list_mutex;
 
+#define MAX_PRIORITY 10
+
+// 메시지 삽입 (우선순위 큐)
+void enqueue_message(Client* client, Message* m) {
+    int p = m->priority;
+    if (p < 0) p = 0;
+    if (p > MAX_PRIORITY) p = MAX_PRIORITY;
+    MsgNode* node = (MsgNode*)malloc(sizeof(MsgNode));
+    node->msg = m;
+    node->next = NULL;
+    if (!client->queues[p]) {
+        client->queues[p] = client->tails[p] = node;
+    } else {
+        client->tails[p]->next = node;
+        client->tails[p] = node;
+    }
+}
+
+// 메시지 꺼내기 (우선순위 높은 것부터)
+Message* dequeue_message(Client* client) {
+    for (int p = MAX_PRIORITY; p >= 0; --p) {
+        if (client->queues[p]) {
+            MsgNode* node = client->queues[p];
+            Message* m = node->msg;
+            client->queues[p] = node->next;
+            if (!client->queues[p]) client->tails[p] = NULL;
+            free(node);
+            return m;
+        }
+    }
+    return NULL;
+}
+
+// 큐 정리 (메모리 해제)
+void cleanup_client_queue(Client* client) {
+    for (int p = 0; p <= MAX_PRIORITY; ++p) {
+        MsgNode* node = client->queues[p];
+        while (node) {
+            MsgNode* next = node->next;
+            cleanup_message(node->msg);
+            free(node->msg);
+            free(node);
+            node = next;
+        }
+        client->queues[p] = client->tails[p] = NULL;
+    }
+}
+
 int main(int argc, char* argv[]) {
     if (argc != 2) {
-        fprintf(stderr, "사용법: %s <포트>\n", argv[0]);
+        error_report(ERROR_INVALID_PARAMETER, "Server", "사용법: %s <포트>", argv[0]);
         return 1;
     }
     if (init_server(atoi(argv[1])) != 0) {
-        LOG_ERROR("Main", "서버 초기화 실패");
+        error_report(ERROR_NETWORK_SOCKET_CREATION_FAILED, "Main", "서버 초기화 실패");
         cleanup_server();
         return 1;
     }
@@ -65,7 +122,7 @@ int main(int argc, char* argv[]) {
         int ret = poll(fds, 2, 1000);
         if (ret < 0) {
             if (errno == EINTR) continue;
-            LOG_ERROR("Main", "Poll 에러: %s", strerror(errno));
+            error_report(ERROR_NETWORK_SOCKET_OPTION_FAILED, "Main", "Poll 에러: %s", strerror(errno));
             break;
         }
         if (ret == 0) {
@@ -81,20 +138,25 @@ int main(int argc, char* argv[]) {
             continue;
         }
         if (fds[0].revents & POLLIN) {
-            struct sockaddr_in client_addr;
-            socklen_t client_len = sizeof(client_addr);
-            int client_sock = accept(server_sock, (struct sockaddr*)&client_addr, &client_len);
-            if (client_sock < 0) { continue; }
             Client* client = (Client*)malloc(sizeof(Client));
-            if (!client) { close(client_sock); continue; }
+            if (!client) { continue; }
             memset(client, 0, sizeof(Client));
-            client->socket_fd = client_sock;
-            inet_ntop(AF_INET, &client_addr.sin_addr, client->ip, sizeof(client->ip));
+            
+            // accept_client 함수를 사용하여 클라이언트 연결 처리
+            client->ssl_handler = accept_client(server_sock, &ssl_manager, client->ip);
+            if (!client->ssl_handler) {
+                free(client);
+                continue;
+            }
+            
+            client->ssl = client->ssl_handler->ssl;
+            client->socket_fd = client->ssl_handler->socket_fd;
+            client->last_activity = time(NULL);
+            
             pthread_t thread;
             if (pthread_create(&thread, NULL, client_thread_func, client) != 0) {
-                LOG_ERROR("Main", "클라이언트 스레드 생성 실패");
-                close(client_sock);
-                free(client);
+                error_report(ERROR_SESSION_CREATION_FAILED, "Main", "클라이언트 스레드 생성 실패");
+                cleanup_client(client);
             }
             pthread_detach(thread);
         }
@@ -127,15 +189,22 @@ static void broadcast_status_update(void) {
 
 static void client_message_loop(Client* client) {
     while (running) {
+        // 1. 메시지 수신 후 큐에 삽입
         Message* msg = receive_message(client->ssl);
         if (msg) {
-            handle_client_message(client, msg);
-            cleanup_message(msg);
-            free(msg);
+            enqueue_message(client, msg);
             client->last_activity = time(NULL);
         } else {
             LOG_INFO("Thread", "클라이언트(%s)가 연결을 종료했습니다.", client->ip);
             break;
+        }
+
+        // 2. 큐에 있는 모든 메시지를 우선순위 순서대로 처리
+        Message* to_process;
+        while ((to_process = dequeue_message(client)) != NULL) {
+            handle_client_message(client, to_process);
+            cleanup_message(to_process);
+            free(to_process);
         }
     }
 }
@@ -160,6 +229,7 @@ static void remove_client_from_list(Client* client) {
 
 static void cleanup_client(Client* client) {
     if (!client) return;
+    cleanup_client_queue(client); // 메시지 큐 메모리 해제
     if (client->state == SESSION_LOGGED_IN) close_session(session_manager, client->username);
     if (client->ssl_handler) cleanup_ssl_handler(client->ssl_handler);
     if (client->socket_fd >= 0) close(client->socket_fd);
@@ -168,13 +238,7 @@ static void cleanup_client(Client* client) {
 
 static void* client_thread_func(void* arg) {
     Client* client = (Client*)arg;
-    client->ssl_handler = create_ssl_handler(&ssl_manager, client->socket_fd);
-    if (!client->ssl_handler || handle_ssl_handshake(client->ssl_handler) != 0) {
-        cleanup_client(client);
-        return NULL;
-    }
-    client->ssl = client->ssl_handler->ssl;
-    client->last_activity = time(NULL);
+    // SSL 핸들러와 핸드셰이크는 이미 main에서 accept_client()로 처리됨
     add_client_to_list(client);
     client_message_loop(client);
     remove_client_from_list(client);
@@ -204,8 +268,14 @@ static int process_device_reservation(Client* client, const char* device_id, int
         return send_error_response(client->ssl, "서버 내부 오류: 예약 상태 동기화 실패");
     }
     broadcast_status_update();
-    Message* response = create_message(MSG_RESERVE_RESPONSE, "success");
+Message* response = create_message(MSG_RESERVE_RESPONSE, "success");
     if (response) {
+        Device updated_device;
+        Device* devices_ptr = (Device*)ht_get(resource_manager->devices, device_id);
+        if (devices_ptr) {
+            memcpy(&updated_device, devices_ptr, sizeof(Device));
+            fill_status_response_args(response, &updated_device, 1, resource_manager, reservation_manager);
+        }
         send_message(client->ssl, response);
         cleanup_message(response);
         free(response);
@@ -222,20 +292,23 @@ static int handle_login_request(Client* client, const Message* message) {
         strncpy(client->username, user, MAX_USERNAME_LENGTH - 1);
         client->username[MAX_USERNAME_LENGTH - 1] = '\0';
         create_session(session_manager, user, client->ip, 0);
-        Message* response = create_message(MSG_LOGIN, "success");
-        if (response) {
-            response->args[0] = strdup(user);
-            response->arg_count = 1;
-            send_message(client->ssl, response);
-            cleanup_message(response);
-            free(response);
+         Message* login_response = create_message(MSG_LOGIN, "success");
+        if (login_response) {
+            login_response->args[0] = strdup(user);
+            login_response->arg_count = 1;
+            send_message(client->ssl, login_response);
+            cleanup_message(login_response);
+            free(login_response);
         }
+
+        // 로그인 직후 바로 상태 목록을 보내 클라이언트가 초기 화면을 그리도록 함
+        handle_status_request(client, NULL); 
+
         return 0;
     } else {
         return send_error_response(client->ssl, "아이디 또는 비밀번호가 틀립니다.");
     }
 }
-
 static int handle_status_request(Client* client, const Message* message) {
     (void)message; 
     Device devices[MAX_DEVICES];
@@ -257,7 +330,40 @@ static int handle_reserve_request(Client* client, const Message* message) {
     process_device_reservation(client, device_id, duration_sec);
     return 0;
 }
+static int handle_cancel_request(Client* client, const Message* message) {
+    if (message->arg_count < 1) {
+        return send_error_response(client->ssl, "예약 취소 정보(장비 ID)가 부족합니다.");
+    }
 
+    const char* device_id = message->args[0];
+    
+    // 예약 정보 확인
+    Reservation* res = get_active_reservation_for_device(reservation_manager, resource_manager, device_id);
+
+    // 본인의 예약이 맞는지 확인
+    if (!res || strcmp(res->username, client->username) != 0) {
+        return send_error_response(client->ssl, "취소할 수 있는 예약이 아니거나 권한이 없습니다.");
+    }
+
+    // 예약 취소 로직 호출
+    if (cancel_reservation(reservation_manager, res->id, client->username)) {
+        // 장비 상태를 'available'로 변경
+        update_device_status(resource_manager, device_id, DEVICE_AVAILABLE, 0);
+        
+        // 모든 클라이언트에 상태 변경 전파
+        broadcast_status_update();
+
+        // 요청한 클라이언트에 성공 응답 전송
+        Message* response = create_message(MSG_CANCEL_RESPONSE, "success");
+        send_message(client->ssl, response);
+        cleanup_message(response);
+        free(response);
+    } else {
+        send_error_response(client->ssl, "알 수 없는 오류로 예약 취소에 실패했습니다.");
+    }
+
+    return 0;
+}
 static int handle_client_message(Client* client, const Message* message) {
     if (!client || !message) return -1;
     if (client->state != SESSION_LOGGED_IN && message->type != MSG_LOGIN) {
@@ -267,16 +373,25 @@ static int handle_client_message(Client* client, const Message* message) {
         case MSG_LOGIN: return handle_login_request(client, message);
         case MSG_STATUS_REQUEST: return handle_status_request(client, message);
         case MSG_RESERVE_REQUEST: return handle_reserve_request(client, message);
+        case MSG_CANCEL_REQUEST: return handle_cancel_request(client, message); // [추가] 이 부분을 추가해야 합니다.
         default: return send_error_response(client->ssl, "알 수 없거나 처리할 수 없는 요청입니다.");
     }
 }
 
 static void signal_handler(int signum) {
+    (void)signum;
+    if (pipe(self_pipe) == -1) { 
+        error_report(ERROR_FILE_OPERATION_FAILED, "Server", "pipe 생성 실패"); 
+        return; 
+    }
     (void)write(self_pipe[1], "s", 1);
 }
 
 static int init_server(int port) {
-    if (pipe(self_pipe) == -1) { perror("pipe"); return -1; }
+    if (pipe(self_pipe) == -1) { 
+        error_report(ERROR_FILE_OPERATION_FAILED, "Server", "pipe 생성 실패"); 
+        return -1; 
+    }
     signal(SIGINT, signal_handler);
     signal(SIGTERM, signal_handler);
     if (init_logger("logs/server.log") < 0) return -1;
