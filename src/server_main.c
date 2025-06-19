@@ -34,6 +34,7 @@ static int handle_client_message(Client* client, const Message* message);
 static int handle_status_request(Client* client, const Message* message);
 static int handle_reserve_request(Client* client, const Message* message);
 static int handle_login_request(Client* client, const Message* message);
+static int handle_cancel_request(Client* client, const Message* message);
 static int send_error_response(SSL* ssl, const char* error_message);
 static void client_message_loop(Client* client);
 static void cleanup_client(Client* client);
@@ -188,19 +189,22 @@ static void broadcast_status_update(void) {
 
 static void client_message_loop(Client* client) {
     while (running) {
+        // 1. 메시지 수신 후 큐에 삽입
         Message* msg = receive_message(client->ssl);
         if (msg) {
-            enqueue_message(client, msg); // 큐에 넣기
-            Message* to_process = dequeue_message(client); // 우선순위 높은 것부터 꺼내기
-            if (to_process) {
-                handle_client_message(client, to_process);
-                cleanup_message(to_process);
-                free(to_process);
-            }
+            enqueue_message(client, msg);
             client->last_activity = time(NULL);
         } else {
             LOG_INFO("Thread", "클라이언트(%s)가 연결을 종료했습니다.", client->ip);
             break;
+        }
+
+        // 2. 큐에 있는 모든 메시지를 우선순위 순서대로 처리
+        Message* to_process;
+        while ((to_process = dequeue_message(client)) != NULL) {
+            handle_client_message(client, to_process);
+            cleanup_message(to_process);
+            free(to_process);
         }
     }
 }
@@ -264,17 +268,14 @@ static int process_device_reservation(Client* client, const char* device_id, int
         return send_error_response(client->ssl, "서버 내부 오류: 예약 상태 동기화 실패");
     }
     broadcast_status_update();
-    Message* response = create_message(MSG_RESERVE_RESPONSE, "success");
+Message* response = create_message(MSG_RESERVE_RESPONSE, "success");
     if (response) {
-        // 임시 Device 배열을 만들어 한 개의 장비 정보만 채웁니다.
         Device updated_device;
         Device* devices_ptr = (Device*)ht_get(resource_manager->devices, device_id);
         if (devices_ptr) {
             memcpy(&updated_device, devices_ptr, sizeof(Device));
-            // fill_status_response_args 함수를 재사용하여 장비 정보를 args에 채웁니다.
             fill_status_response_args(response, &updated_device, 1, resource_manager, reservation_manager);
         }
-        
         send_message(client->ssl, response);
         cleanup_message(response);
         free(response);
@@ -329,7 +330,40 @@ static int handle_reserve_request(Client* client, const Message* message) {
     process_device_reservation(client, device_id, duration_sec);
     return 0;
 }
+static int handle_cancel_request(Client* client, const Message* message) {
+    if (message->arg_count < 1) {
+        return send_error_response(client->ssl, "예약 취소 정보(장비 ID)가 부족합니다.");
+    }
 
+    const char* device_id = message->args[0];
+    
+    // 예약 정보 확인
+    Reservation* res = get_active_reservation_for_device(reservation_manager, resource_manager, device_id);
+
+    // 본인의 예약이 맞는지 확인
+    if (!res || strcmp(res->username, client->username) != 0) {
+        return send_error_response(client->ssl, "취소할 수 있는 예약이 아니거나 권한이 없습니다.");
+    }
+
+    // 예약 취소 로직 호출
+    if (cancel_reservation(reservation_manager, res->id, client->username)) {
+        // 장비 상태를 'available'로 변경
+        update_device_status(resource_manager, device_id, DEVICE_AVAILABLE, 0);
+        
+        // 모든 클라이언트에 상태 변경 전파
+        broadcast_status_update();
+
+        // 요청한 클라이언트에 성공 응답 전송
+        Message* response = create_message(MSG_CANCEL_RESPONSE, "success");
+        send_message(client->ssl, response);
+        cleanup_message(response);
+        free(response);
+    } else {
+        send_error_response(client->ssl, "알 수 없는 오류로 예약 취소에 실패했습니다.");
+    }
+
+    return 0;
+}
 static int handle_client_message(Client* client, const Message* message) {
     if (!client || !message) return -1;
     if (client->state != SESSION_LOGGED_IN && message->type != MSG_LOGIN) {
@@ -339,6 +373,7 @@ static int handle_client_message(Client* client, const Message* message) {
         case MSG_LOGIN: return handle_login_request(client, message);
         case MSG_STATUS_REQUEST: return handle_status_request(client, message);
         case MSG_RESERVE_REQUEST: return handle_reserve_request(client, message);
+        case MSG_CANCEL_REQUEST: return handle_cancel_request(client, message); // [추가] 이 부분을 추가해야 합니다.
         default: return send_error_response(client->ssl, "알 수 없거나 처리할 수 없는 요청입니다.");
     }
 }

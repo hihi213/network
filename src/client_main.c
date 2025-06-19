@@ -156,64 +156,90 @@ static void draw_logged_in_menu() {
         if (i == menu_highlight) wattroff(global_ui_manager->menu_win, A_REVERSE);
     }
 }
-
 static void draw_device_list() {
-    mvwprintw(global_ui_manager->menu_win, 0, 2, " 장비 목록 (Enter: 예약, ESC: 뒤로) ");
+    // 윈도우 제목 표시
+    mvwprintw(global_ui_manager->menu_win, 0, 2, " 장비 목록 (↑↓: 이동, Enter: 예약/선택, C: 예약취소, ESC: 뒤로) ");
+
     if (!device_list || device_count == 0) {
-        mvwprintw(global_ui_manager->menu_win, 2, 2, "장비 목록이 없습니다.");
+        mvwprintw(global_ui_manager->menu_win, 2, 2, "장비 목록을 가져오는 중이거나, 등록된 장비가 없습니다.");
         return;
     }
+
     time_t current_time = time(NULL);
     int menu_win_height, menu_win_width;
     getmaxyx(global_ui_manager->menu_win, menu_win_height, menu_win_width);
-    (void)menu_win_width;
+    (void)menu_win_width; // 너비 변수는 사용하지 않음
+    
+    // 화면에 표시 가능한 최대 아이템 수 계산
     const int visible_items = menu_win_height - 5;
+
+    // 장비 목록 표시 루프
     for (int i = 0; i < visible_items; i++) {
         int device_index = scroll_offset + i;
         if (device_index >= device_count) break;
         
         Device* current_device = &device_list[device_index];
 
+        // [개선] 클라이언트 로컬 시간에 따라 만료된 예약 상태를 즉시 'available'로 보이게 처리
         if (current_device->status == DEVICE_RESERVED && current_device->reservation_end_time > 0) {
             if (current_time >= current_device->reservation_end_time) {
                 current_device->status = DEVICE_AVAILABLE;
+                current_device->reserved_by[0] = '\0'; // 예약자 정보 초기화
             }
         }
         
         char display_str[256], status_str[128];
+
+        // 장비 상태에 따라 표시할 문자열 포맷팅
         if (current_device->status == DEVICE_RESERVED) {
             long remaining_sec = (current_device->reservation_end_time > current_time) ? (current_device->reservation_end_time - current_time) : 0;
             snprintf(status_str, sizeof(status_str), "reserved by %s (%lds left)", 
                      current_device->reserved_by, remaining_sec);
         } else {
+            // get_device_status_string 함수는 message.c에 정의되어 있음
             strncpy(status_str, get_device_status_string(current_device->status), sizeof(status_str) - 1);
             status_str[sizeof(status_str) - 1] = '\0';
         }
         
+        // 최종 표시될 한 줄 생성
         snprintf(display_str, sizeof(display_str), "%-10s | %-25s | %-15s | %s",
                  current_device->id, current_device->name, current_device->type, status_str);
                  
-        if (device_index == menu_highlight) wattron(global_ui_manager->menu_win, A_REVERSE);
+        // 현재 하이라이트된 항목에 반전 효과 적용
+        if (device_index == menu_highlight) {
+            wattron(global_ui_manager->menu_win, A_REVERSE);
+        }
         mvwprintw(global_ui_manager->menu_win, i + 2, 2, " > %s", display_str);
-        if (device_index == menu_highlight) wattroff(global_ui_manager->menu_win, A_REVERSE);
+        if (device_index == menu_highlight) {
+            wattroff(global_ui_manager->menu_win, A_REVERSE);
+        }
     }
 
+    // [핵심 개선] 하단 도움말 메시지를 상황에 맞게 동적으로 표시
     if (device_count > 0 && menu_highlight < device_count) {
         char help_message[128] = {0};
-        DeviceStatus highlighted_status = device_list[menu_highlight].status;
+        Device* highlighted_device = &device_list[menu_highlight];
         
-        switch (highlighted_status) {
-            case DEVICE_AVAILABLE:
-                snprintf(help_message, sizeof(help_message), "도움말: 예약하려면 Enter 키를 누르세요.");
-                break;
-            case DEVICE_RESERVED:
-                snprintf(help_message, sizeof(help_message), "도움말: '%s'님이 예약중인 장비입니다.", device_list[menu_highlight].reserved_by);
-                break;
-            case DEVICE_MAINTENANCE:
-                snprintf(help_message, sizeof(help_message), "도움말: 점검 중인 장비는 예약할 수 없습니다.");
-                break;
-            default:
-                break; 
+        // 1. 내가 예약한 장비일 경우 '취소' 안내 표시
+        if (highlighted_device->status == DEVICE_RESERVED && 
+            strcmp(highlighted_device->reserved_by, client_session.username) == 0) {
+            snprintf(help_message, sizeof(help_message), "도움말: 'C' 키를 눌러 직접 예약을 취소할 수 있습니다.");
+        } 
+        // 2. 그 외의 경우, 장비 상태에 따라 다른 안내 표시
+        else {
+            switch (highlighted_device->status) {
+                case DEVICE_AVAILABLE:
+                    snprintf(help_message, sizeof(help_message), "도움말: 예약하려면 Enter 키를 누르세요.");
+                    break;
+                case DEVICE_RESERVED:
+                    snprintf(help_message, sizeof(help_message), "도움말: '%s'님이 예약중인 장비입니다.", highlighted_device->reserved_by);
+                    break;
+                case DEVICE_MAINTENANCE:
+                    snprintf(help_message, sizeof(help_message), "도움말: 점검 중인 장비는 예약할 수 없습니다.");
+                    break;
+                default:
+                    break; 
+            }
         }
         mvwprintw(global_ui_manager->menu_win, menu_win_height - 2, 2, "%-s", help_message);
     }
@@ -290,6 +316,22 @@ static void handle_input_device_list(int ch) {
                 }
             }
             break;
+        case 'c': // 또는 'C'
+        case 'C':
+            if (device_list && menu_highlight < device_count) {
+                Device* dev = &device_list[menu_highlight];
+                if (dev->status == DEVICE_RESERVED && strcmp(dev->reserved_by, client_session.username) == 0) {
+                    show_success_message("예약 취소 요청 중...");
+                    Message* msg = create_message(MSG_CANCEL_REQUEST, NULL);
+                    if (msg) {
+                        msg->args[0] = strdup(dev->id);
+                        msg->arg_count = 1;
+                        if(send_message(client_session.ssl, msg) < 0) running = false;
+                        cleanup_message(msg); free(msg);
+                    }
+                }
+            }
+            break;
         case 27:
             current_state = UI_STATE_LOGGED_IN_MENU;
             menu_highlight = 0;
@@ -343,6 +385,15 @@ static void handle_server_message(const Message* message) {
             current_state = UI_STATE_DEVICE_LIST;
             menu_highlight = 0;
             scroll_offset = 0;
+            break;
+        case MSG_CANCEL_RESPONSE:
+            if (strcmp(message->data, "success") == 0) {
+                show_success_message("예약이 성공적으로 취소되었습니다.");
+                // 1단계 리팩토링으로 인해 서버가 보내주는 MSG_STATUS_UPDATE를 기다리기만 하면 됨.
+                // 별도의 목록 갱신 요청이 필요 없음.
+            } else {
+                show_error_message(message->data);
+            }
             break;
         case MSG_RESERVE_RESPONSE:
             if (strcmp(message->data, "success") == 0) {
