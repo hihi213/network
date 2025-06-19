@@ -44,7 +44,6 @@ typedef struct {
 
 /* 메시지 생성/소멸/파싱 함수 */
 Message* create_message(MessageType type, const char* data);
-void cleanup_message(Message* message);
 int parse_message(const char* buffer, size_t len, Message* message);
 int serialize_message(const Message* message, char* buffer, size_t buffer_size);
 const char* get_message_type_string(MessageType type);
@@ -62,4 +61,5 @@ bool validate_message_args(const Message* message, int expected_args);
 /* DeviceStatus를 문자열로 변환하는 함수 */
 const char* get_device_status_string(DeviceStatus status);
 bool fill_status_response_args(Message* msg, const Device* devices, int count, ResourceManager* rm, ReservationManager* rvm) ;
+void destroy_message(Message *msg);
 #endif /* MESSAGE_H */

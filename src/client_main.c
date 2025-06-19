@@ -114,8 +114,7 @@ int main(int argc, char* argv[]) {
             Message* msg = receive_message(client_session.ssl);
             if (msg) {
                 handle_server_message(msg);
-                cleanup_message(msg);
-                free(msg);
+                destroy_message(msg);
                
             } else {
                show_error_message("서버와의 연결이 끊어졌습니다. 종료합니다.");
@@ -394,7 +393,7 @@ static void handle_input_logged_in_menu(int ch) {
                 Message* msg = create_message(MSG_STATUS_REQUEST, NULL);
                 if (msg) {
                     if (send_message(client_session.ssl, msg) < 0) running = false;
-                     cleanup_message(msg); free(msg);
+                     destroy_message(msg);
                 }
             } else {
                 client_session.state = SESSION_DISCONNECTED;
@@ -443,7 +442,7 @@ static void handle_input_device_list(int ch) {
                         msg->args[0] = strdup(dev->id);
                         msg->arg_count = 1;
                         if(send_message(client_session.ssl, msg) < 0) running = false;
-                        cleanup_message(msg); free(msg);
+                        destroy_message(msg);
                     }
                 }
             }
@@ -471,7 +470,7 @@ static void handle_input_reservation_time(int ch) {
             Message* msg = create_reservation_message(device_list[reservation_target_device_index].id, reservation_input_buffer);
             if (msg) {
                 if(send_message(client_session.ssl, msg) < 0) running = false;
-                 cleanup_message(msg); free(msg);
+                 destroy_message(msg);
             }
         } else {
             show_error_message("유효하지 않은 시간입니다. (1~86400초)");
@@ -583,8 +582,7 @@ static bool handle_login(const char* username, const char* password) {
     if (send_message(client_session.ssl, msg) < 0) {
         running = false;
     }
-    cleanup_message(msg);
-    free(msg);
+    destroy_message(msg);
     return true;
 }
 
@@ -615,12 +613,10 @@ static int connect_to_server(const char* server_ip, int port) {
     Message* msg = create_message(MSG_LOGIN, "success");
     if(msg) {
         if(send_message(client_session.ssl, msg) < 0) {
-            cleanup_message(msg);
-            free(msg);
+            destroy_message(msg);
             return -1;
         }
-        cleanup_message(msg);
-        free(msg);
+        destroy_message(msg);
     }
     
     return 0;

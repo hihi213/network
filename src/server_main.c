@@ -43,7 +43,6 @@ static void add_client_to_list(Client* client);
 static void remove_client_from_list(Client* client);
 static void broadcast_status_update(void);
 static bool is_user_authenticated(const char* username, const char* password); // 인증 함수 프로토타입 추가
-void destroy_message(Message *msg);
 // 전역 변수
 static int server_sock;
 static bool running = true;
@@ -88,11 +87,7 @@ Message* dequeue_message(Client* client) {
     }
     return NULL;
 }
-void destroy_message(Message *msg) {
-    if (!msg) return;
-    cleanup_message(msg); // 1번 함수 호출
-    free(msg);            // 껍데기 해제
-}
+
 // 큐 정리 (메모리 해제)
 void cleanup_client_queue(Client* client) {
     for (int p = 0; p <= MAX_PRIORITY; ++p) {

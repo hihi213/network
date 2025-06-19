@@ -3,21 +3,6 @@
 #include "../include/reservation.h"
 #include "../include/network.h"
 
-static bool ssl_read_fully(SSL* ssl, void* buf, int len) {
-    if (!ssl || !buf) return false;
-    // 길이가 0인 데이터 수신은 성공으로 처리
-    if (len == 0) return true;
-
-    char* ptr = (char*)buf;
-    size_t total = 0;
-    while (total < (size_t)len) {
-        ssize_t n = net_recv(ssl, ptr + total, len - total);
-        if (n <= 0) return false;
-        total += n;
-    }
-    return true;
-}
-
 static Message* create_message_with_two_args(MessageType type, const char* arg1, const char* arg2) {
     Message* msg = create_message(type, NULL);
     if (!msg) return NULL;
@@ -25,8 +10,7 @@ static Message* create_message_with_two_args(MessageType type, const char* arg1,
     msg->args[0] = strdup(arg1);
     msg->args[1] = strdup(arg2);
     if (!msg->args[0] || !msg->args[1]) {
-        cleanup_message(msg);
-        free(msg);
+        destroy_message(msg);
         return NULL;
     }
     msg->arg_count = 2;
@@ -86,8 +70,7 @@ Message* create_status_response_message(const Device *devices, int device_count,
     Message *message = create_message(MSG_STATUS_RESPONSE, NULL);
     if (!message) return NULL;
     if (!fill_status_response_args(message, devices, device_count, resource_manager, reservation_manager)) {
-        cleanup_message(message);
-        free(message);
+        destroy_message(message);
         return NULL;
     }
     return message;
@@ -124,7 +107,7 @@ const char *get_message_type_string(MessageType type) {
     }
 }
 
-void cleanup_message(Message *msg) {
+void destroy_message(Message *msg) {
     if (!msg) return;
     for (int i = 0; i < msg->arg_count; i++) {
         if (msg->args[i]) {
@@ -132,12 +115,18 @@ void cleanup_message(Message *msg) {
             msg->args[i] = NULL;
         }
     }
+    free(msg);
 }
 
 static bool read_message_arguments(SSL* ssl, Message* msg, uint32_t arg_count) {
     for (uint32_t i = 0; i < arg_count; i++) {
         uint32_t arg_len_net;
-        if (!ssl_read_fully(ssl, &arg_len_net, sizeof(arg_len_net))) return false;
+        size_t total = 0;
+        while (total < sizeof(arg_len_net)) {
+            ssize_t n = net_recv(ssl, ((char*)&arg_len_net) + total, sizeof(arg_len_net) - total);
+            if (n <= 0) return false;
+            total += n;
+        }
         uint32_t arg_len = ntohl(arg_len_net);
 
         if (arg_len >= MAX_ARG_LENGTH) return false;
@@ -145,12 +134,16 @@ static bool read_message_arguments(SSL* ssl, Message* msg, uint32_t arg_count) {
         msg->args[i] = (char*)malloc(arg_len + 1);
         if (!msg->args[i]) return false;
 
-        if (!ssl_read_fully(ssl, msg->args[i], arg_len)) {
-            free(msg->args[i]);
-            msg->args[i] = NULL;
-            return false;
+        total = 0;
+        while (total < arg_len) {
+            ssize_t n = net_recv(ssl, msg->args[i] + total, arg_len - total);
+            if (n <= 0) {
+                free(msg->args[i]);
+                msg->args[i] = NULL;
+                return false;
+            }
+            total += n;
         }
-        
         msg->args[i][arg_len] = '\0';
         msg->arg_count++;
     }
@@ -159,12 +152,22 @@ static bool read_message_arguments(SSL* ssl, Message* msg, uint32_t arg_count) {
 
 static bool read_message_data(SSL* ssl, Message* msg) {
     uint32_t data_len_net;
-    if (!ssl_read_fully(ssl, &data_len_net, sizeof(data_len_net))) return false;
+    size_t total = 0;
+    while (total < sizeof(data_len_net)) {
+        ssize_t n = net_recv(ssl, ((char*)&data_len_net) + total, sizeof(data_len_net) - total);
+        if (n <= 0) return false;
+        total += n;
+    }
     uint32_t data_len = ntohl(data_len_net);
 
     if (data_len > 0) {
         if (data_len >= MAX_MESSAGE_LENGTH) return false;
-        if (!ssl_read_fully(ssl, msg->data, data_len)) return false;
+        total = 0;
+        while (total < data_len) {
+            ssize_t n = net_recv(ssl, msg->data + total, data_len - total);
+            if (n <= 0) return false;
+            total += n;
+        }
         msg->data[data_len] = '\0';
     }
     return true;
@@ -172,28 +175,30 @@ static bool read_message_data(SSL* ssl, Message* msg) {
 
 Message* receive_message(SSL* ssl) {
     uint32_t type_net, arg_count_net;
-
-    if (!ssl_read_fully(ssl, &type_net, sizeof(type_net))) return NULL;
-    if (!ssl_read_fully(ssl, &arg_count_net, sizeof(arg_count_net))) return NULL;
-    
+    size_t total = 0;
+    while (total < sizeof(type_net)) {
+        ssize_t n = net_recv(ssl, ((char*)&type_net) + total, sizeof(type_net) - total);
+        if (n <= 0) return NULL;
+        total += n;
+    }
+    total = 0;
+    while (total < sizeof(arg_count_net)) {
+        ssize_t n = net_recv(ssl, ((char*)&arg_count_net) + total, sizeof(arg_count_net) - total);
+        if (n <= 0) return NULL;
+        total += n;
+    }
     MessageType type = ntohl(type_net);
     uint32_t arg_count = ntohl(arg_count_net);
-    
     Message* message = create_message(type, NULL);
     if (!message) return NULL;
-
     if (!read_message_arguments(ssl, message, arg_count)) {
-        cleanup_message(message);
-        free(message);
+        destroy_message(message);
         return NULL;
     }
-
     if (!read_message_data(ssl, message)) {
-        cleanup_message(message);
-        free(message);
+        destroy_message(message);
         return NULL;
     }
-    
     return message;
 }
 
