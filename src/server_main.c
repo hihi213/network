@@ -43,7 +43,7 @@ static void add_client_to_list(Client* client);
 static void remove_client_from_list(Client* client);
 static void broadcast_status_update(void);
 static bool is_user_authenticated(const char* username, const char* password); // 인증 함수 프로토타입 추가
-
+void destroy_message(Message *msg);
 // 전역 변수
 static int server_sock;
 static bool running = true;
@@ -88,15 +88,18 @@ Message* dequeue_message(Client* client) {
     }
     return NULL;
 }
-
+void destroy_message(Message *msg) {
+    if (!msg) return;
+    cleanup_message(msg); // 1번 함수 호출
+    free(msg);            // 껍데기 해제
+}
 // 큐 정리 (메모리 해제)
 void cleanup_client_queue(Client* client) {
     for (int p = 0; p <= MAX_PRIORITY; ++p) {
         MsgNode* node = client->queues[p];
         while (node) {
             MsgNode* next = node->next;
-            cleanup_message(node->msg);
-            free(node->msg);
+            destroy_message(node->msg);
             free(node);
             node = next;
         }
@@ -174,8 +177,7 @@ static void broadcast_status_update(void) {
     Message* response = create_message(MSG_STATUS_UPDATE, NULL);
     if (!response) return;
     if (!fill_status_response_args(response, devices, count, resource_manager, reservation_manager)) {
-        cleanup_message(response);
-        free(response);
+        destroy_message(response);
         return;
     }
     pthread_mutex_lock(&client_list_mutex);
@@ -185,8 +187,7 @@ static void broadcast_status_update(void) {
         }
     }
     pthread_mutex_unlock(&client_list_mutex);
-    cleanup_message(response);
-    free(response);
+    destroy_message(response);
 }
 
 static void client_message_loop(Client* client) {
@@ -205,8 +206,7 @@ static void client_message_loop(Client* client) {
         Message* to_process;
         while ((to_process = dequeue_message(client)) != NULL) {
             handle_client_message(client, to_process);
-            cleanup_message(to_process);
-            free(to_process);
+            destroy_message(to_process);
         }
     }
 }
@@ -279,8 +279,7 @@ Message* response = create_message(MSG_RESERVE_RESPONSE, "success");
             fill_status_response_args(response, &updated_device, 1, resource_manager, reservation_manager);
         }
         send_message(client->ssl, response);
-        cleanup_message(response);
-        free(response);
+        destroy_message(response);
     }
     return 0;
 }
@@ -341,8 +340,7 @@ static int handle_status_request(Client* client, const Message* message) {
     Message* response = create_status_response_message(devices, count, resource_manager, reservation_manager);
     if (!response) return send_error_response(client->ssl, "응답 메시지를 생성하는 데 실패했습니다.");
     send_message(client->ssl, response);
-    cleanup_message(response);
-    free(response);
+    destroy_message(response);
     return 0;
 }
 
@@ -478,8 +476,7 @@ static int send_generic_response(Client* client, MessageType type, const char* d
                 LOG_ERROR("Response", "응답 인자 메모리 복사 실패");
                 // 할당 실패 시, 현재까지 할당된 것들만 정리하고 종료
                 response->arg_count = i; 
-                cleanup_message(response);
-                free(response);
+                destroy_message(response);
                 va_end(args);
                 return -1;
             }
@@ -489,8 +486,7 @@ static int send_generic_response(Client* client, MessageType type, const char* d
     response->arg_count = arg_count;
 
     int ret = send_message(client->ssl, response);
-    cleanup_message(response);
-    free(response);
+    destroy_message(response);
 
     return ret;
 }
@@ -506,7 +502,6 @@ static int send_error_response(SSL* ssl, const char* error_message) {
     Message* response = create_error_message(error_message);
     if (!response) return -1;
     int ret = send_message(ssl, response);
-    cleanup_message(response);
-    free(response);
+    destroy_message(response);
     return ret;
 }

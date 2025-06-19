@@ -483,6 +483,18 @@ static void handle_input_reservation_time(int ch) {
 
 static void handle_server_message(const Message* message) {
     switch (message->type) {
+        case MSG_ERROR:
+        show_error_message(message->data);
+        // [수정] 로그인 시도 중에 발생한 에러라면, 다시 로그인 입력 화면으로 돌려보냄
+        if (current_state == UI_STATE_LOGGED_IN_MENU || current_state == UI_STATE_DEVICE_LIST) {
+            // 이 경우는 이미 로그인 된 사용자가 다른 오류를 받은 경우이므로,
+            // 상태를 유지하거나 다른 적절한 처리 가능
+        } else {
+            // 로그인 시도 중 에러(중복 로그인, 인증 실패 등)가 발생한 경우
+            // UI 상태를 다시 로그인 화면으로 명확하게 설정
+            current_state = UI_STATE_LOGIN_INPUT;
+        }
+        break;
         case MSG_LOGIN:
             if (strcmp(message->data, "success") == 0 && message->arg_count > 0) {
                 client_session.state = SESSION_LOGGED_IN;
@@ -533,13 +545,7 @@ static void handle_server_message(const Message* message) {
                 current_state = UI_STATE_DEVICE_LIST;
             }
             break;
-        case MSG_ERROR:
-            show_error_message(message->data);
-            // 로그인 시도 중 에러 발생 시(예: 중복 로그인) 로그인 화면 상태를 유지합니다.
-            if(current_state == UI_STATE_LOGGED_IN_MENU) {
-                // 로그인 된 상태에서 다른 에러가 발생한 경우에 대한 예외처리 (필요 시)
-            }
-            break;
+
         default:
             error_report(ERROR_MESSAGE_INVALID_TYPE, "Message", "알 수 없는 메시지 타입: %d", message->type);
             break;
