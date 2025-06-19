@@ -121,28 +121,15 @@ void destroy_message(Message *msg) {
 static bool read_message_arguments(SSL* ssl, Message* msg, uint32_t arg_count) {
     for (uint32_t i = 0; i < arg_count; i++) {
         uint32_t arg_len_net;
-        size_t total = 0;
-        while (total < sizeof(arg_len_net)) {
-            ssize_t n = net_recv(ssl, ((char*)&arg_len_net) + total, sizeof(arg_len_net) - total);
-            if (n <= 0) return false;
-            total += n;
-        }
+        if (net_recv(ssl, &arg_len_net, sizeof(arg_len_net)) != sizeof(arg_len_net)) return false;
         uint32_t arg_len = ntohl(arg_len_net);
-
         if (arg_len >= MAX_ARG_LENGTH) return false;
-
         msg->args[i] = (char*)malloc(arg_len + 1);
         if (!msg->args[i]) return false;
-
-        total = 0;
-        while (total < arg_len) {
-            ssize_t n = net_recv(ssl, msg->args[i] + total, arg_len - total);
-            if (n <= 0) {
-                free(msg->args[i]);
-                msg->args[i] = NULL;
-                return false;
-            }
-            total += n;
+        if (net_recv(ssl, msg->args[i], arg_len) != (ssize_t)arg_len) {
+            free(msg->args[i]);
+            msg->args[i] = NULL;
+            return false;
         }
         msg->args[i][arg_len] = '\0';
         msg->arg_count++;
@@ -152,22 +139,11 @@ static bool read_message_arguments(SSL* ssl, Message* msg, uint32_t arg_count) {
 
 static bool read_message_data(SSL* ssl, Message* msg) {
     uint32_t data_len_net;
-    size_t total = 0;
-    while (total < sizeof(data_len_net)) {
-        ssize_t n = net_recv(ssl, ((char*)&data_len_net) + total, sizeof(data_len_net) - total);
-        if (n <= 0) return false;
-        total += n;
-    }
+    if (net_recv(ssl, &data_len_net, sizeof(data_len_net)) != sizeof(data_len_net)) return false;
     uint32_t data_len = ntohl(data_len_net);
-
     if (data_len > 0) {
         if (data_len >= MAX_MESSAGE_LENGTH) return false;
-        total = 0;
-        while (total < data_len) {
-            ssize_t n = net_recv(ssl, msg->data + total, data_len - total);
-            if (n <= 0) return false;
-            total += n;
-        }
+        if (net_recv(ssl, msg->data, data_len) != (ssize_t)data_len) return false;
         msg->data[data_len] = '\0';
     }
     return true;
@@ -175,18 +151,8 @@ static bool read_message_data(SSL* ssl, Message* msg) {
 
 Message* receive_message(SSL* ssl) {
     uint32_t type_net, arg_count_net;
-    size_t total = 0;
-    while (total < sizeof(type_net)) {
-        ssize_t n = net_recv(ssl, ((char*)&type_net) + total, sizeof(type_net) - total);
-        if (n <= 0) return NULL;
-        total += n;
-    }
-    total = 0;
-    while (total < sizeof(arg_count_net)) {
-        ssize_t n = net_recv(ssl, ((char*)&arg_count_net) + total, sizeof(arg_count_net) - total);
-        if (n <= 0) return NULL;
-        total += n;
-    }
+    if (net_recv(ssl, &type_net, sizeof(type_net)) != sizeof(type_net)) return NULL;
+    if (net_recv(ssl, &arg_count_net, sizeof(arg_count_net)) != sizeof(arg_count_net)) return NULL;
     MessageType type = ntohl(type_net);
     uint32_t arg_count = ntohl(arg_count_net);
     Message* message = create_message(type, NULL);

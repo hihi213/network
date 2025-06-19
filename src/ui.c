@@ -44,18 +44,6 @@ void cleanup_ui(void) {
 }
 
 /**
- * @brief 메뉴를 생성하는 함수 (새로운 구조에서는 더 이상 사용되지 않음)
- * @param manager UI 매니저 포인터
- * @param title 메뉴 제목
- * @param items 메뉴 항목 배열
- * @param count 메뉴 항목 개수
- * @return 항상 -1 (사용되지 않음)
- */
-int create_menu(UIManager* manager, const char* title, const char** items, int count) {
-    return -1;  // 사용되지 않는 함수이므로 항상 -1 반환
-}
-
-/**
  * @brief 에러 메시지를 화면에 표시합니다.
  * @param message 표시할 에러 메시지
  */

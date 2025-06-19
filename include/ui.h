@@ -67,23 +67,11 @@ void refresh_all_windows(void);
 void update_server_status(int session_count, int port);
 void update_server_devices(const Device* devices, int count, ResourceManager* resource_manager, ReservationManager* reservation_manager);
 
-
-/* 클라이언트 UI 함수 */
-void update_client_status(const ClientSession* session);
-void show_client_menu(const UIMenuItem* menu_items, int item_count);
-char* get_user_input(const char* prompt);
-void show_error_message(const char* message);
-void show_success_message(const char* message);
-void display_device_list(UIManager* manager, const Device* devices, int count);
-void show_reservation_info(const Reservation* reservation);
-int show_reservation_list_and_select(const Reservation* reservations, int count);
-bool create_generic_menu(UIManager* manager, const char* title, const char** items, int count, 
-                        void (*item_handler)(int index, void* data), void* user_data);
-
 UIManager* init_ui_manager(void);
 void cleanup_ui_manager(UIManager* manager);
-int create_menu(UIManager* manager, const char* title, const char** items, int count);
 void set_status_message(UIManager* manager, const char* message);
 
+void show_error_message(const char* message);
+void show_success_message(const char* message);
 
 #endif /* UI_H */
