@@ -10,16 +10,21 @@
 
 // [내부 함수] 요청한 길이만큼 데이터를 완전히 전송하는 안정적인 쓰기 함수
 static bool ssl_write_fully(SSL* ssl, const void* buf, int len) {
+    if (!ssl || !buf) return false;
+    if (len == 0) return true;
+
     const char* ptr = (const char*)buf;
     while (len > 0) {
-        int bytes_sent = SSL_write(ssl, ptr, len);
-        if (bytes_sent <= 0) {
-            int err = SSL_get_error(ssl, bytes_sent);
-            LOG_ERROR("Network", "SSL_write 에러 발생: %d", err);
+        int bytes_written = SSL_write(ssl, ptr, len);
+        if (bytes_written <= 0) {
+            int err = SSL_get_error(ssl, bytes_written);
+            if (err != SSL_ERROR_ZERO_RETURN) {
+                error_report(ERROR_NETWORK_SEND_FAILED, "Network", "SSL_write 에러 발생: %d", err);
+            }
             return false;
         }
-        ptr += bytes_sent;
-        len -= bytes_sent;
+        ptr += bytes_written;
+        len -= bytes_written;
     }
     return true;
 }
@@ -27,7 +32,7 @@ static bool ssl_write_fully(SSL* ssl, const void* buf, int len) {
 // [핵심 수정] 길이가 0인 문자열도 올바르게 처리하도록 수정
 int send_message(SSL* ssl, const Message* message) {
     if (!ssl || !message) {
-        LOG_ERROR("Network", "send_message: 잘못된 파라미터");
+        error_report(ERROR_INVALID_PARAMETER, "Network", "send_message: 잘못된 파라미터");
         return -1;
     }
 
@@ -78,18 +83,18 @@ static void set_common_ssl_ctx_options(SSL_CTX* ctx) {
 
 static int init_ssl_context(SSLManager* manager, const char* cert_file, const char* key_file) {
     if (!manager || !cert_file || !key_file) {
-        LOG_ERROR("SSL", "init_ssl_context: 잘못된 파라미터");
+        error_report(ERROR_INVALID_PARAMETER, "SSL", "init_ssl_context: 잘못된 파라미터");
         return -1;
     }
     manager->ctx = SSL_CTX_new(TLS_server_method());
     if (!manager->ctx) {
-        LOG_ERROR("SSL", "SSL_CTX_new 실패");
+        error_report(ERROR_NETWORK_SSL_CONTEXT_FAILED, "SSL", "SSL_CTX_new 실패");
         return -1;
     }
     if (SSL_CTX_use_certificate_file(manager->ctx, cert_file, SSL_FILETYPE_PEM) <= 0 ||
         SSL_CTX_use_PrivateKey_file(manager->ctx, key_file, SSL_FILETYPE_PEM) <= 0 ||
         !SSL_CTX_check_private_key(manager->ctx)) {
-        LOG_ERROR("SSL", "인증서 또는 개인키 파일 로드/검증 실패");
+        error_report(ERROR_NETWORK_SSL_CERTIFICATE_FAILED, "SSL", "인증서 또는 개인키 파일 로드/검증 실패");
         ERR_print_errors_fp(stderr);
         SSL_CTX_free(manager->ctx);
         manager->ctx = NULL;
@@ -101,7 +106,7 @@ static int init_ssl_context(SSLManager* manager, const char* cert_file, const ch
 
 int init_ssl_manager(SSLManager* manager, bool is_server, const char* cert_file, const char* key_file) {
     if (!manager) {
-        LOG_ERROR("SSL", "manager 포인터가 NULL입니다");
+        error_report(ERROR_INVALID_PARAMETER, "SSL", "manager 포인터가 NULL입니다");
         return -1;
     }
     memset(manager, 0, sizeof(SSLManager));
@@ -112,14 +117,14 @@ int init_ssl_manager(SSLManager* manager, bool is_server, const char* cert_file,
 
     if (is_server) {
         if (!cert_file || !key_file) {
-            LOG_ERROR("SSL", "서버 모드에서는 인증서와 키 파일이 필요합니다");
+            error_report(ERROR_INVALID_PARAMETER, "SSL", "서버 모드에서는 인증서와 키 파일이 필요합니다");
             return -1;
         }
         return init_ssl_context(manager, cert_file, key_file);
     } else {
         manager->ctx = SSL_CTX_new(TLS_client_method());
         if (!manager->ctx) {
-            LOG_ERROR("SSL", "클라이언트 SSL 컨텍스트 생성 실패");
+            error_report(ERROR_NETWORK_SSL_CONTEXT_FAILED, "SSL", "클라이언트 SSL 컨텍스트 생성 실패");
             return -1;
         }
         set_common_ssl_ctx_options(manager->ctx);
@@ -130,7 +135,7 @@ int init_ssl_manager(SSLManager* manager, bool is_server, const char* cert_file,
 int init_server_socket(int port) {
     int server_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (server_fd < 0) {
-        LOG_ERROR("Network", "서버 소켓 생성 실패: %s", strerror(errno));
+        error_report(ERROR_NETWORK_SOCKET_CREATION_FAILED, "Network", "서버 소켓 생성 실패: %s", strerror(errno));
         return -1;
     }
     set_socket_options(server_fd);
@@ -140,12 +145,12 @@ int init_server_socket(int port) {
     server_addr.sin_addr.s_addr = INADDR_ANY;
     server_addr.sin_port = htons(port);
     if (bind(server_fd, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
-        LOG_ERROR("Network", "서버 소켓 바인딩 실패: %s", strerror(errno));
+        error_report(ERROR_NETWORK_BIND_FAILED, "Network", "서버 소켓 바인딩 실패: %s", strerror(errno));
         close(server_fd);
         return -1;
     }
     if (listen(server_fd, SOMAXCONN) < 0) {
-        LOG_ERROR("Network", "서버 소켓 리스닝 실패: %s", strerror(errno));
+        error_report(ERROR_NETWORK_LISTEN_FAILED, "Network", "서버 소켓 리스닝 실패: %s", strerror(errno));
         close(server_fd);
         return -1;
     }
@@ -155,7 +160,7 @@ int init_server_socket(int port) {
 int init_client_socket(const char* server_ip, int port) {
     int client_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (client_fd < 0) {
-        LOG_ERROR("Network", "클라이언트 소켓 생성 실패: %s", strerror(errno));
+        error_report(ERROR_NETWORK_SOCKET_CREATION_FAILED, "Network", "클라이언트 소켓 생성 실패: %s", strerror(errno));
         return -1;
     }
     struct sockaddr_in server_addr;
@@ -163,12 +168,12 @@ int init_client_socket(const char* server_ip, int port) {
     server_addr.sin_family = AF_INET;
     server_addr.sin_port = htons(port);
     if (inet_pton(AF_INET, server_ip, &server_addr.sin_addr) <= 0) {
-        LOG_ERROR("Network", "IP 주소 변환 실패: %s", strerror(errno));
+        error_report(ERROR_NETWORK_IP_CONVERSION_FAILED, "Network", "IP 주소 변환 실패: %s", strerror(errno));
         close(client_fd);
         return -1;
     }
     if (connect(client_fd, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
-        LOG_ERROR("Network", "서버 연결 실패: %s", strerror(errno));
+        error_report(ERROR_NETWORK_CONNECT_FAILED, "Network", "서버 연결 실패: %s", strerror(errno));
         close(client_fd);
         return -1;
     }
@@ -177,12 +182,12 @@ int init_client_socket(const char* server_ip, int port) {
 
 int handle_ssl_handshake(SSLHandler* handler) {
     if (!handler || !handler->ssl) {
-        LOG_ERROR("SSL", "잘못된 SSL 핸들러");
+        error_report(ERROR_INVALID_PARAMETER, "SSL", "잘못된 SSL 핸들러");
         return -1;
     }
     int ret = handler->is_server ? SSL_accept(handler->ssl) : SSL_connect(handler->ssl);
     if (ret <= 0) {
-        LOG_ERROR("SSL", "SSL 핸드셰이크 실패");
+        error_report(ERROR_NETWORK_SSL_HANDSHAKE_FAILED, "SSL", "SSL 핸드셰이크 실패");
         ERR_print_errors_fp(stderr);
         return -1;
     }
@@ -191,12 +196,12 @@ int handle_ssl_handshake(SSLHandler* handler) {
 
 SSLHandler* create_ssl_handler(SSLManager* manager, int socket_fd) {
     if (!manager || !manager->ctx) {
-        LOG_ERROR("SSL", "잘못된 SSL Manager 또는 Context");
+        error_report(ERROR_INVALID_PARAMETER, "SSL", "잘못된 SSL Manager 또는 Context");
         return NULL;
     }
     SSLHandler* handler = (SSLHandler*)malloc(sizeof(SSLHandler));
     if (!handler) {
-        LOG_ERROR("SSL", "SSL 핸들러 메모리 할당 실패");
+        error_report(ERROR_MEMORY_ALLOCATION_FAILED, "SSL", "SSL 핸들러 메모리 할당 실패");
         return NULL;
     }
     memset(handler, 0, sizeof(SSLHandler));
@@ -205,12 +210,12 @@ SSLHandler* create_ssl_handler(SSLManager* manager, int socket_fd) {
     handler->is_server = manager->is_server;
     handler->ssl = SSL_new(manager->ctx);
     if (!handler->ssl) {
-        LOG_ERROR("SSL", "SSL 객체 생성 실패");
+        error_report(ERROR_NETWORK_SSL_CONTEXT_FAILED, "SSL", "SSL 객체 생성 실패");
         free(handler);
         return NULL;
     }
     if (!SSL_set_fd(handler->ssl, socket_fd)) {
-        LOG_ERROR("SSL", "SSL 소켓 설정 실패");
+        error_report(ERROR_NETWORK_SSL_CONTEXT_FAILED, "SSL", "SSL 소켓 설정 실패");
         SSL_free(handler->ssl);
         free(handler);
         return NULL;
@@ -230,7 +235,7 @@ void cleanup_ssl_handler(SSLHandler* handler) {
 int set_socket_options(int socket_fd) {
     int opt = 1;
     if (setsockopt(socket_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
-        LOG_ERROR("Network", "소켓 옵션 (SO_REUSEADDR) 설정 실패: %s", strerror(errno));
+        error_report(ERROR_NETWORK_SOCKET_OPTION_FAILED, "Network", "소켓 옵션 (SO_REUSEADDR) 설정 실패: %s", strerror(errno));
         return -1;
     }
     return 0;

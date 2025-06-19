@@ -25,7 +25,7 @@ int init_ui(void) {
     setlocale(LC_ALL, ""); // 로케일 설정 (한글 지원)
     global_ui_manager = init_ui_manager();  // UI 매니저 초기화
     if (!global_ui_manager) {  // UI 매니저 초기화 실패 시
-        fprintf(stderr, "UI 매니저 초기화 실패\n");  // 에러 메시지 출력
+        error_report(ERROR_UI_INIT_FAILED, "UI", "UI 매니저 초기화 실패");  // 에러 메시지 출력
         return -1;  // 에러 코드 반환
     }
     LOG_INFO("UI", "UI 시스템 초기화 성공");  // 정보 로그 출력
@@ -96,7 +96,7 @@ void update_server_status(int session_count, int port) {
  */
 void update_server_devices(const Device* devices, int count, ResourceManager* resource_manager, ReservationManager* reservation_manager){
     if (!global_ui_manager) {
-        LOG_ERROR("UI", "update_server_devices: UI 매니저가 초기화되지 않음");
+        error_report(ERROR_UI_INIT_FAILED, "UI", "update_server_devices: UI 매니저가 초기화되지 않음");
         return;
     }
 
@@ -182,64 +182,75 @@ void refresh_all_windows(void) {
  * @return 성공 시 초기화된 UIManager 포인터, 실패 시 NULL
  */
 UIManager* init_ui_manager(void) {
-    UIManager* manager = (UIManager*)malloc(sizeof(UIManager));  // UI 매니저 메모리 할당
-    if (!manager) return NULL;  // 메모리 할당 실패 시 NULL 반환
-    memset(manager, 0, sizeof(UIManager));  // UI 매니저 초기화
-    
-    // 뮤텍스 초기화
-    if (pthread_mutex_init(&manager->mutex, NULL) != 0) {  // 뮤텍스 초기화 실패 시
-        free(manager);  // 매니저 메모리 해제
-        return NULL;  // NULL 반환
+    UIManager* manager = (UIManager*)malloc(sizeof(UIManager));
+    if (!manager) {
+        error_report(ERROR_MEMORY_ALLOCATION_FAILED, "UI", "UI 매니저 메모리 할당 실패");
+        return NULL;
     }
-    
+
     // ncurses 초기화
-    if (initscr() == NULL) {  // ncurses 초기화 실패 시
-        pthread_mutex_destroy(&manager->mutex);  // 뮤텍스 정리
-        free(manager);  // 매니저 메모리 해제
-        return NULL;  // NULL 반환
+    initscr();
+    cbreak();
+    noecho();
+    keypad(stdscr, TRUE);
+    curs_set(0);
+
+    // 색상 지원 확인 및 초기화
+    if (has_colors()) {
+        start_color();
+        init_pair(1, COLOR_WHITE, COLOR_BLUE);   // 메뉴 선택
+        init_pair(2, COLOR_YELLOW, COLOR_BLACK); // 경고
+        init_pair(3, COLOR_RED, COLOR_BLACK);    // 에러
+        init_pair(4, COLOR_GREEN, COLOR_BLACK);  // 성공
+        init_pair(5, COLOR_CYAN, COLOR_BLACK);   // 정보
     }
-    
-    // ncurses 설정
-    start_color();  // 색상 지원 시작
-    cbreak();      // 라인 버퍼링 비활성화
-    noecho();      // 입력 에코 비활성화
-    curs_set(0);   // 커서 숨기기
-    
+
     // 터미널 크기 확인
-    int term_h, term_w;  // 터미널 높이와 너비 변수
-    getmaxyx(stdscr, term_h, term_w);  // 터미널 크기 가져오기
-    if (term_h < 24 || term_w < 80) {  // 최소 크기 요구사항 확인
-        endwin();  // ncurses 종료
-        pthread_mutex_destroy(&manager->mutex);  // 뮤텍스 정리
-        free(manager);  // 매니저 메모리 해제
-        fprintf(stderr, "터미널 크기가 너무 작습니다 (최소 80x24 필요).\n");  // 에러 메시지 출력
-        return NULL;  // NULL 반환
+    int max_y, max_x;
+    getmaxyx(stdscr, max_y, max_x);
+    if (max_y < 24 || max_x < 80) {
+        error_report(ERROR_UI_TERMINAL_TOO_SMALL, "UI", "터미널 크기가 너무 작습니다 (최소 80x24 필요).");
+        endwin();
+        free(manager);
+        return NULL;
     }
 
     // 윈도우 생성
-    manager->main_win = stdscr;  // 메인 윈도우를 표준 화면으로 설정
-    manager->menu_win = newwin(term_h - 4, term_w, 1, 0);  // 메뉴 윈도우 생성
-    manager->status_win = newwin(3, term_w, term_h - 3, 0);  // 상태 윈도우 생성
-    
-    // ================================================================
-    // ▼ [핵심 수정] 아래 두 줄로 키보드 입력을 올바르게 설정합니다. ▼
-    keypad(manager->menu_win, TRUE);     // 방향키, 기능키 입력을 가능하게 함
-    nodelay(manager->menu_win, TRUE);    // 입력 대기(blocking)를 완전히 비활성화
-    // ▲ [핵심 수정] 위 두 줄로 키보드 입력을 올바르게 설정합니다. ▲
-    // ================================================================
+    manager->menu_win = newwin(max_y - 2, max_x, 1, 0);
+    manager->status_win = newwin(1, max_x, max_y - 1, 0);
+    manager->message_win = newwin(1, max_x, 0, 0);
 
-    // 윈도우 테두리 그리기
-    box(manager->menu_win, 0, 0);  // 메뉴 윈도우 테두리 그리기
-    box(manager->status_win, 0, 0);  // 상태 윈도우 테두리 그리기
+    if (!manager->menu_win || !manager->status_win || !manager->message_win) {
+        error_report(ERROR_UI_INIT_FAILED, "UI", "윈도우 생성 실패");
+        if (manager->menu_win) delwin(manager->menu_win);
+        if (manager->status_win) delwin(manager->status_win);
+        if (manager->message_win) delwin(manager->message_win);
+        endwin();
+        free(manager);
+        return NULL;
+    }
 
-    // 색상 쌍 초기화
-    init_pair(1, COLOR_WHITE, COLOR_BLUE);   // 메뉴 하이라이트
-    init_pair(2, COLOR_WHITE, COLOR_BLACK);  // 기본 텍스트
-    init_pair(3, COLOR_BLACK, COLOR_WHITE);  // 반전 텍스트
-    init_pair(4, COLOR_WHITE, COLOR_GREEN);  // 성공 메시지
-    init_pair(5, COLOR_WHITE, COLOR_RED);    // 에러 메시지
+    // 윈도우 설정
+    box(manager->menu_win, 0, 0);
+    box(manager->status_win, 0, 0);
+    box(manager->message_win, 0, 0);
 
-    return manager;  // 초기화된 매니저 반환
+    // 스크롤 활성화
+    scrollok(manager->menu_win, TRUE);
+    keypad(manager->menu_win, TRUE);
+
+    // 초기 상태 설정
+    manager->current_menu = MAIN_MENU;
+    manager->selected_item = 0;
+    manager->error_message[0] = '\0';
+    manager->success_message[0] = '\0';
+
+    refresh();
+    wrefresh(manager->menu_win);
+    wrefresh(manager->status_win);
+    wrefresh(manager->message_win);
+
+    return manager;
 }
 
 /**

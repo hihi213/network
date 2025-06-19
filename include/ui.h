@@ -14,6 +14,14 @@
 #define COLOR_PAIR_ERROR 5
 #define COLOR_PAIR_INFO 6
 
+/* UI 메뉴 타입 */
+typedef enum {
+    MAIN_MENU,
+    DEVICE_MENU,
+    RESERVATION_MENU,
+    SETTINGS_MENU
+} MenuType;
+
 /* UI 메시지 관련 상수 */
 #define MAX_MESSAGE_LENGTH 1024
 #define MAX_ARG_LENGTH 256
@@ -30,6 +38,7 @@ typedef struct {
     WINDOW* main_win;
     WINDOW* status_win;
     WINDOW* menu_win;
+    WINDOW* message_win;
     WINDOW* input_win;
     MENU* menu;
     ITEM** menu_items;
@@ -39,8 +48,11 @@ typedef struct {
     pthread_mutex_t mutex;
     int menu_count;
     int field_count;
+    MenuType current_menu;
+    int selected_item;
     char status_message[MAX_MESSAGE_LENGTH];
     char error_message[MAX_MESSAGE_LENGTH];
+    char success_message[MAX_MESSAGE_LENGTH];
 } UIManager;
 
 /* 전역 UI 매니저 */

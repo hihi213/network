@@ -13,7 +13,7 @@ static bool ssl_read_fully(SSL* ssl, void* buf, int len) {
         if (bytes_read <= 0) {
             int err = SSL_get_error(ssl, bytes_read);
             if (err != SSL_ERROR_ZERO_RETURN) { // 정상 종료 외의 에러는 로그 기록
-                LOG_ERROR("Network", "SSL_read 에러 발생: %d", err);
+                error_report(ERROR_NETWORK_RECEIVE_FAILED, "Network", "SSL_read 에러 발생: %d", err);
             }
             return false;
         }
@@ -41,7 +41,7 @@ static Message* create_message_with_two_args(MessageType type, const char* arg1,
 Message* create_message(MessageType type, const char *data) {
     Message *msg = (Message *)malloc(sizeof(Message));
     if (!msg) {
-        LOG_ERROR("Message", "메시지 메모리 할당 실패");
+        error_report(ERROR_MESSAGE_CREATION_FAILED, "Message", "메시지 메모리 할당 실패");
         return NULL;
     }
     msg->type = type;
