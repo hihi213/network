@@ -6,6 +6,12 @@
 #include "../include/resource.h"
 #include "../include/reservation.h" 
 
+// 메시지 노드 구조체
+typedef struct MsgNode {
+    Message* msg;
+    struct MsgNode* next;
+} MsgNode;
+
 // Client 구조체 정의
 typedef struct {
     int socket_fd;
@@ -15,6 +21,8 @@ typedef struct {
     SessionState state;
     char username[MAX_USERNAME_LENGTH];
     time_t last_activity;
+    MsgNode* queues[11]; // 우선순위 0~10 (MAX_PRIORITY=10 가정)
+    MsgNode* tails[11];
 } Client;
 
 // 함수 프로토타입
@@ -44,6 +52,54 @@ static SessionManager* session_manager = NULL;
 static Client* client_list[MAX_CLIENTS];
 static int num_clients = 0;
 static pthread_mutex_t client_list_mutex;
+
+#define MAX_PRIORITY 10
+
+// 메시지 삽입 (우선순위 큐)
+void enqueue_message(Client* client, Message* m) {
+    int p = m->priority;
+    if (p < 0) p = 0;
+    if (p > MAX_PRIORITY) p = MAX_PRIORITY;
+    MsgNode* node = (MsgNode*)malloc(sizeof(MsgNode));
+    node->msg = m;
+    node->next = NULL;
+    if (!client->queues[p]) {
+        client->queues[p] = client->tails[p] = node;
+    } else {
+        client->tails[p]->next = node;
+        client->tails[p] = node;
+    }
+}
+
+// 메시지 꺼내기 (우선순위 높은 것부터)
+Message* dequeue_message(Client* client) {
+    for (int p = MAX_PRIORITY; p >= 0; --p) {
+        if (client->queues[p]) {
+            MsgNode* node = client->queues[p];
+            Message* m = node->msg;
+            client->queues[p] = node->next;
+            if (!client->queues[p]) client->tails[p] = NULL;
+            free(node);
+            return m;
+        }
+    }
+    return NULL;
+}
+
+// 큐 정리 (메모리 해제)
+void cleanup_client_queue(Client* client) {
+    for (int p = 0; p <= MAX_PRIORITY; ++p) {
+        MsgNode* node = client->queues[p];
+        while (node) {
+            MsgNode* next = node->next;
+            cleanup_message(node->msg);
+            free(node->msg);
+            free(node);
+            node = next;
+        }
+        client->queues[p] = client->tails[p] = NULL;
+    }
+}
 
 int main(int argc, char* argv[]) {
     if (argc != 2) {
@@ -134,9 +190,13 @@ static void client_message_loop(Client* client) {
     while (running) {
         Message* msg = receive_message(client->ssl);
         if (msg) {
-            handle_client_message(client, msg);
-            cleanup_message(msg);
-            free(msg);
+            enqueue_message(client, msg); // 큐에 넣기
+            Message* to_process = dequeue_message(client); // 우선순위 높은 것부터 꺼내기
+            if (to_process) {
+                handle_client_message(client, to_process);
+                cleanup_message(to_process);
+                free(to_process);
+            }
             client->last_activity = time(NULL);
         } else {
             LOG_INFO("Thread", "클라이언트(%s)가 연결을 종료했습니다.", client->ip);
@@ -165,6 +225,7 @@ static void remove_client_from_list(Client* client) {
 
 static void cleanup_client(Client* client) {
     if (!client) return;
+    cleanup_client_queue(client); // 메시지 큐 메모리 해제
     if (client->state == SESSION_LOGGED_IN) close_session(session_manager, client->username);
     if (client->ssl_handler) cleanup_ssl_handler(client->ssl_handler);
     if (client->socket_fd >= 0) close(client->socket_fd);
