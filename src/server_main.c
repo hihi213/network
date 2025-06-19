@@ -266,6 +266,15 @@ static int process_device_reservation(Client* client, const char* device_id, int
     broadcast_status_update();
     Message* response = create_message(MSG_RESERVE_RESPONSE, "success");
     if (response) {
+        // 임시 Device 배열을 만들어 한 개의 장비 정보만 채웁니다.
+        Device updated_device;
+        Device* devices_ptr = (Device*)ht_get(resource_manager->devices, device_id);
+        if (devices_ptr) {
+            memcpy(&updated_device, devices_ptr, sizeof(Device));
+            // fill_status_response_args 함수를 재사용하여 장비 정보를 args에 채웁니다.
+            fill_status_response_args(response, &updated_device, 1, resource_manager, reservation_manager);
+        }
+        
         send_message(client->ssl, response);
         cleanup_message(response);
         free(response);
@@ -282,20 +291,23 @@ static int handle_login_request(Client* client, const Message* message) {
         strncpy(client->username, user, MAX_USERNAME_LENGTH - 1);
         client->username[MAX_USERNAME_LENGTH - 1] = '\0';
         create_session(session_manager, user, client->ip, 0);
-        Message* response = create_message(MSG_LOGIN, "success");
-        if (response) {
-            response->args[0] = strdup(user);
-            response->arg_count = 1;
-            send_message(client->ssl, response);
-            cleanup_message(response);
-            free(response);
+         Message* login_response = create_message(MSG_LOGIN, "success");
+        if (login_response) {
+            login_response->args[0] = strdup(user);
+            login_response->arg_count = 1;
+            send_message(client->ssl, login_response);
+            cleanup_message(login_response);
+            free(login_response);
         }
+
+        // 로그인 직후 바로 상태 목록을 보내 클라이언트가 초기 화면을 그리도록 함
+        handle_status_request(client, NULL); 
+
         return 0;
     } else {
         return send_error_response(client->ssl, "아이디 또는 비밀번호가 틀립니다.");
     }
 }
-
 static int handle_status_request(Client* client, const Message* message) {
     (void)message; 
     Device devices[MAX_DEVICES];

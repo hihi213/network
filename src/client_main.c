@@ -55,7 +55,6 @@ static int input_pos = 0;
 static int reservation_target_device_index = -1;
 static Device* device_list = NULL;
 static int device_count = 0;
-static bool expecting_network_response = false;
 
 int main(int argc, char* argv[]) {
     if (argc != 3) { 
@@ -92,14 +91,16 @@ int main(int argc, char* argv[]) {
 
         if (fds[1].revents & POLLIN) { running = false; }
 
-        if (expecting_network_response && (fds[0].revents & POLLIN)) {
+        if (fds[0].revents & POLLIN) {
             Message* msg = receive_message(client_session.ssl);
             if (msg) {
                 handle_server_message(msg);
                 cleanup_message(msg);
                 free(msg);
-                expecting_network_response = false;
+               
             } else {
+               show_error_message("서버와의 연결이 끊어졌습니다. 종료합니다.");
+                sleep(2); // 메시지를 볼 수 있도록 잠시 대기
                 running = false;
             }
         }
@@ -250,9 +251,8 @@ static void handle_input_logged_in_menu(int ch) {
             if (menu_highlight == 0) {
                 Message* msg = create_message(MSG_STATUS_REQUEST, NULL);
                 if (msg) {
-                    if (send_message(client_session.ssl, msg) < 0) running = false;
-                    else expecting_network_response = true;
-                    cleanup_message(msg); free(msg);
+                    if (send_message(client_session.ssl, msg) < 0) running = false; // ◀◀ else 구문 전체 삭제
+                     cleanup_message(msg); free(msg);
                 }
             } else {
                 client_session.state = SESSION_DISCONNECTED;
@@ -312,9 +312,8 @@ static void handle_input_reservation_time(int ch) {
         if (duration_sec > 0 && duration_sec <= MAX_RESERVATION_SECONDS) {
             Message* msg = create_reservation_message(device_list[reservation_target_device_index].id, input_buffer);
             if (msg) {
-                if(send_message(client_session.ssl, msg) < 0) running = false;
-                else expecting_network_response = true;
-                cleanup_message(msg); free(msg);
+if(send_message(client_session.ssl, msg) < 0) running = false; // ◀◀ else 구문 전체 삭제
+                 cleanup_message(msg); free(msg);
             }
         } else {
             show_error_message("유효하지 않은 시간입니다. (1~86400초)");
@@ -349,16 +348,22 @@ static void handle_server_message(const Message* message) {
             if (strcmp(message->data, "success") == 0) {
                 show_success_message("예약 성공! 목록을 갱신합니다...");
                 
-                Message* msg = create_message(MSG_STATUS_REQUEST, NULL);
-                if (msg) {
-                    if (send_message(client_session.ssl, msg) < 0) {
-                        running = false;
-                    } else {
-                        expecting_network_response = true;
+               if (message->arg_count >= 6) {
+                    // process_and_store_device_list의 로직을 재활용하여 한 개의 장비만 업데이트
+                    const char* updated_id = message->args[0];
+                    for (int i = 0; i < device_count; i++) {
+                        if (strcmp(device_list[i].id, updated_id) == 0) {
+                            device_list[i].status = string_to_device_status(message->args[3]);
+                            device_list[i].reservation_end_time = (time_t)atol(message->args[4]);
+                            strncpy(device_list[i].reserved_by, message->args[5], MAX_USERNAME_LENGTH - 1);
+                            device_list[i].reserved_by[MAX_USERNAME_LENGTH - 1] = '\0';
+                            break;
+                        }
                     }
-                    cleanup_message(msg);
-                    free(msg);
                 }
+                // 상태를 다시 예약 목록으로 변경
+                current_state = UI_STATE_DEVICE_LIST;
+
             } else {
                 show_error_message(message->data);
                 current_state = UI_STATE_DEVICE_LIST;
@@ -401,10 +406,8 @@ static void process_and_store_device_list(const Message* message) {
 static bool handle_login(const char* username, const char* password) {
     Message* msg = create_login_message(username, password);
     if (!msg) { show_error_message("메시지 생성 실패"); return false; }
-    if (send_message(client_session.ssl, msg) < 0) {
+    if (send_message(client_session.ssl, msg) < 0) { // ◀◀ else 구문 전체 삭제
         running = false;
-    } else {
-        expecting_network_response = true;
     }
     cleanup_message(msg);
     free(msg);
@@ -433,6 +436,19 @@ static int connect_to_server(const char* server_ip, int port) {
     client_session.ssl = h->ssl;
     client_session.socket_fd = fd;
     client_session.state = SESSION_CONNECTING;
+
+     show_success_message("서버에 연결되었습니다. 로그인 정보를 기다립니다...");
+    Message* msg = create_message(MSG_LOGIN, "success");
+    if(msg) {
+        if(send_message(client_session.ssl, msg) < 0) {
+            cleanup_message(msg);
+            free(msg);
+            return -1;
+        }
+        cleanup_message(msg);
+        free(msg);
+    }
+    
     return 0;
 }
 
