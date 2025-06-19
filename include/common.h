@@ -54,7 +54,7 @@
 #define SESSION_TIMEOUT 3600
 #define MAX_IP_LENGTH 46
 #define MAX_TOKEN_LENGTH 65
-#define MAX_ARGS 10
+#define MAX_ARGS 300
 
 /* 성능 최적화 매크로 */
 #define CACHE_LINE_SIZE 64

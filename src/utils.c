@@ -4,7 +4,7 @@
  * @details 시스템 전반에서 사용되는 공통 기능들을 제공합니다.
  */
 
-#include "../include/utils.h"
+#include "../include/utils.h"  // 유틸리티 관련 헤더 파일 포함
 
 /*
 performance
@@ -15,12 +15,12 @@ performance
  * @return 마이크로초 단위의 현재 시간
  */
 uint64_t get_current_time(void) {
-    struct timeval tv;
-    if (gettimeofday(&tv, NULL) != 0) {
-        LOG_ERROR("Performance", "gettimeofday 실패");
-        return 0;
+    struct timeval tv;  // 시간 구조체 선언
+    if (gettimeofday(&tv, NULL) != 0) {  // 현재 시간 가져오기 실패 시
+        LOG_ERROR("Performance", "gettimeofday 실패");  // 에러 로그 출력
+        return 0;  // 0 반환
     }
-    return (uint64_t)tv.tv_sec * 1000000ULL + (uint64_t)tv.tv_usec;
+    return (uint64_t)tv.tv_sec * 1000000ULL + (uint64_t)tv.tv_usec;  // 마이크로초 단위로 변환하여 반환
 }
 
 /**
@@ -29,11 +29,11 @@ uint64_t get_current_time(void) {
  * @param output 복사할 대상 포인터
  */
 void get_performance_stats(PerformanceStats* stats, PerformanceStats* output) {
-    if (!stats || !output) return;
+    if (!stats || !output) return;  // 유효성 검사
 
-    pthread_mutex_lock(&stats->mutex);
-    memcpy(output, stats, sizeof(PerformanceStats));
-    pthread_mutex_unlock(&stats->mutex);
+    pthread_mutex_lock(&stats->mutex);  // 뮤텍스 잠금
+    memcpy(output, stats, sizeof(PerformanceStats));  // 성능 통계 복사
+    pthread_mutex_unlock(&stats->mutex);  // 뮤텍스 해제
 }
 
 /**
@@ -41,26 +41,26 @@ void get_performance_stats(PerformanceStats* stats, PerformanceStats* output) {
  * @param stats 출력할 성능 통계 포인터
  */
 void print_performance_stats(PerformanceStats* stats) {
-    if (!stats) {
-        LOG_ERROR("Performance", "잘못된 성능 통계 포인터");
-        return;
+    if (!stats) {  // 통계 포인터가 NULL인 경우
+        LOG_ERROR("Performance", "잘못된 성능 통계 포인터");  // 에러 로그 출력
+        return;  // 함수 종료
     }
 
-    LOG_INFO("Performance", "성능 통계 출력");
-    printf("=== 성능 통계 ===\n");
-    printf("총 요청 수: %llu\n", stats->total_requests);
-    printf("성공한 요청 수: %llu\n", stats->successful_requests);
-    printf("실패한 요청 수: %llu\n", stats->failed_requests);
-    printf("최대 동시 요청 수: %llu\n", stats->max_concurrent_requests);
-    printf("평균 응답 시간: %llu ms\n", 
+    LOG_INFO("Performance", "성능 통계 출력");  // 정보 로그 출력
+    printf("=== 성능 통계 ===\n");  // 제목 출력
+    printf("총 요청 수: %llu\n", stats->total_requests);  // 총 요청 수 출력
+    printf("성공한 요청 수: %llu\n", stats->successful_requests);  // 성공한 요청 수 출력
+    printf("실패한 요청 수: %llu\n", stats->failed_requests);  // 실패한 요청 수 출력
+    printf("최대 동시 요청 수: %llu\n", stats->max_concurrent_requests);  // 최대 동시 요청 수 출력
+    printf("평균 응답 시간: %llu ms\n",   // 평균 응답 시간 출력
            stats->total_requests > 0 ? stats->total_response_time / stats->total_requests : 0);
-    printf("최소 응답 시간: %llu ms\n", stats->min_response_time);
-    printf("최대 응답 시간: %llu ms\n", stats->max_response_time);
-    printf("총 송신 바이트: %llu\n", stats->total_data_sent);
-    printf("총 수신 바이트: %llu\n", stats->total_data_received);
+    printf("최소 응답 시간: %llu ms\n", stats->min_response_time);  // 최소 응답 시간 출력
+    printf("최대 응답 시간: %llu ms\n", stats->max_response_time);  // 최대 응답 시간 출력
+    printf("총 송신 바이트: %llu\n", stats->total_data_sent);  // 총 송신 바이트 출력
+    printf("총 수신 바이트: %llu\n", stats->total_data_received);  // 총 수신 바이트 출력
   
-    printf("총 에러 수: %llu\n", stats->total_errors);
-    printf("================\n");
+    printf("총 에러 수: %llu\n", stats->total_errors);  // 총 에러 수 출력
+    printf("================\n");  // 구분선 출력
 }
 
 /*
@@ -68,13 +68,13 @@ logger
 */
 
 /* 전역 변수 */
-static FILE* log_file = NULL;
+static FILE* log_file = NULL;  // 로그 파일 포인터
 static LogLevel current_log_level = LOG_INFO; // 기본 로그 레벨은 INFO
-static pthread_mutex_t log_mutex;
+static pthread_mutex_t log_mutex;  // 로그 뮤텍스
 
 /* 정적 함수 선언 */
-static void write_to_log_file(LogLevel level, const char* category, const char* message);
-static const char* get_log_level_string_internal(LogLevel level);
+static void write_to_log_file(LogLevel level, const char* category, const char* message);  // 로그 파일에 쓰기 함수
+static const char* get_log_level_string_internal(LogLevel level);  // 로그 레벨 문자열 변환 함수
 
 /**
  * @brief 로거를 초기화합니다.
@@ -82,30 +82,30 @@ static const char* get_log_level_string_internal(LogLevel level);
  * @return 성공 시 0, 실패 시 -1
  */
 int init_logger(const char* filename) {
-    if (log_file != NULL) {
+    if (log_file != NULL) {  // 이미 초기화된 경우
         return -1; // 이미 초기화됨
     }
 
     log_file = fopen(filename, "a"); // 추가 모드로 열기
-    if (log_file == NULL) {
-        return -1;
+    if (log_file == NULL) {  // 파일 열기 실패 시
+        return -1;  // 에러 코드 반환
     }
 
-    pthread_mutex_init(&log_mutex, NULL);
-    log_message(LOG_INFO, "System", "로거 초기화 완료. 로그 파일: %s", filename);
-    return 0;
+    pthread_mutex_init(&log_mutex, NULL);  // 로그 뮤텍스 초기화
+    log_message(LOG_INFO, "System", "로거 초기화 완료. 로그 파일: %s", filename);  // 초기화 완료 로그
+    return 0;  // 성공 코드 반환
 }
 
 /**
  * @brief 로거를 정리합니다.
  */
 void cleanup_logger(void) {
-    if (log_file != NULL) {
-        log_message(LOG_INFO, "System", "로거 정리 중...");
-        fclose(log_file);
-        log_file = NULL;
+    if (log_file != NULL) {  // 로그 파일이 열려있는 경우
+        log_message(LOG_INFO, "System", "로거 정리 중...");  // 정리 시작 로그
+        fclose(log_file);  // 로그 파일 닫기
+        log_file = NULL;  // 포인터를 NULL로 설정
     }
-    pthread_mutex_destroy(&log_mutex);
+    pthread_mutex_destroy(&log_mutex);  // 로그 뮤텍스 정리
 }
 
 /**
@@ -116,17 +116,17 @@ void cleanup_logger(void) {
  * @param ... 가변 인자
  */
 void log_message(LogLevel level, const char* category, const char* format, ...) {
-    if (level > current_log_level) {
+    if (level > current_log_level) {  // 로그 레벨이 낮으면 출력하지 않음
         return; // 로그 레벨이 낮으면 출력하지 않음
     }
 
-    char message_buffer[MAX_LOG_MSG];
-    va_list args;
-    va_start(args, format);
-    vsnprintf(message_buffer, sizeof(message_buffer), format, args);
-    va_end(args);
+    char message_buffer[MAX_LOG_MSG];  // 메시지 버퍼
+    va_list args;  // 가변 인자 리스트
+    va_start(args, format);  // 가변 인자 시작
+    vsnprintf(message_buffer, sizeof(message_buffer), format, args);  // 포맷된 메시지 생성
+    va_end(args);  // 가변 인자 종료
 
-    write_to_log_file(level, category, message_buffer);
+    write_to_log_file(level, category, message_buffer);  // 로그 파일에 메시지 쓰기
 }
 
 /**
@@ -136,29 +136,29 @@ void log_message(LogLevel level, const char* category, const char* format, ...) 
  * @param message 로그 메시지
  */
 static void write_to_log_file(LogLevel level, const char* category, const char* message) {
-    pthread_mutex_lock(&log_mutex);
+    pthread_mutex_lock(&log_mutex);  // 로그 뮤텍스 잠금
 
-    if (log_file != NULL) {
-        time_t rawtime;
-        struct tm *timeinfo;
-        char timestamp_str[64];
+    if (log_file != NULL) {  // 로그 파일이 열려있는 경우
+        time_t rawtime;  // 원시 시간 변수
+        struct tm *timeinfo;  // 시간 정보 구조체 포인터
+        char timestamp_str[64];  // 타임스탬프 문자열 버퍼
 
-        time(&rawtime);
-        timeinfo = localtime(&rawtime);
-        strftime(timestamp_str, sizeof(timestamp_str), "%m월 %d일 %H:%M", timeinfo);
+        time(&rawtime);  // 현재 시간 가져오기
+        timeinfo = localtime(&rawtime);  // 로컬 시간으로 변환
+        strftime(timestamp_str, sizeof(timestamp_str), "%m월 %d일 %H:%M", timeinfo);  // 타임스탬프 포맷
 
-        fprintf(log_file, "[%s] [%s] %s [%s]\n",
+        fprintf(log_file, "[%s] [%s] %s [%s]\n",  // 로그 메시지 출력
                 get_log_level_string_internal(level),
                 category,
                 message,
                 timestamp_str);
         fflush(log_file); // 즉시 디스크에 쓰기
-    } else {
-        fprintf(stderr, "경고: 로그 파일이 열려 있지 않습니다. 메시지: [%s] [%s] %s\n",
+    } else {  // 로그 파일이 열려있지 않은 경우
+        fprintf(stderr, "경고: 로그 파일이 열려 있지 않습니다. 메시지: [%s] [%s] %s\n",  // 경고 메시지 출력
                 get_log_level_string_internal(level), category, message);
     }
 
-    pthread_mutex_unlock(&log_mutex);
+    pthread_mutex_unlock(&log_mutex);  // 로그 뮤텍스 해제
 }
 
 /**
@@ -167,12 +167,12 @@ static void write_to_log_file(LogLevel level, const char* category, const char* 
  * @return 로그 레벨에 해당하는 문자열
  */
 static const char* get_log_level_string_internal(LogLevel level) {
-    switch (level) {
+    switch (level) {  // 로그 레벨에 따른 분기
         case LOG_ERROR: return "ERROR"; // common.h에 정의된 LogLevel 사용
-        case LOG_WARNING: return "WARNING";
-        case LOG_INFO: return "INFO";
-        case LOG_DEBUG: return "DEBUG";
-        default: return "UNKNOWN";
+        case LOG_WARNING: return "WARNING";  // 경고 레벨
+        case LOG_INFO: return "INFO";  // 정보 레벨
+        case LOG_DEBUG: return "DEBUG";  // 디버그 레벨
+        default: return "UNKNOWN";  // 알 수 없는 레벨
     }
 }
 
@@ -182,13 +182,13 @@ static const char* get_log_level_string_internal(LogLevel level) {
  * @return 포맷된 시간 문자열
  */
 const char* get_timestamp_string(time_t timestamp) {
-    static char buffer[64];
-    struct tm *timeinfo = localtime(&timestamp);
-    if (timeinfo == NULL) {
-        return "Invalid Time";
+    static char buffer[64];  // 정적 버퍼
+    struct tm *timeinfo = localtime(&timestamp);  // 로컬 시간으로 변환
+    if (timeinfo == NULL) {  // 시간 변환 실패 시
+        return "Invalid Time";  // 유효하지 않은 시간 메시지 반환
     }
-    strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", timeinfo);
-    return buffer;
+    strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", timeinfo);  // 시간 포맷
+    return buffer;  // 포맷된 시간 문자열 반환
 }
 
 /*
@@ -202,12 +202,12 @@ hash_table
  * @return 해시 값
  */
 static uint32_t hash_function(const char* key, uint32_t size) {
-    unsigned long hash = 5381;
-    int c;
-    while ((c = *key++)) {
+    unsigned long hash = 5381;  // 초기 해시 값
+    int c;  // 문자 변수
+    while ((c = *key++)) {  // 문자열의 끝까지 반복
         hash = ((hash << 5) + hash) + c; // hash * 33 + c
     }
-    return hash % size;
+    return hash % size;  // 해시 테이블 크기로 모듈로 연산
 }
 
 /**
@@ -217,21 +217,21 @@ static uint32_t hash_function(const char* key, uint32_t size) {
  * @return 생성된 HashTable 포인터, 실패 시 NULL
  */
 HashTable* ht_create(uint32_t size, void (*free_value_func)(void*)) {
-    HashTable* table = (HashTable*)malloc(sizeof(HashTable));
-    if (!table) {
-        LOG_ERROR("HashTable", "해시 테이블 메모리 할당 실패");
-        return NULL;
+    HashTable* table = (HashTable*)malloc(sizeof(HashTable));  // 해시 테이블 메모리 할당
+    if (!table) {  // 메모리 할당 실패 시
+        LOG_ERROR("HashTable", "해시 테이블 메모리 할당 실패");  // 에러 로그 출력
+        return NULL;  // NULL 반환
     }
-    table->size = size;
-    table->count = 0;
-    table->free_value = free_value_func;
-    table->buckets = (HashNode**)calloc(table->size, sizeof(HashNode*));
-    if (!table->buckets) {
-        LOG_ERROR("HashTable", "버킷 메모리 할당 실패");
-        free(table);
-        return NULL;
+    table->size = size;  // 해시 테이블 크기 설정
+    table->count = 0;  // 요소 개수를 0으로 초기화
+    table->free_value = free_value_func;  // 값 해제 함수 설정
+    table->buckets = (HashNode**)calloc(table->size, sizeof(HashNode*));  // 버킷 배열 메모리 할당
+    if (!table->buckets) {  // 버킷 메모리 할당 실패 시
+        LOG_ERROR("HashTable", "버킷 메모리 할당 실패");  // 에러 로그 출력
+        free(table);  // 해시 테이블 메모리 해제
+        return NULL;  // NULL 반환
     }
-    return table;
+    return table;  // 생성된 해시 테이블 반환
 }
 
 /**
@@ -239,21 +239,21 @@ HashTable* ht_create(uint32_t size, void (*free_value_func)(void*)) {
  * @param table 정리할 HashTable 포인터
  */
 void ht_destroy(HashTable* table) {
-    if (!table) return;
-    for (uint32_t i = 0; i < table->size; i++) {
-        HashNode* node = table->buckets[i];
-        while (node) {
-            HashNode* temp = node;
-            node = node->next;
-            free(temp->key);
-            if (table->free_value) {
-                table->free_value(temp->value);
+    if (!table) return;  // 테이블이 NULL이면 함수 종료
+    for (uint32_t i = 0; i < table->size; i++) {  // 모든 버킷에 대해 반복
+        HashNode* node = table->buckets[i];  // 현재 버킷의 첫 번째 노드
+        while (node) {  // 노드가 존재하는 동안 반복
+            HashNode* temp = node;  // 임시 변수에 현재 노드 저장
+            node = node->next;  // 다음 노드로 이동
+            free(temp->key);  // 키 메모리 해제
+            if (table->free_value) {  // 값 해제 함수가 존재하는 경우
+                table->free_value(temp->value);  // 값 메모리 해제
             }
-            free(temp);
+            free(temp);  // 노드 메모리 해제
         }
     }
-    free(table->buckets);
-    free(table);
+    free(table->buckets);  // 버킷 배열 메모리 해제
+    free(table);  // 해시 테이블 메모리 해제
 }
 
 /**
@@ -264,39 +264,51 @@ void ht_destroy(HashTable* table) {
  * @return 성공 시 true, 실패 시 false
  */
 bool ht_insert(HashTable* table, const char* key, void* value) {
-    if (!table || !key || !value) return false;
+    if (!table || !key || !value) {
+        LOG_ERROR("HashTable", "ht_insert: 잘못된 파라미터");
+        return false;  // 유효성 검사
+    }
 
-    uint32_t index = hash_function(key, table->size);
-    HashNode* node = table->buckets[index];
+    LOG_INFO("HashTable", "해시 테이블 삽입 시작: 키=%s", key);
 
-    // 키가 이미 존재하는지 확인 (덮어쓰기)
-    while (node) {
-        if (strcmp(node->key, key) == 0) {
-            if (table->free_value) {
-                table->free_value(node->value);
+    uint32_t index = hash_function(key, table->size);  // 해시 인덱스 계산
+    LOG_INFO("HashTable", "해시 인덱스 계산: 키=%s, 인덱스=%u", key, index);
+    
+    HashNode* node = table->buckets[index];  // 해당 버킷의 첫 번째 노드
+    
+    // 기존 키가 있는지 확인
+    while (node) {  // 노드가 존재하는 동안 반복
+        if (strcmp(node->key, key) == 0) {  // 키가 일치하는 경우
+            LOG_INFO("HashTable", "기존 키 발견, 값 교체: 키=%s", key);
+            if (table->free_value) {  // 값 해제 함수가 존재하는 경우
+                table->free_value(node->value);  // 기존 값 메모리 해제
             }
-            node->value = value;
-            return true;
+            node->value = value;  // 새 값으로 교체
+            return true;  // true 반환
         }
-        node = node->next;
+        node = node->next;  // 다음 노드로 이동
     }
 
     // 새 노드 생성
-    HashNode* new_node = (HashNode*)malloc(sizeof(HashNode));
-    if (!new_node) return false;
-
-    new_node->key = strdup(key);
-    if (!new_node->key) {
-        free(new_node);
-        return false;
+    HashNode* new_node = (HashNode*)malloc(sizeof(HashNode));  // 새 노드 메모리 할당
+    if (!new_node) {  // 메모리 할당 실패 시
+        LOG_ERROR("HashTable", "새 노드 메모리 할당 실패: 키=%s", key);
+        return false;  // false 반환
     }
-    new_node->value = value;
-    new_node->next = table->buckets[index];
 
-    table->buckets[index] = new_node;
-    table->count++;
+    // 노드 초기화
+    new_node->key = strdup(key);  // 키 복사
+    if (!new_node->key) {  // 키 복사 실패 시
+        LOG_ERROR("HashTable", "키 복사 실패: 키=%s", key);
+        free(new_node);  // 노드 메모리 해제
+        return false;  // false 반환
+    }
+    new_node->value = value;  // 값 설정
+    new_node->next = table->buckets[index];  // 기존 첫 번째 노드를 다음으로 설정
+    table->buckets[index] = new_node;  // 새 노드를 첫 번째로 설정
 
-    return true;
+    LOG_INFO("HashTable", "새 노드 삽입 성공: 키=%s, 인덱스=%u", key, index);
+    return true;  // true 반환
 }
 
 /**
@@ -306,16 +318,16 @@ bool ht_insert(HashTable* table, const char* key, void* value) {
  * @return 키에 해당하는 값, 없으면 NULL
  */
 void* ht_get(HashTable* table, const char* key) {
-    if (!table || !key) return NULL;
-    uint32_t index = hash_function(key, table->size);
-    HashNode* node = table->buckets[index];
-    while (node) {
-        if (strcmp(node->key, key) == 0) {
-            return node->value;
+    if (!table || !key) return NULL;  // 유효성 검사
+    uint32_t index = hash_function(key, table->size);  // 해시 인덱스 계산
+    HashNode* node = table->buckets[index];  // 해당 버킷의 첫 번째 노드
+    while (node) {  // 노드가 존재하는 동안 반복
+        if (strcmp(node->key, key) == 0) {  // 키가 일치하는 경우
+            return node->value;  // 값 반환
         }
-        node = node->next;
+        node = node->next;  // 다음 노드로 이동
     }
-    return NULL;
+    return NULL;  // 키를 찾지 못한 경우 NULL 반환
 }
 
 /**
@@ -325,30 +337,44 @@ void* ht_get(HashTable* table, const char* key) {
  * @return 성공 시 true, 실패 시 false
  */
 bool ht_delete(HashTable* table, const char* key) {
-    if (!table || !key) return false;
-    uint32_t index = hash_function(key, table->size);
-    HashNode* node = table->buckets[index];
-    HashNode* prev = NULL;
-
-    while (node) {
-        if (strcmp(node->key, key) == 0) {
-            if (prev) {
-                prev->next = node->next;
-            } else {
-                table->buckets[index] = node->next;
-            }
-            free(node->key);
-            if (table->free_value) {
-                table->free_value(node->value);
-            }
-            free(node);
-            table->count--;
-            return true;
-        }
-        prev = node;
-        node = node->next;
+    if (!table || !key) {
+        LOG_ERROR("HashTable", "ht_delete: 잘못된 파라미터");
+        return false;  // 유효성 검사
     }
-    return false;
+
+    LOG_INFO("HashTable", "해시 테이블 삭제 시작: 키=%s", key);
+
+    uint32_t index = hash_function(key, table->size);  // 해시 인덱스 계산
+    LOG_INFO("HashTable", "해시 인덱스 계산: 키=%s, 인덱스=%u", key, index);
+    
+    HashNode* node = table->buckets[index];  // 해당 버킷의 첫 번째 노드
+    HashNode* prev = NULL;  // 이전 노드 포인터
+
+    while (node) {  // 노드가 존재하는 동안 반복
+        if (strcmp(node->key, key) == 0) {  // 키가 일치하는 경우
+            LOG_INFO("HashTable", "삭제할 노드 발견: 키=%s", key);
+            
+            if (prev) {  // 이전 노드가 존재하는 경우
+                prev->next = node->next;  // 이전 노드의 다음을 현재 노드의 다음으로 설정
+            } else {  // 첫 번째 노드인 경우
+                table->buckets[index] = node->next;  // 버킷의 첫 번째를 다음 노드로 설정
+            }
+
+            free(node->key);  // 키 메모리 해제
+            if (table->free_value) {  // 값 해제 함수가 존재하는 경우
+                table->free_value(node->value);  // 값 메모리 해제
+            }
+            free(node);  // 노드 메모리 해제
+
+            LOG_INFO("HashTable", "노드 삭제 성공: 키=%s", key);
+            return true;  // true 반환
+        }
+        prev = node;  // 이전 노드를 현재 노드로 설정
+        node = node->next;  // 다음 노드로 이동
+    }
+
+    LOG_WARNING("HashTable", "삭제할 키를 찾을 수 없음: 키=%s", key);
+    return false;  // false 반환
 }
 
 /**
@@ -358,13 +384,27 @@ bool ht_delete(HashTable* table, const char* key) {
  * @param user_data 콜백 함수에 전달할 사용자 데이터
  */
 void ht_traverse(HashTable* table, void (*callback)(const char* key, void* value, void* user_data), void* user_data) {
-    if (!table || !callback) return;
+    if (!table || !callback) {
+        LOG_ERROR("HashTable", "ht_traverse: 잘못된 파라미터");
+        return;  // 유효성 검사
+    }
 
-    for (uint32_t i = 0; i < table->size; i++) {
-        HashNode* node = table->buckets[i];
-        while (node) {
-            callback(node->key, node->value, user_data);
-            node = node->next;
+    LOG_INFO("HashTable", "해시 테이블 순회 시작: 크기=%u", table->size);
+
+    for (uint32_t i = 0; i < table->size; i++) {  // 모든 버킷에 대해 반복
+        HashNode* node = table->buckets[i];  // 현재 버킷의 첫 번째 노드
+        int bucket_count = 0;  // 버킷 내 노드 개수
+        
+        while (node) {  // 노드가 존재하는 동안 반복
+            callback(node->key, node->value, user_data);  // 콜백 함수 호출
+            node = node->next;  // 다음 노드로 이동
+            bucket_count++;  // 노드 개수 증가
+        }
+        
+        if (bucket_count > 0) {
+            LOG_INFO("HashTable", "버킷 %u 처리 완료: %d개 노드", i, bucket_count);
         }
     }
+
+    LOG_INFO("HashTable", "해시 테이블 순회 완료");
 }

@@ -1,3 +1,4 @@
+// client_main.c
 /**
  * @file client_main.c
  * @brief 장치 예약 시스템 클라이언트 메인 프로그램 (최종 통합 버전)
@@ -110,7 +111,6 @@ static void draw_ui_for_current_state() {
         case UI_STATE_DEVICE_LIST: draw_device_list(); break;
         case UI_STATE_INPUT_RESERVATION_TIME:
             draw_device_list();
-            // [수정] 안내 문구 강화
             mvwprintw(global_ui_manager->menu_win, LINES - 5, 2, "예약할 시간(초) 입력 (1~86400, ESC:취소): %s", input_buffer);
             break;
         case UI_STATE_QUITTING: break;
@@ -141,8 +141,7 @@ static void draw_logged_in_menu() {
 }
 
 static void draw_device_list() {
-    // [수정] 스크롤/페이지 기능 안내 추가
-    mvwprintw(global_ui_manager->menu_win, 0, 2, " 장비 목록 (↑↓: 이동, PgUp/PgDn: 페이지, Enter: 예약, ESC: 뒤로) ");
+    mvwprintw(global_ui_manager->menu_win, 0, 2, " 장비 목록 (Enter: 예약, ESC: 뒤로) ");
     if (!device_list || device_count == 0) {
         mvwprintw(global_ui_manager->menu_win, 2, 2, "장비 목록이 없습니다.");
         return;
@@ -151,12 +150,7 @@ static void draw_device_list() {
     int menu_win_height, menu_win_width;
     getmaxyx(global_ui_manager->menu_win, menu_win_height, menu_win_width);
     (void)menu_win_width;
-    const int visible_items = menu_win_height - 6; // 페이지 정보와 도움말 공간 확보
-
-    // [수정] 페이지 계산 로직
-    int total_pages = (device_count > 0 && visible_items > 0) ? (device_count - 1) / visible_items + 1 : 1;
-    int current_page = (scroll_offset / visible_items) + 1;
-    
+    const int visible_items = menu_win_height - 5;
     for (int i = 0; i < visible_items; i++) {
         int device_index = scroll_offset + i;
         if (device_index >= device_count) break;
@@ -170,9 +164,10 @@ static void draw_device_list() {
         }
         
         char display_str[256], status_str[128];
-        if (current_device->status == DEVICE_RESERVED && current_device->reservation_end_time > 0) {
+        if (current_device->status == DEVICE_RESERVED) {
             long remaining_sec = (current_device->reservation_end_time > current_time) ? (current_device->reservation_end_time - current_time) : 0;
-            snprintf(status_str, sizeof(status_str), "reserved (%lds left)", remaining_sec);
+            snprintf(status_str, sizeof(status_str), "reserved by %s (%lds left)", 
+                     current_device->reserved_by, remaining_sec);
         } else {
             strncpy(status_str, get_device_status_string(current_device->status), sizeof(status_str) - 1);
             status_str[sizeof(status_str) - 1] = '\0';
@@ -185,14 +180,7 @@ static void draw_device_list() {
         mvwprintw(global_ui_manager->menu_win, i + 2, 2, " > %s", display_str);
         if (device_index == menu_highlight) wattroff(global_ui_manager->menu_win, A_REVERSE);
     }
-    
-    // [추가] 페이지 정보 표시
-    char page_info[64];
-    snprintf(page_info, sizeof(page_info), "Page %d / %d", current_page, total_pages);
-    mvwprintw(global_ui_manager->menu_win, menu_win_height - 3, 2, "%s", page_info);
 
-
-    // [추가] 하이라이트된 장비에 대한 동적 안내 메시지 표시
     if (device_count > 0 && menu_highlight < device_count) {
         char help_message[128] = {0};
         DeviceStatus highlighted_status = device_list[menu_highlight].status;
@@ -202,7 +190,7 @@ static void draw_device_list() {
                 snprintf(help_message, sizeof(help_message), "도움말: 예약하려면 Enter 키를 누르세요.");
                 break;
             case DEVICE_RESERVED:
-                snprintf(help_message, sizeof(help_message), "도움말: 현재 다른 사용자가 예약중인 장비입니다.");
+                snprintf(help_message, sizeof(help_message), "도움말: '%s'님이 예약중인 장비입니다.", device_list[menu_highlight].reserved_by);
                 break;
             case DEVICE_MAINTENANCE:
                 snprintf(help_message, sizeof(help_message), "도움말: 점검 중인 장비는 예약할 수 없습니다.");
@@ -213,7 +201,6 @@ static void draw_device_list() {
         mvwprintw(global_ui_manager->menu_win, menu_win_height - 2, 2, "%s", help_message);
     }
 }
-
 
 static void handle_keyboard_input(int ch) {
     switch (current_state) {
@@ -266,39 +253,17 @@ static void handle_input_device_list(int ch) {
     int menu_win_height, menu_win_width;
     getmaxyx(global_ui_manager->menu_win, menu_win_height, menu_win_width);
     (void)menu_win_width;
-    const int visible_items = menu_win_height - 6; // 페이지 정보와 도움말 공간 확보
-    
+    const int visible_items = menu_win_height - 5;
     switch (ch) {
         case KEY_UP:
-            if (menu_highlight > 0) {
-                menu_highlight--;
-                if (menu_highlight < scroll_offset) {
-                    scroll_offset = menu_highlight;
-                }
-            }
+            if (menu_highlight > 0) menu_highlight--;
+            if (menu_highlight < scroll_offset) scroll_offset = menu_highlight;
             break;
         case KEY_DOWN:
-            if (menu_highlight < device_count - 1) {
-                menu_highlight++;
-                if (menu_highlight >= scroll_offset + visible_items) {
-                    scroll_offset++;
-                }
-            }
+            if (menu_highlight < device_count - 1) menu_highlight++;
+            if (menu_highlight >= scroll_offset + visible_items) scroll_offset = menu_highlight - visible_items + 1;
             break;
-        // [추가] 페이지 스크롤 기능
-        case KEY_PPAGE: // Page Up
-            scroll_offset -= visible_items;
-            if (scroll_offset < 0) scroll_offset = 0;
-            menu_highlight = scroll_offset;
-            break;
-        case KEY_NPAGE: // Page Down
-            if (scroll_offset + visible_items < device_count) {
-                scroll_offset += visible_items;
-                menu_highlight = scroll_offset;
-            }
-            break;
-        case 10: // Enter 키
-            // [수정] 예약 가능 상태일 때만 시간 입력으로 넘어가도록 수정
+        case 10:
             if (device_list && menu_highlight < device_count) {
                 if (device_list[menu_highlight].status == DEVICE_AVAILABLE) {
                     reservation_target_device_index = menu_highlight;
@@ -309,13 +274,12 @@ static void handle_input_device_list(int ch) {
                 }
             }
             break;
-        case 27: // ESC 키
+        case 27:
             current_state = UI_STATE_LOGGED_IN_MENU;
             menu_highlight = 0;
             break;
     }
 }
-
 
 static void handle_input_reservation_time(int ch) {
     if ((ch >= '0' && ch <= '9') && (size_t)input_pos < sizeof(input_buffer) - 1) {
@@ -323,22 +287,17 @@ static void handle_input_reservation_time(int ch) {
         input_buffer[input_pos] = '\0';
     } else if ((ch == KEY_BACKSPACE || ch == 127 || ch == '\b') && input_pos > 0) {
         input_buffer[--input_pos] = '\0';
-    } else if (ch == 27) { // ESC 키
+    } else if (ch == 27) {
         current_state = UI_STATE_DEVICE_LIST;
-    } else if (ch == 10) { // Enter 키
+    } else if (ch == 10) {
         long duration_sec = atol(input_buffer);
         const long MAX_RESERVATION_SECONDS = 86400;
-
         if (duration_sec > 0 && duration_sec <= MAX_RESERVATION_SECONDS) {
             Message* msg = create_reservation_message(device_list[reservation_target_device_index].id, input_buffer);
             if (msg) {
-                if(send_message(client_session.ssl, msg) < 0) {
-                    running = false;
-                } else {
-                    expecting_network_response = true;
-                }
-                cleanup_message(msg);
-                free(msg);
+                if(send_message(client_session.ssl, msg) < 0) running = false;
+                else expecting_network_response = true;
+                cleanup_message(msg); free(msg);
             }
         } else {
             show_error_message("유효하지 않은 시간입니다. (1~86400초)");
@@ -350,8 +309,10 @@ static void handle_input_reservation_time(int ch) {
 static void handle_server_message(const Message* message) {
     switch (message->type) {
         case MSG_LOGIN:
-            if (strcmp(message->data, "success") == 0) {
+            if (strcmp(message->data, "success") == 0 && message->arg_count > 0) {
                 client_session.state = SESSION_LOGGED_IN;
+                strncpy(client_session.username, message->args[0], MAX_USERNAME_LENGTH - 1);
+                client_session.username[MAX_USERNAME_LENGTH - 1] = '\0';
                 current_state = UI_STATE_LOGGED_IN_MENU;
                 menu_highlight = 0;
                 show_success_message("로그인 성공!");
@@ -363,7 +324,6 @@ static void handle_server_message(const Message* message) {
         case MSG_STATUS_UPDATE:
             process_and_store_device_list(message);
             current_state = UI_STATE_DEVICE_LIST;
-            // 상태 업데이트 시 하이라이트/스크롤 유지 또는 초기화 (여기서는 초기화)
             menu_highlight = 0;
             scroll_offset = 0;
             break;
@@ -385,12 +345,12 @@ static void handle_server_message(const Message* message) {
 
 static void process_and_store_device_list(const Message* message) {
     if (device_list) { free(device_list); device_list = NULL; }
-    device_count = message->arg_count / 5;
+    device_count = message->arg_count / 6;
     if (device_count <= 0) return;
     device_list = (Device*)malloc(sizeof(Device) * device_count);
     if (!device_list) { LOG_ERROR("Client", "장비 목록 메모리 할당 실패"); device_count = 0; return; }
     for (int i = 0; i < device_count; i++) {
-        int base_idx = i * 5;
+        int base_idx = i * 6;
         strncpy(device_list[i].id, message->args[base_idx], MAX_ID_LENGTH - 1);
         device_list[i].id[MAX_ID_LENGTH - 1] = '\0';
         strncpy(device_list[i].name, message->args[base_idx + 1], MAX_DEVICE_NAME_LENGTH - 1);
@@ -399,6 +359,8 @@ static void process_and_store_device_list(const Message* message) {
         device_list[i].type[MAX_DEVICE_TYPE_LENGTH - 1] = '\0';
         device_list[i].status = string_to_device_status(message->args[base_idx + 3]);
         device_list[i].reservation_end_time = (time_t)atol(message->args[base_idx + 4]);
+        strncpy(device_list[i].reserved_by, message->args[base_idx + 5], MAX_USERNAME_LENGTH - 1);
+        device_list[i].reserved_by[MAX_USERNAME_LENGTH - 1] = '\0';
     }
 }
 

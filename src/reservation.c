@@ -6,25 +6,14 @@
 
 #include "../include/reservation.h"
 #include "../include/resource.h"
+#include "../include/message.h"
 
-
-// 만료 예약 정리 스레드 관련 변수
 static pthread_t cleanup_thread;
 static bool cleanup_thread_running = false;
 static ReservationManager* global_manager = NULL;
 static ResourceManager* global_resource_manager = NULL;
 static void* cleanup_thread_function(void* arg);
-
-
-// [개선] 해시 테이블은 포인터만 저장하므로, 값을 해제하는 함수는 필요 없음
 static void null_free_func(void* data) { (void)data; }
-/* 예약 매니저 초기화 */
-/**
- * @brief 예약 관리자를 초기화하고 만료 예약 정리 스레드를 시작합니다.
- * @param res_manager 리소스 매니저의 포인터.
- * @param callback 예약 상태 변경 시 호출될 콜백 함수.
- * @return 성공 시 초기화된 ReservationManager 포인터, 실패 시 NULL.
- */
 
 ReservationManager* init_reservation_manager(ResourceManager* res_manager, void (*callback)(void)) {
     ReservationManager* manager = (ReservationManager*)malloc(sizeof(ReservationManager));
@@ -35,8 +24,7 @@ ReservationManager* init_reservation_manager(ResourceManager* res_manager, void 
 
     manager->reservation_count = 0;
     manager->next_reservation_id = 1;
-    manager->broadcast_callback = callback; 
-    // 예약 ID를 키로 빠른 조회를 위한 해시 테이블 생성
+    manager->broadcast_callback = callback;
     manager->reservation_map = ht_create(MAX_RESERVATIONS, null_free_func);
     if (!manager->reservation_map) {
         LOG_ERROR("Reservation", "예약 해시 테이블 생성 실패");
@@ -51,7 +39,6 @@ ReservationManager* init_reservation_manager(ResourceManager* res_manager, void 
         return NULL;
     }
 
-    // 만료 예약 정리를 위한 백그라운드 스레드 시작
     global_manager = manager;
     global_resource_manager = res_manager;
     cleanup_thread_running = true;
@@ -69,131 +56,114 @@ ReservationManager* init_reservation_manager(ResourceManager* res_manager, void 
     LOG_INFO("Reservation", "예약 관리자 초기화 완료");
     return manager;
 }
-/**
- * @brief 특정 장비에 대해 현재 활성화된 예약을 찾습니다.
- * @param manager 예약 관리자 포인터.
- * @param device_id 검색할 장비의 ID.
- * @return 활성화된 예약이 있으면 Reservation 포인터를, 없으면 NULL을 반환합니다.
- */
+
 Reservation* get_active_reservation_for_device(ReservationManager* resv_manager, ResourceManager* rsrc_manager, const char* device_id) {
     if (!resv_manager || !rsrc_manager || !device_id) {
+        LOG_ERROR("Reservation", "get_active_reservation_for_device: 잘못된 파라미터");
         return NULL;
     }
 
-    // 1. ResourceManager에서 장치 정보를 O(1)로 가져온다.
+    LOG_INFO("Reservation", "장비 활성 예약 조회 시작: 장비ID=%s", device_id);
+
     Device* device = (Device*)ht_get(rsrc_manager->devices, device_id);
-    if (!device || device->active_reservation_id == 0) {
-        return NULL; // 장치가 없거나 활성 예약 ID가 없음
+    if (!device) {
+        LOG_WARNING("Reservation", "장비를 찾을 수 없음: ID=%s", device_id);
+        return NULL;
     }
 
-    // 2. 장치에 저장된 예약 ID를 이용해 ReservationManager에서 예약 정보를 O(1)로 가져온다.
+    LOG_INFO("Reservation", "장비 정보 조회: ID=%s, 상태=%s, 활성예약ID=%u", 
+             device_id, get_device_status_string(device->status), device->active_reservation_id);
+
+    if (device->active_reservation_id == 0) {
+        LOG_INFO("Reservation", "장비에 활성 예약이 없음: ID=%s", device_id);
+        return NULL;
+    }
+
     char id_str[16];
     snprintf(id_str, sizeof(id_str), "%u", device->active_reservation_id);
     
-    // ht_get은 lock을 요구하지 않지만, 데이터 일관성을 위해 manager의 lock을 사용
     pthread_mutex_lock(&resv_manager->mutex);
     Reservation* reservation = (Reservation*)ht_get(resv_manager->reservation_map, id_str);
     pthread_mutex_unlock(&resv_manager->mutex);
 
-    // 3. (안전장치) 찾은 예약이 정말 유효한지 최종 확인
     if (reservation && reservation->status == RESERVATION_APPROVED) {
+        LOG_INFO("Reservation", "활성 예약 발견: 장비ID=%s, 예약ID=%u, 사용자=%s, 종료시간=%ld", 
+                 device_id, reservation->id, reservation->username, reservation->end_time);
         return reservation;
+    } else if (reservation) {
+        LOG_WARNING("Reservation", "예약은 존재하지만 승인되지 않음: 장비ID=%s, 예약ID=%u, 상태=%d", 
+                   device_id, reservation->id, reservation->status);
+    } else {
+        LOG_WARNING("Reservation", "예약을 찾을 수 없음: 장비ID=%s, 예약ID=%u", device_id, device->active_reservation_id);
     }
 
     return NULL;
 }
-/* 만료 예약 정리 스레드 함수 (개선됨) */
+
 static void* cleanup_thread_function(void* arg) {
     (void)arg;
     while (cleanup_thread_running) {
         if (global_manager && global_resource_manager) {
-            // [개선] 중첩 루프가 제거된 효율적인 함수 호출
             cleanup_expired_reservations(global_manager, global_resource_manager);
         }
-        // [개선] 폴링 간격을 늘려 CPU 부담 감소.
-        // 이상적으로는 다음 만료 시간까지 대기해야 하지만, 5초 폴링도 큰 개선임.
-        sleep(5); 
+        sleep(1); // 5초에서 1초로 수정
     }
     return NULL;
 }
 
-
-/**
- * @brief 예약 관리자의 리소스를 정리하고 백그라운드 스레드를 종료합니다.
- * @param manager 정리할 ReservationManager 포인터.
- */
 void cleanup_reservation_manager(ReservationManager* manager) {
     if (!manager) return;
 
-    // 만료 예약 정리 스레드 종료
     if (cleanup_thread_running) {
         cleanup_thread_running = false;
-        pthread_join(cleanup_thread, NULL); // 스레드가 완전히 종료될 때까지 대기
+        pthread_join(cleanup_thread, NULL);
         global_manager = NULL;
     }
 
-    // [개선] 예약 조회를 위해 사용된 해시 테이블의 리소스를 해제합니다.
     ht_destroy(manager->reservation_map);
-
     pthread_mutex_destroy(&manager->mutex);
     free(manager);
     LOG_INFO("Reservation", "예약 관리자 정리 완료");
 }
 
-/**
- * @brief 새로운 예약을 생성합니다.
- * @param manager 예약 관리자 포인터.
- * @param device_id 예약할 장비의 ID.
- * @param username 예약을 요청한 사용자의 이름.
- * @param start_time 예약 시작 시간.
- * @param end_time 예약 종료 시간.
- * @param reason 예약 사유.
- * @return 성공 시 true, 실패 시 false.
- */
 uint32_t create_reservation(ReservationManager* manager, const char* device_id,
                             const char* username, time_t start_time,
                             time_t end_time, const char* reason)   {
     if (!manager || !device_id || !username || !reason) {
         LOG_ERROR("Reservation", "잘못된 파라미터");
-        return 0; // 실패 시 0 반환
+        return 0;
     }
 
     LOG_INFO("Reservation", "예약 생성 시작: 장치=%s, 사용자=%s", device_id, username);
-
     pthread_mutex_lock(&manager->mutex);
 
     if (manager->reservation_count >= MAX_RESERVATIONS) {
         LOG_ERROR("Reservation", "예약 최대 개수 초과");
         pthread_mutex_unlock(&manager->mutex);
-         return 0; // 실패 시 0 반환
+        return 0;
     }
-    // 시간 유효성 검사
+    
     time_t current_time = time(NULL);
     if (start_time < current_time || end_time <= start_time) {
         LOG_ERROR("Reservation", "잘못된 예약 시간");
         pthread_mutex_unlock(&manager->mutex);
-         return 0; // 실패 시 0 반환
+        return 0;
     }
 
-    // 예약 중복 검사 (특정 장비에 대해 시간이 겹치는지 확인)
     for (int i = 0; i < manager->reservation_count; i++) {
-        // 배열에 저장된 실제 예약 객체들을 확인합니다.
         if (strcmp(manager->reservations[i].device_id, device_id) == 0 &&
             manager->reservations[i].status == RESERVATION_APPROVED) {
-            // 시간 겹침 검사
             if (!(end_time <= manager->reservations[i].start_time ||
                   start_time >= manager->reservations[i].end_time)) {
                 LOG_ERROR("Reservation", "해당 장비는 요청된 시간에 이미 예약이 존재합니다.");
                 pthread_mutex_unlock(&manager->mutex);
-                return 0; // 실패 시 0 반환
+                return 0;
             }
         }
     }
 
-    // 예약 ID 생성
     uint32_t reservation_id = manager->next_reservation_id++;
     
-    // 예약 정보 저장 (배열의 다음 빈 공간에 저장)
     Reservation* new_reservation = &manager->reservations[manager->reservation_count];
     new_reservation->id = reservation_id;
     strncpy(new_reservation->device_id, device_id, MAX_DEVICE_ID_LEN - 1);
@@ -207,7 +177,6 @@ uint32_t create_reservation(ReservationManager* manager, const char* device_id,
     new_reservation->status = RESERVATION_APPROVED;
     new_reservation->created_at = time(NULL);
 
-    // [개선] 해시 테이블에 예약 포인터를 추가하여 빠른 조회를 가능하게 합니다.
     char id_str[16];
     snprintf(id_str, sizeof(id_str), "%u", new_reservation->id);
     ht_insert(manager->reservation_map, id_str, new_reservation);
@@ -216,17 +185,9 @@ uint32_t create_reservation(ReservationManager* manager, const char* device_id,
 
     pthread_mutex_unlock(&manager->mutex);
     LOG_INFO("Reservation", "예약 생성 성공: ID=%u", reservation_id);
-    return reservation_id; // [수정] 성공 시 생성된 ID 반환
-    
+    return reservation_id; 
 }
 
-/**
- * @brief 기존 예약을 취소합니다.
- * @param manager 예약 관리자 포인터.
- * @param reservation_id 취소할 예약의 ID.
- * @param username 예약을 취소하려는 사용자의 이름 (권한 확인용).
- * @return 성공 시 true, 실패 시 false.
- */
 bool cancel_reservation(ReservationManager* manager, uint32_t reservation_id,
                        const char* username) {
     if (!manager || !username) {
@@ -235,10 +196,8 @@ bool cancel_reservation(ReservationManager* manager, uint32_t reservation_id,
     }
 
     LOG_INFO("Reservation", "예약 취소 시작: ID=%u, 사용자=%s", reservation_id, username);
-
     pthread_mutex_lock(&manager->mutex);
 
-    // [개선] 해시 테이블에서 예약 ID를 통해 O(1) 시간 복잡도로 예약을 즉시 검색합니다.
     char id_str[16];
     snprintf(id_str, sizeof(id_str), "%u", reservation_id);
     Reservation* reservation = (Reservation*)ht_get(manager->reservation_map, id_str);
@@ -249,24 +208,19 @@ bool cancel_reservation(ReservationManager* manager, uint32_t reservation_id,
         return false;
     }
 
-    // 권한 검사
     if (strcmp(reservation->username, username) != 0) {
         LOG_ERROR("Reservation", "예약 취소 권한 없음: ID=%u, 사용자=%s", reservation_id, username);
         pthread_mutex_unlock(&manager->mutex);
         return false;
     }
 
-    // 예약 상태 검사
     if (reservation->status != RESERVATION_APPROVED) {
         LOG_ERROR("Reservation", "이미 처리되었거나 취소된 예약입니다: ID=%u", reservation_id);
         pthread_mutex_unlock(&manager->mutex);
         return false;
     }
 
-    // 예약 상태를 '취소됨'으로 변경
     reservation->status = RESERVATION_CANCELLED;
-
-    // [개선] 취소된 예약은 더 이상 조회될 필요가 없으므로 해시 테이블에서 제거합니다.
     ht_delete(manager->reservation_map, id_str);
 
     LOG_INFO("Reservation", "예약 취소 성공: ID=%u", reservation_id);
@@ -274,7 +228,6 @@ bool cancel_reservation(ReservationManager* manager, uint32_t reservation_id,
     return true;
 }
 
-/* 만료 예약 정리 (개선됨) */
 void cleanup_expired_reservations(ReservationManager* manager, ResourceManager* res_manager) {
     if (!manager || !res_manager) return;
 
@@ -282,33 +235,29 @@ void cleanup_expired_reservations(ReservationManager* manager, ResourceManager* 
     char expired_device_ids[MAX_RESERVATIONS][MAX_DEVICE_ID_LEN];
     int expired_count = 0;
 
-    // [개선] 1. 만료된 예약을 찾아 장비 ID를 수집하고, 바로 해시 테이블에서 제거
     pthread_mutex_lock(&manager->mutex);
     for (int i = 0; i < manager->reservation_count; i++) {
         Reservation* r = &manager->reservations[i];
         if (r->status == RESERVATION_APPROVED && r->end_time < current_time) {
             
             r->status = RESERVATION_COMPLETED;
-            
             strncpy(expired_device_ids[expired_count], r->device_id, MAX_DEVICE_ID_LEN - 1);
+            expired_device_ids[expired_count][MAX_DEVICE_ID_LEN - 1] = '\0';
             expired_count++;
             
             char id_str[16];
             snprintf(id_str, sizeof(id_str), "%u", r->id);
-            ht_delete(manager->reservation_map, id_str); // 즉시 맵에서 제거
+            ht_delete(manager->reservation_map, id_str);
             
             LOG_INFO("Reservation", "예약 만료 감지: 장비 ID=%s", r->device_id);
         }
     }
-    // 참고: 배열 자체를 정리(압축)하는 로직은 복잡도를 높이므로 여기서는 생략.
-    // 카운트 기반 시스템에서는 상태 플래그로 비활성화를 표시하는 것이 더 간단할 수 있습니다.
     pthread_mutex_unlock(&manager->mutex);
 
     if (expired_count > 0) {
         for (int i = 0; i < expired_count; i++) {
             update_device_status(res_manager, expired_device_ids[i], DEVICE_AVAILABLE, 0);
         }
-        // [추가] 등록된 콜백 함수 호출
         if (manager->broadcast_callback) {
             manager->broadcast_callback();
         }
