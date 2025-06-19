@@ -58,9 +58,15 @@ static int device_count = 0;
 static bool expecting_network_response = false;
 
 int main(int argc, char* argv[]) {
-    if (argc != 3) { fprintf(stderr, "사용법: %s <서버 IP> <포트>\n", argv[0]); return 1; }
+    if (argc != 3) { 
+        error_report(ERROR_INVALID_PARAMETER, "Client", "사용법: %s <서버 IP> <포트>", argv[0]); 
+        return 1; 
+    }
     if (init_logger("logs/client.log") < 0) return 1;
-    if (pipe(self_pipe) == -1) { perror("pipe"); return 1; }
+    if (pipe(self_pipe) == -1) { 
+        error_report(ERROR_FILE_OPERATION_FAILED, "Client", "pipe 생성 실패"); 
+        return 1; 
+    }
     signal(SIGINT, signal_handler); signal(SIGTERM, signal_handler);
     if (init_ui() < 0 || init_ssl_manager(&ssl_manager, false, NULL, NULL) < 0) { cleanup_resources(); return 1; }
     if (connect_to_server(argv[1], atoi(argv[2])) < 0) { cleanup_resources(); return 1; }
@@ -362,7 +368,7 @@ static void handle_server_message(const Message* message) {
             show_error_message(message->data);
             break;
         default:
-            LOG_ERROR("Message", "알 수 없는 메시지 타입: %d", message->type);
+            error_report(ERROR_MESSAGE_INVALID_TYPE, "Message", "알 수 없는 메시지 타입: %d", message->type);
             break;
     }
 }
@@ -372,7 +378,11 @@ static void process_and_store_device_list(const Message* message) {
     device_count = message->arg_count / 6;
     if (device_count <= 0) return;
     device_list = (Device*)malloc(sizeof(Device) * device_count);
-    if (!device_list) { LOG_ERROR("Client", "장비 목록 메모리 할당 실패"); device_count = 0; return; }
+    if (!device_list) { 
+        error_report(ERROR_MEMORY_ALLOCATION_FAILED, "Client", "장비 목록 메모리 할당 실패"); 
+        device_count = 0; 
+        return; 
+    }
     for (int i = 0; i < device_count; i++) {
         int base_idx = i * 6;
         strncpy(device_list[i].id, message->args[base_idx], MAX_ID_LENGTH - 1);

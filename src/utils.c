@@ -122,7 +122,6 @@ void error_report(ErrorCode error_code, const char* module, const char* addition
         vsnprintf(formatted_message, sizeof(formatted_message), additional_info, args);
         va_end(args);
         
-        // ncurses UI가 활성화된 경우에는 stderr로 출력하지 않고 UI에만 표시
         extern UIManager* global_ui_manager;
         if (global_ui_manager) {
             char ui_msg[600];
@@ -131,8 +130,6 @@ void error_report(ErrorCode error_code, const char* module, const char* addition
         } else {
             fprintf(stderr, "[%s] %s: %s\n", module, error_msg, formatted_message);
         }
-        // 로그 파일에 에러 기록
-        LOG_ERROR(module, "%s: %s", error_msg, formatted_message);
     } else {
         extern UIManager* global_ui_manager;
         if (global_ui_manager) {
@@ -142,8 +139,6 @@ void error_report(ErrorCode error_code, const char* module, const char* addition
         } else {
             fprintf(stderr, "[%s] %s\n", module, error_msg);
         }
-        // 로그 파일에 에러 기록
-        LOG_ERROR(module, "%s", error_msg);
     }
 }
 
@@ -233,7 +228,7 @@ int init_logger(const char* filename) {
     }
 
     pthread_mutex_init(&log_mutex, NULL);  // 로그 뮤텍스 초기화
-    log_message(LOG_INFO, "System", "로거 초기화 완료. 로그 파일: %s", filename);  // 초기화 완료 로그
+    LOG_INFO("System", "로거 초기화 완료. 로그 파일: %s", filename);  // 초기화 완료 로그
     return 0;  // 성공 코드 반환
 }
 
@@ -242,7 +237,7 @@ int init_logger(const char* filename) {
  */
 void cleanup_logger(void) {
     if (log_file != NULL) {  // 로그 파일이 열려있는 경우
-        log_message(LOG_INFO, "System", "로거 정리 중...");  // 정리 시작 로그
+        LOG_INFO("System", "로거 정리 중...");  // 정리 시작 로그
         fclose(log_file);  // 로그 파일 닫기
         log_file = NULL;  // 포인터를 NULL로 설정
     }
@@ -425,6 +420,7 @@ bool ht_insert(HashTable* table, const char* key, void* value) {
                 table->free_value(node->value);  // 기존 값 메모리 해제
             }
             node->value = value;  // 새 값으로 교체
+            LOG_INFO("HashTable", "새 노드 삽입 성공: 키=%s, 인덱스=%u", key, index);
             return true;  // true 반환
         }
         node = node->next;  // 다음 노드로 이동

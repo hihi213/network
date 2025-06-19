@@ -47,11 +47,11 @@ static pthread_mutex_t client_list_mutex;
 
 int main(int argc, char* argv[]) {
     if (argc != 2) {
-        fprintf(stderr, "사용법: %s <포트>\n", argv[0]);
+        error_report(ERROR_INVALID_PARAMETER, "Server", "사용법: %s <포트>", argv[0]);
         return 1;
     }
     if (init_server(atoi(argv[1])) != 0) {
-        LOG_ERROR("Main", "서버 초기화 실패");
+        error_report(ERROR_NETWORK_SOCKET_CREATION_FAILED, "Main", "서버 초기화 실패");
         cleanup_server();
         return 1;
     }
@@ -65,7 +65,7 @@ int main(int argc, char* argv[]) {
         int ret = poll(fds, 2, 1000);
         if (ret < 0) {
             if (errno == EINTR) continue;
-            LOG_ERROR("Main", "Poll 에러: %s", strerror(errno));
+            error_report(ERROR_NETWORK_SOCKET_OPTION_FAILED, "Main", "Poll 에러: %s", strerror(errno));
             break;
         }
         if (ret == 0) {
@@ -92,7 +92,7 @@ int main(int argc, char* argv[]) {
             inet_ntop(AF_INET, &client_addr.sin_addr, client->ip, sizeof(client->ip));
             pthread_t thread;
             if (pthread_create(&thread, NULL, client_thread_func, client) != 0) {
-                LOG_ERROR("Main", "클라이언트 스레드 생성 실패");
+                error_report(ERROR_SESSION_CREATION_FAILED, "Main", "클라이언트 스레드 생성 실패");
                 close(client_sock);
                 free(client);
             }
@@ -272,11 +272,19 @@ static int handle_client_message(Client* client, const Message* message) {
 }
 
 static void signal_handler(int signum) {
+    (void)signum;
+    if (pipe(self_pipe) == -1) { 
+        error_report(ERROR_FILE_OPERATION_FAILED, "Server", "pipe 생성 실패"); 
+        return; 
+    }
     (void)write(self_pipe[1], "s", 1);
 }
 
 static int init_server(int port) {
-    if (pipe(self_pipe) == -1) { perror("pipe"); return -1; }
+    if (pipe(self_pipe) == -1) { 
+        error_report(ERROR_FILE_OPERATION_FAILED, "Server", "pipe 생성 실패"); 
+        return -1; 
+    }
     signal(SIGINT, signal_handler);
     signal(SIGTERM, signal_handler);
     if (init_logger("logs/server.log") < 0) return -1;

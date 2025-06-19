@@ -116,11 +116,18 @@ void cleanup_logger(void);
 void log_message(LogLevel level, const char* category, const char* format, ...);
 const char* get_timestamp_string(time_t timestamp);
 
-// 로그 매크로
-#define LOG_ERROR(category, format, ...) log_message(LOG_ERROR, category, format, ##__VA_ARGS__)
-#define LOG_WARNING(category, format, ...) log_message(LOG_WARNING, category, format, ##__VA_ARGS__)
-#define LOG_INFO(category, format, ...) log_message(LOG_INFO, category, format, ##__VA_ARGS__)
-#define LOG_DEBUG(category, format, ...) log_message(LOG_DEBUG, category, format, ##__VA_ARGS__)
+// 로그 매크로 - 위치 정보 자동 캡처
+#define LOG_ERROR(category, format, ...) \
+    log_message(LOG_ERROR, category, "[%s:%d:%s] " format, __FILE__, __LINE__, __func__, ##__VA_ARGS__)
+
+#define LOG_WARNING(category, format, ...) \
+    log_message(LOG_WARNING, category, "[%s:%d:%s] " format, __FILE__, __LINE__, __func__, ##__VA_ARGS__)
+
+#define LOG_INFO(category, format, ...) \
+    log_message(LOG_INFO, category, "[%s:%d:%s] " format, __FILE__, __LINE__, __func__, ##__VA_ARGS__)
+
+#define LOG_DEBUG(category, format, ...) \
+    log_message(LOG_DEBUG, category, "[%s:%d:%s] " format, __FILE__, __LINE__, __func__, ##__VA_ARGS__)
 
 /*
  * =====================================================================================
