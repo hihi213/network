@@ -30,6 +30,7 @@
 #include <ncurses.h>
 #include <menu.h>
 #include <form.h>
+#include <stdarg.h> // 가변 인자 사용을 위해 추가
 
 #include <locale.h>
 #include <time.h>

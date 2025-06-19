@@ -36,12 +36,12 @@ static int handle_reserve_request(Client* client, const Message* message);
 static int handle_login_request(Client* client, const Message* message);
 static int handle_cancel_request(Client* client, const Message* message);
 static int send_error_response(SSL* ssl, const char* error_message);
+static int send_generic_response(Client* client, MessageType type, const char* data, int arg_count, ...);
 static void client_message_loop(Client* client);
 static void cleanup_client(Client* client);
 static void add_client_to_list(Client* client);
 static void remove_client_from_list(Client* client);
 static void broadcast_status_update(void);
-static int handle_login_request(Client* client, const Message* message);
 static bool is_user_authenticated(const char* username, const char* password); // 인증 함수 프로토타입 추가
 
 // 전역 변수
@@ -326,14 +326,7 @@ static int handle_login_request(Client* client, const Message* message) {
     LOG_INFO("Auth", "사용자 '%s'가 IP주소 %s 에서 로그인했습니다.", user, client->ip);
 
     // 4단계: 클라이언트에 성공 응답 전송
-    Message* login_response = create_message(MSG_LOGIN, "success");
-    if (login_response) {
-        login_response->args[0] = strdup(user);
-        login_response->arg_count = 1;
-        send_message(client->ssl, login_response);
-        cleanup_message(login_response);
-        free(login_response);
-    }
+    send_generic_response(client, MSG_LOGIN, "success", 1, user);
 
     // 5단계: 로그인 직후, 클라이언트가 다음 화면을 그릴 수 있도록 장비 현황 전송
     handle_status_request(client, NULL); 
@@ -385,10 +378,7 @@ static int handle_cancel_request(Client* client, const Message* message) {
         broadcast_status_update();
 
         // 요청한 클라이언트에 성공 응답 전송
-        Message* response = create_message(MSG_CANCEL_RESPONSE, "success");
-        send_message(client->ssl, response);
-        cleanup_message(response);
-        free(response);
+        send_generic_response(client, MSG_CANCEL_RESPONSE, "success", 0);
     } else {
         send_error_response(client->ssl, "알 수 없는 오류로 예약 취소에 실패했습니다.");
     }
@@ -458,6 +448,59 @@ static void cleanup_server(void) {
     close(self_pipe[1]);
 }
 
+/**
+ * @brief 클라이언트에 특정 타입의 응답 메시지를 전송하는 제네릭 함수 (리팩토링)
+ * @details 메시지 생성, 인자 추가, 전송, 메모리 해제 과정을 한번에 처리합니다.
+ * @param client 클라이언트 객체
+ * @param type 전송할 메시지 타입
+ * @param data 메시지의 data 필드에 들어갈 문자열 (예: "success", "fail")
+ * @param arg_count 전달할 인자의 개수
+ * @param ... 전달할 가변 인자 (const char* 타입)
+ * @return 성공 시 0, 실패 시 -1
+ */
+static int send_generic_response(Client* client, MessageType type, const char* data, int arg_count, ...) {
+    if (!client || !client->ssl) return -1;
+
+    Message* response = create_message(type, data);
+    if (!response) {
+        // 이 경우, 클라이언트에 에러 메시지조차 보내기 어려울 수 있음. 서버 로그만 남김.
+        LOG_ERROR("Response", "응답 메시지 생성 실패 (type: %d)", type);
+        return -1;
+    }
+
+    va_list args;
+    va_start(args, arg_count);
+    for (int i = 0; i < arg_count; i++) {
+        const char* arg = va_arg(args, const char*);
+        if (arg) {
+            response->args[i] = strdup(arg);
+            if (!response->args[i]) {
+                LOG_ERROR("Response", "응답 인자 메모리 복사 실패");
+                // 할당 실패 시, 현재까지 할당된 것들만 정리하고 종료
+                response->arg_count = i; 
+                cleanup_message(response);
+                free(response);
+                va_end(args);
+                return -1;
+            }
+        }
+    }
+    va_end(args);
+    response->arg_count = arg_count;
+
+    int ret = send_message(client->ssl, response);
+    cleanup_message(response);
+    free(response);
+
+    return ret;
+}
+
+/**
+ * @brief 클라이언트에 에러 메시지를 전송합니다. (기존 함수 활용)
+ * @param ssl 클라이언트의 SSL 객체
+ * @param error_message 보낼 에러 메시지
+ * @return 성공 시 0, 실패 시 -1
+ */
 static int send_error_response(SSL* ssl, const char* error_message) {
     if (!ssl || !error_message) return -1;
     Message* response = create_error_message(error_message);

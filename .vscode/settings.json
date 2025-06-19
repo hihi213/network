@@ -8,6 +8,7 @@
         "session.h": "c",
         "network.h": "c",
         "common.h": "c",
-        "stdio.h": "c"
+        "stdio.h": "c",
+        "stdarg.h": "c"
     }
 }
