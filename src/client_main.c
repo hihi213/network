@@ -424,16 +424,14 @@ static void cleanup_resources(void) {
 }
 
 static int connect_to_server(const char* server_ip, int port) {
-    int sock_fd = init_client_socket(server_ip, port);
-    if (sock_fd < 0) return -1;
-    SSLHandler* ssl_handler = create_ssl_handler(&ssl_manager, sock_fd);
-    if (!ssl_handler || handle_ssl_handshake(ssl_handler) != 0) {
-        if(ssl_handler) cleanup_ssl_handler(ssl_handler);
-        close(sock_fd);
-        return -1;
-    }
-    client_session.ssl = ssl_handler->ssl;
-    client_session.socket_fd = sock_fd;
+    int fd = init_client_socket(server_ip, port);
+    if (fd < 0) return -1;
+    
+    SSLHandler* h = perform_ssl_handshake(fd, &ssl_manager);
+    if (!h) return -1;
+    
+    client_session.ssl = h->ssl;
+    client_session.socket_fd = fd;
     client_session.state = SESSION_CONNECTING;
     return 0;
 }

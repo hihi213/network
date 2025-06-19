@@ -1,6 +1,7 @@
 // message.c (최종 확인용)
 #include "../include/message.h"
 #include "../include/reservation.h"
+#include "../include/network.h"
 
 static bool ssl_read_fully(SSL* ssl, void* buf, int len) {
     if (!ssl || !buf) return false;
@@ -8,17 +9,11 @@ static bool ssl_read_fully(SSL* ssl, void* buf, int len) {
     if (len == 0) return true;
 
     char* ptr = (char*)buf;
-    while (len > 0) {
-        int bytes_read = SSL_read(ssl, ptr, len);
-        if (bytes_read <= 0) {
-            int err = SSL_get_error(ssl, bytes_read);
-            if (err != SSL_ERROR_ZERO_RETURN) { // 정상 종료 외의 에러는 로그 기록
-                error_report(ERROR_NETWORK_RECEIVE_FAILED, "Network", "SSL_read 에러 발생: %d", err);
-            }
-            return false;
-        }
-        ptr += bytes_read;
-        len -= bytes_read;
+    size_t total = 0;
+    while (total < (size_t)len) {
+        ssize_t n = net_recv(ssl, ptr + total, len - total);
+        if (n <= 0) return false;
+        total += n;
     }
     return true;
 }

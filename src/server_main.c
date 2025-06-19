@@ -81,20 +81,25 @@ int main(int argc, char* argv[]) {
             continue;
         }
         if (fds[0].revents & POLLIN) {
-            struct sockaddr_in client_addr;
-            socklen_t client_len = sizeof(client_addr);
-            int client_sock = accept(server_sock, (struct sockaddr*)&client_addr, &client_len);
-            if (client_sock < 0) { continue; }
             Client* client = (Client*)malloc(sizeof(Client));
-            if (!client) { close(client_sock); continue; }
+            if (!client) { continue; }
             memset(client, 0, sizeof(Client));
-            client->socket_fd = client_sock;
-            inet_ntop(AF_INET, &client_addr.sin_addr, client->ip, sizeof(client->ip));
+            
+            // accept_client 함수를 사용하여 클라이언트 연결 처리
+            client->ssl_handler = accept_client(server_sock, &ssl_manager, client->ip);
+            if (!client->ssl_handler) {
+                free(client);
+                continue;
+            }
+            
+            client->ssl = client->ssl_handler->ssl;
+            client->socket_fd = client->ssl_handler->socket_fd;
+            client->last_activity = time(NULL);
+            
             pthread_t thread;
             if (pthread_create(&thread, NULL, client_thread_func, client) != 0) {
                 error_report(ERROR_SESSION_CREATION_FAILED, "Main", "클라이언트 스레드 생성 실패");
-                close(client_sock);
-                free(client);
+                cleanup_client(client);
             }
             pthread_detach(thread);
         }
@@ -168,13 +173,7 @@ static void cleanup_client(Client* client) {
 
 static void* client_thread_func(void* arg) {
     Client* client = (Client*)arg;
-    client->ssl_handler = create_ssl_handler(&ssl_manager, client->socket_fd);
-    if (!client->ssl_handler || handle_ssl_handshake(client->ssl_handler) != 0) {
-        cleanup_client(client);
-        return NULL;
-    }
-    client->ssl = client->ssl_handler->ssl;
-    client->last_activity = time(NULL);
+    // SSL 핸들러와 핸드셰이크는 이미 main에서 accept_client()로 처리됨
     add_client_to_list(client);
     client_message_loop(client);
     remove_client_from_list(client);

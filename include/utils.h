@@ -224,6 +224,34 @@ bool ht_delete(HashTable* table, const char* key);
  */
 void ht_traverse(HashTable* table, void (*callback)(const char* key, void* value, void* user_data), void* user_data);
 
+/**
+ * 네트워크 함수 오류 처리/로깅/자원정리 일관화 매크로
+ */
+#define CHECK_PARAM_RET(expr, errcode, module, msg, ...) \
+    do { \
+        if (!(expr)) { \
+            error_report(errcode, module, msg, ##__VA_ARGS__); \
+            return -1; \
+        } \
+    } while(0)
 
+#define CHECK_SYSCALL_RET(expr, errcode, module, msg, ...) \
+    do { \
+        if ((expr) < 0) { \
+            error_report(errcode, module, msg ", %s", ##__VA_ARGS__, strerror(errno)); \
+            return -1; \
+        } \
+    } while(0)
+
+#define CLEANUP_AND_RET(cleanup_stmt, ret_val) \
+    do { cleanup_stmt; return ret_val; } while(0)
+
+#define CHECK_PARAM_RET_PTR(expr, errcode, module, msg, ...) \
+    do { \
+        if (!(expr)) { \
+            error_report(errcode, module, msg, ##__VA_ARGS__); \
+            return NULL; \
+        } \
+    } while(0)
 
 #endif 

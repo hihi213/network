@@ -7,6 +7,16 @@
 
 #include "../include/network.h"
 #include "../include/message.h"
+#include "../include/utils.h" // 매크로 사용을 위해 추가
+#include <netinet/tcp.h>  // TCP_NODELAY, TCP_KEEPIDLE, TCP_KEEPINTVL, TCP_KEEPCNT
+#include <sys/socket.h>   // SO_REUSEADDR, SO_REUSEPORT, SO_KEEPALIVE, SO_RCVTIMEO, SO_SNDTIMEO
+#include <netinet/in.h>   // sockaddr_in
+#include <arpa/inet.h>    // inet_pton, inet_ntop
+#include <unistd.h>       // close
+#include <errno.h>        // errno
+#include <string.h>       // strerror
+
+#define NET_IO_MAX_RETRY 3
 
 // [내부 함수] 요청한 길이만큼 데이터를 완전히 전송하는 안정적인 쓰기 함수
 static bool ssl_write_fully(SSL* ssl, const void* buf, int len) {
@@ -38,37 +48,92 @@ int send_message(SSL* ssl, const Message* message) {
 
     // 1. 메시지 헤더 전송 (타입, 인자 개수)
     uint32_t net_type = htonl(message->type);
-    if (!ssl_write_fully(ssl, &net_type, sizeof(net_type))) return -1;
+    if (net_send(ssl, &net_type, sizeof(net_type)) != sizeof(net_type)) return -1;
 
     uint32_t net_arg_count = htonl(message->arg_count);
-    if (!ssl_write_fully(ssl, &net_arg_count, sizeof(net_arg_count))) return -1;
+    if (net_send(ssl, &net_arg_count, sizeof(net_arg_count)) != sizeof(net_arg_count)) return -1;
 
     // 2. 각 인자 전송 (길이 + 내용)
     for (int i = 0; i < message->arg_count; i++) {
         size_t arg_len = strlen(message->args[i]);
         uint32_t net_arg_len = htonl(arg_len);
-        if (!ssl_write_fully(ssl, &net_arg_len, sizeof(net_arg_len))) return -1;
-        
+        if (net_send(ssl, &net_arg_len, sizeof(net_arg_len)) != sizeof(net_arg_len)) return -1;
         // 길이가 0보다 클 때만 내용을 전송
         if (arg_len > 0) {
-            if (!ssl_write_fully(ssl, message->args[i], arg_len)) return -1;
+            if (net_send(ssl, message->args[i], arg_len) != (ssize_t)arg_len) return -1;
         }
     }
 
     // 3. 데이터 필드 전송 (길이 + 내용)
     size_t data_len = strlen(message->data);
     uint32_t net_data_len = htonl(data_len);
-    if (!ssl_write_fully(ssl, &net_data_len, sizeof(net_data_len))) return -1;
-    
+    if (net_send(ssl, &net_data_len, sizeof(net_data_len)) != sizeof(net_data_len)) return -1;
     // 길이가 0보다 클 때만 내용을 전송
     if (data_len > 0) {
-        if (!ssl_write_fully(ssl, message->data, data_len)) return -1;
+        if (net_send(ssl, message->data, data_len) != (ssize_t)data_len) return -1;
     }
 
     LOG_INFO("Network", "메시지 전송 완료: 타입=%s", get_message_type_string(message->type));
     return 0;
 }
 
+ssize_t net_send(SSL* ssl, const void* buf, size_t len) {
+    int retry = 0;
+    size_t total_sent = 0;
+    while (total_sent < len && retry < NET_IO_MAX_RETRY) {
+        int ret = SSL_write(ssl, (const char*)buf + total_sent, (int)(len - total_sent));
+        if (ret > 0) {
+            total_sent += ret;
+            continue;
+        }
+        int err = SSL_get_error(ssl, ret);
+        if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE || err == SSL_ERROR_SYSCALL) {
+            error_report(ERROR_NETWORK_SEND_FAILED, "Network", "net_send: 재시도 필요 (err=%d, retry=%d)", err, retry);
+            retry++;
+            continue;
+        } else if (err == SSL_ERROR_ZERO_RETURN) {
+            error_report(ERROR_NETWORK_SEND_FAILED, "Network", "net_send: 연결 종료 감지");
+            return 0;
+        } else {
+            error_report(ERROR_NETWORK_SEND_FAILED, "Network", "net_send: 치명적 에러 (err=%d)", err);
+            return -1;
+        }
+    }
+    if (total_sent < len) {
+        error_report(ERROR_NETWORK_SEND_FAILED, "Network", "net_send: 송신 미완료 (total_sent=%zu, len=%zu)", total_sent, len);
+        return -1;
+    }
+    return (ssize_t)total_sent;
+}
+
+ssize_t net_recv(SSL* ssl, void* buf, size_t len) {
+    int retry = 0;
+    size_t total_recv = 0;
+    while (total_recv < len && retry < NET_IO_MAX_RETRY) {
+        int ret = SSL_read(ssl, (char*)buf + total_recv, (int)(len - total_recv));
+        if (ret > 0) {
+            total_recv += ret;
+            continue;
+        }
+        int err = SSL_get_error(ssl, ret);
+        if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE || err == SSL_ERROR_SYSCALL) {
+            error_report(ERROR_NETWORK_RECEIVE_FAILED, "Network", "net_recv: 재시도 필요 (err=%d, retry=%d)", err, retry);
+            retry++;
+            continue;
+        } else if (err == SSL_ERROR_ZERO_RETURN) {
+            error_report(ERROR_NETWORK_RECEIVE_FAILED, "Network", "net_recv: 연결 종료 감지");
+            return 0;
+        } else {
+            error_report(ERROR_NETWORK_RECEIVE_FAILED, "Network", "net_recv: 치명적 에러 (err=%d)", err);
+            return -1;
+        }
+    }
+    if (total_recv < len) {
+        error_report(ERROR_NETWORK_RECEIVE_FAILED, "Network", "net_recv: 수신 미완료 (total_recv=%zu, len=%zu)", total_recv, len);
+        return -1;
+    }
+    return (ssize_t)total_recv;
+}
 
 // --- 이하 다른 함수들은 이전과 동일 (생략) ---
 
@@ -134,11 +199,8 @@ int init_ssl_manager(SSLManager* manager, bool is_server, const char* cert_file,
 
 int init_server_socket(int port) {
     int server_fd = socket(AF_INET, SOCK_STREAM, 0);
-    if (server_fd < 0) {
-        error_report(ERROR_NETWORK_SOCKET_CREATION_FAILED, "Network", "서버 소켓 생성 실패: %s", strerror(errno));
-        return -1;
-    }
-    set_socket_options(server_fd);
+    CHECK_SYSCALL_RET(server_fd, ERROR_NETWORK_SOCKET_CREATION_FAILED, "Network", "서버 소켓 생성 실패");
+    set_socket_options(server_fd, true);
     struct sockaddr_in server_addr;
     memset(&server_addr, 0, sizeof(server_addr));
     server_addr.sin_family = AF_INET;
@@ -146,22 +208,21 @@ int init_server_socket(int port) {
     server_addr.sin_port = htons(port);
     if (bind(server_fd, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
         error_report(ERROR_NETWORK_BIND_FAILED, "Network", "서버 소켓 바인딩 실패: %s", strerror(errno));
-        close(server_fd);
-        return -1;
+        CLEANUP_AND_RET(close(server_fd), -1);
     }
     if (listen(server_fd, SOMAXCONN) < 0) {
         error_report(ERROR_NETWORK_LISTEN_FAILED, "Network", "서버 소켓 리스닝 실패: %s", strerror(errno));
-        close(server_fd);
-        return -1;
+        CLEANUP_AND_RET(close(server_fd), -1);
     }
     return server_fd;
 }
 
 int init_client_socket(const char* server_ip, int port) {
+    CHECK_PARAM_RET(server_ip, ERROR_INVALID_PARAMETER, "Network", "server_ip가 NULL입니다");
     int client_fd = socket(AF_INET, SOCK_STREAM, 0);
-    if (client_fd < 0) {
-        error_report(ERROR_NETWORK_SOCKET_CREATION_FAILED, "Network", "클라이언트 소켓 생성 실패: %s", strerror(errno));
-        return -1;
+    CHECK_SYSCALL_RET(client_fd, ERROR_NETWORK_SOCKET_CREATION_FAILED, "Network", "클라이언트 소켓 생성 실패");
+    if (set_socket_options(client_fd, false) < 0) {
+        CLEANUP_AND_RET(close(client_fd), -1);
     }
     struct sockaddr_in server_addr;
     memset(&server_addr, 0, sizeof(server_addr));
@@ -169,22 +230,17 @@ int init_client_socket(const char* server_ip, int port) {
     server_addr.sin_port = htons(port);
     if (inet_pton(AF_INET, server_ip, &server_addr.sin_addr) <= 0) {
         error_report(ERROR_NETWORK_IP_CONVERSION_FAILED, "Network", "IP 주소 변환 실패: %s", strerror(errno));
-        close(client_fd);
-        return -1;
+        CLEANUP_AND_RET(close(client_fd), -1);
     }
     if (connect(client_fd, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
         error_report(ERROR_NETWORK_CONNECT_FAILED, "Network", "서버 연결 실패: %s", strerror(errno));
-        close(client_fd);
-        return -1;
+        CLEANUP_AND_RET(close(client_fd), -1);
     }
     return client_fd;
 }
 
 int handle_ssl_handshake(SSLHandler* handler) {
-    if (!handler || !handler->ssl) {
-        error_report(ERROR_INVALID_PARAMETER, "SSL", "잘못된 SSL 핸들러");
-        return -1;
-    }
+    CHECK_PARAM_RET(handler && handler->ssl, ERROR_INVALID_PARAMETER, "SSL", "잘못된 SSL 핸들러");
     int ret = handler->is_server ? SSL_accept(handler->ssl) : SSL_connect(handler->ssl);
     if (ret <= 0) {
         error_report(ERROR_NETWORK_SSL_HANDSHAKE_FAILED, "SSL", "SSL 핸드셰이크 실패");
@@ -195,10 +251,7 @@ int handle_ssl_handshake(SSLHandler* handler) {
 }
 
 SSLHandler* create_ssl_handler(SSLManager* manager, int socket_fd) {
-    if (!manager || !manager->ctx) {
-        error_report(ERROR_INVALID_PARAMETER, "SSL", "잘못된 SSL Manager 또는 Context");
-        return NULL;
-    }
+    CHECK_PARAM_RET_PTR(manager && manager->ctx, ERROR_INVALID_PARAMETER, "SSL", "잘못된 SSL Manager 또는 Context");
     SSLHandler* handler = (SSLHandler*)malloc(sizeof(SSLHandler));
     if (!handler) {
         error_report(ERROR_MEMORY_ALLOCATION_FAILED, "SSL", "SSL 핸들러 메모리 할당 실패");
@@ -232,12 +285,83 @@ void cleanup_ssl_handler(SSLHandler* handler) {
     free(handler);
 }
 
-int set_socket_options(int socket_fd) {
+int set_socket_options(int socket_fd, bool is_server) {
     int opt = 1;
+    // SO_REUSEADDR: 서버/클라이언트 모두 적용
     if (setsockopt(socket_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
-        error_report(ERROR_NETWORK_SOCKET_OPTION_FAILED, "Network", "소켓 옵션 (SO_REUSEADDR) 설정 실패: %s", strerror(errno));
+        error_report(ERROR_NETWORK_SOCKET_OPTION_FAILED, "Network", "SO_REUSEADDR 설정 실패: %s", strerror(errno));
         return -1;
     }
+
+    if (is_server) {
+        // SO_REUSEPORT: 서버 소켓에만 적용 (macOS/Linux)
+        #ifdef SO_REUSEPORT
+        if (setsockopt(socket_fd, SOL_SOCKET, SO_REUSEPORT, &opt, sizeof(opt)) < 0) {
+            error_report(ERROR_NETWORK_SOCKET_OPTION_FAILED, "Network", "SO_REUSEPORT 설정 실패: %s", strerror(errno));
+            return -1;
+        }
+        #endif
+    }
+
+    // SO_KEEPALIVE: 서버/클라이언트 모두 적용
+    if (setsockopt(socket_fd, SOL_SOCKET, SO_KEEPALIVE, &opt, sizeof(opt)) < 0) {
+        error_report(ERROR_NETWORK_SOCKET_OPTION_FAILED, "Network", "SO_KEEPALIVE 설정 실패: %s", strerror(errno));
+        return -1;
+    }
+
+    // TCP_NODELAY: 서버/클라이언트 모두 적용
+    #ifdef TCP_NODELAY
+    if (setsockopt(socket_fd, IPPROTO_TCP, TCP_NODELAY, &opt, sizeof(opt)) < 0) {
+        error_report(ERROR_NETWORK_SOCKET_OPTION_FAILED, "Network", "TCP_NODELAY 설정 실패: %s", strerror(errno));
+        return -1;
+    }
+    #endif
+
+    // 타임아웃: 서버/클라이언트 모두 적용
+    struct timeval timeout;
+    timeout.tv_sec = 30;
+    timeout.tv_usec = 0;
+    if (setsockopt(socket_fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) < 0) {
+        error_report(ERROR_NETWORK_SOCKET_OPTION_FAILED, "Network", "SO_RCVTIMEO 설정 실패: %s", strerror(errno));
+        return -1;
+    }
+    if (setsockopt(socket_fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout)) < 0) {
+        error_report(ERROR_NETWORK_SOCKET_OPTION_FAILED, "Network", "SO_SNDTIMEO 설정 실패: %s", strerror(errno));
+        return -1;
+    }
+
+    // TCP_KEEPALIVE 관련 옵션: 서버 소켓에만 적용, 플랫폼별 분기
+    if (is_server) {
+        #if defined(TCP_KEEPIDLE)
+        int keepidle = 60;
+        if (setsockopt(socket_fd, IPPROTO_TCP, TCP_KEEPIDLE, &keepidle, sizeof(keepidle)) < 0) {
+            error_report(ERROR_NETWORK_SOCKET_OPTION_FAILED, "Network", "TCP_KEEPIDLE 설정 실패: %s", strerror(errno));
+            return -1;
+        }
+        #elif defined(TCP_KEEPALIVE) // macOS
+        int keepidle = 60;
+        if (setsockopt(socket_fd, IPPROTO_TCP, TCP_KEEPALIVE, &keepidle, sizeof(keepidle)) < 0) {
+            error_report(ERROR_NETWORK_SOCKET_OPTION_FAILED, "Network", "TCP_KEEPALIVE(macOS) 설정 실패: %s", strerror(errno));
+            return -1;
+        }
+        #endif
+        #ifdef TCP_KEEPINTVL
+        int keepintvl = 10;
+        if (setsockopt(socket_fd, IPPROTO_TCP, TCP_KEEPINTVL, &keepintvl, sizeof(keepintvl)) < 0) {
+            error_report(ERROR_NETWORK_SOCKET_OPTION_FAILED, "Network", "TCP_KEEPINTVL 설정 실패: %s", strerror(errno));
+            return -1;
+        }
+        #endif
+        #ifdef TCP_KEEPCNT
+        int keepcnt = 3;
+        if (setsockopt(socket_fd, IPPROTO_TCP, TCP_KEEPCNT, &keepcnt, sizeof(keepcnt)) < 0) {
+            error_report(ERROR_NETWORK_SOCKET_OPTION_FAILED, "Network", "TCP_KEEPCNT 설정 실패: %s", strerror(errno));
+            return -1;
+        }
+        #endif
+    }
+
+    LOG_INFO("Network", "소켓 옵션 설정 완료: fd=%d, is_server=%d", socket_fd, is_server);
     return 0;
 }
 
@@ -248,4 +372,68 @@ void cleanup_ssl_manager(SSLManager* manager) {
     }
     EVP_cleanup();
     ERR_free_strings();
+}
+
+/**
+ * @brief 클라이언트 연결을 수락하고 SSL 핸드셰이크를 수행합니다.
+ * @param server_fd 서버 소켓 파일 디스크립터
+ * @param ssl_manager SSL 매니저 포인터
+ * @param client_ip 클라이언트 IP 주소를 저장할 버퍼
+ * @return 성공 시 SSLHandler* 포인터, 실패 시 NULL
+ */
+SSLHandler* accept_client(int server_fd, SSLManager* ssl_manager, char* client_ip) {
+    CHECK_PARAM_RET_PTR(ssl_manager && client_ip, ERROR_INVALID_PARAMETER, "Network", "accept_client: 잘못된 파라미터");
+    struct sockaddr_in client_addr;
+    socklen_t client_len = sizeof(client_addr);
+    int client_fd = accept(server_fd, (struct sockaddr*)&client_addr, &client_len);
+    if (client_fd < 0) {
+        error_report(ERROR_NETWORK_ACCEPT_FAILED, "Network", "클라이언트 연결 수락 실패: %s", strerror(errno));
+        return NULL;
+    }
+    if (set_socket_options(client_fd, false) < 0) {
+        error_report(ERROR_NETWORK_SOCKET_OPTION_FAILED, "Network", "클라이언트 소켓 옵션 설정 실패");
+        CLEANUP_AND_RET(close(client_fd), NULL);
+    }
+    if (inet_ntop(AF_INET, &client_addr.sin_addr, client_ip, INET_ADDRSTRLEN) == NULL) {
+        error_report(ERROR_NETWORK_IP_CONVERSION_FAILED, "Network", "클라이언트 IP 주소 변환 실패");
+        CLEANUP_AND_RET(close(client_fd), NULL);
+    }
+    LOG_INFO("Network", "클라이언트 연결 수락: IP=%s, 소켓=%d", client_ip, client_fd);
+    SSLHandler* ssl_handler = create_ssl_handler(ssl_manager, client_fd);
+    if (!ssl_handler) {
+        error_report(ERROR_NETWORK_SSL_INIT_FAILED, "Network", "SSL 핸들러 생성 실패: IP=%s", client_ip);
+        CLEANUP_AND_RET(close(client_fd), NULL);
+    }
+    if (handle_ssl_handshake(ssl_handler) != 0) {
+        error_report(ERROR_NETWORK_SSL_HANDSHAKE_FAILED, "Network", "SSL 핸드셰이크 실패: IP=%s", client_ip);
+        cleanup_ssl_handler(ssl_handler);
+        CLEANUP_AND_RET(close(client_fd), NULL);
+    }
+    LOG_INFO("Network", "클라이언트 SSL 연결 성공: IP=%s", client_ip);
+    return ssl_handler;
+}
+
+/**
+ * @brief SSL 핸드셰이크를 수행합니다.
+ * @param client_fd 클라이언트 소켓 파일 디스크립터
+ * @param mgr SSL 매니저 포인터
+ * @return 성공 시 SSLHandler 포인터, 실패 시 NULL
+ */
+SSLHandler* perform_ssl_handshake(int client_fd, SSLManager* mgr) {
+    CHECK_PARAM_RET_PTR(mgr, ERROR_INVALID_PARAMETER, "Network", "perform_ssl_handshake: SSL 매니저가 NULL입니다");
+    LOG_INFO("Network", "SSL 핸드셰이크 시작: fd=%d", client_fd);
+    SSLHandler* handler = create_ssl_handler(mgr, client_fd);
+    if (!handler) {
+        error_report(ERROR_NETWORK_SSL_INIT_FAILED, "Network", "SSL 핸들러 생성 실패: fd=%d", client_fd);
+        close(client_fd);
+        return NULL;
+    }
+    if (handle_ssl_handshake(handler) != 0) {
+        error_report(ERROR_NETWORK_SSL_HANDSHAKE_FAILED, "Network", "SSL 핸드셰이크 실패: fd=%d", client_fd);
+        cleanup_ssl_handler(handler);
+        close(client_fd);
+        return NULL;
+    }
+    LOG_INFO("Network", "SSL 핸드셰이크 성공: fd=%d", client_fd);
+    return handler;
 }

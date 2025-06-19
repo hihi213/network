@@ -38,7 +38,15 @@ typedef struct {
 
 /* 소켓/SSL 초기화 및 정리 함수 */
 int init_server_socket(int port);
-int init_client_socket(const char* server_ip, int port);
+
+/**
+ * @brief 클라이언트 소켓을 초기화하고 서버에 연결합니다.
+ * @param ip 서버 IP 주소
+ * @param port 서버 포트 번호
+ * @return 성공 시 소켓 파일 디스크립터, 실패 시 -1
+ */
+int init_client_socket(const char* ip, int port);
+
 int init_ssl_manager(SSLManager* manager, bool is_server, const char* cert_file, const char* key_file);
 void cleanup_ssl_manager(SSLManager* manager);
 
@@ -46,11 +54,45 @@ void cleanup_ssl_manager(SSLManager* manager);
 SSLHandler* create_ssl_handler(SSLManager* manager, int socket_fd);
 void cleanup_ssl_handler(SSLHandler* handler);
 int handle_ssl_handshake(SSLHandler* handler);
+SSLHandler* accept_client(int server_fd, SSLManager* ssl_manager, char* client_ip);
+
+/**
+ * @brief SSL 핸드셰이크를 수행합니다.
+ * @param client_fd 클라이언트 소켓 파일 디스크립터
+ * @param mgr SSL 매니저 포인터
+ * @return 성공 시 SSLHandler 포인터, 실패 시 NULL
+ */
+SSLHandler* perform_ssl_handshake(int client_fd, SSLManager* mgr);
 
 /* 메시지 송수신 함수 */
 int send_message(SSL* ssl, const Message* message);
 
-/* 유틸리티 함수 */
-int set_socket_options(int socket_fd);
+/**
+ * @brief 소켓 옵션을 설정합니다. (서버/클라이언트 구분)
+ * @param socket_fd 소켓 파일 디스크립터
+ * @param is_server 서버 소켓 여부
+ * @return 성공 시 0, 실패 시 -1
+ */
+int set_socket_options(int socket_fd, bool is_server);
+
 void update_ssl_activity(SSLHandler* handler);
+
+/**
+ * @brief SSL을 통한 안전한 송신 함수 (타임아웃, 재시도, 에러 로깅 포함)
+ * @param ssl SSL 객체
+ * @param buf 송신 버퍼
+ * @param len 송신 길이
+ * @return 성공 시 송신 바이트 수, 실패 시 -1
+ */
+ssize_t net_send(SSL* ssl, const void* buf, size_t len);
+
+/**
+ * @brief SSL을 통한 안전한 수신 함수 (타임아웃, 재시도, 에러 로깅 포함)
+ * @param ssl SSL 객체
+ * @param buf 수신 버퍼
+ * @param len 수신 길이
+ * @return 성공 시 수신 바이트 수, 실패 시 -1
+ */
+ssize_t net_recv(SSL* ssl, void* buf, size_t len);
+
 #endif /* NETWORK_H */ 
