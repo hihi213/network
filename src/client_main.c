@@ -1,4 +1,4 @@
-// client_main.c
+// client_main.c (getmaxyx 매크로 사용법 수정 완료)
 /**
  * @file client_main.c
  * @brief 장치 예약 시스템 클라이언트 메인 프로그램 (최종 통합 버전)
@@ -76,7 +76,7 @@ int main(int argc, char* argv[]) {
         fds[2].fd = STDIN_FILENO;
         fds[2].events = POLLIN;
 
-        int ret = poll(fds, 3, 100); // 100ms 마다 루프를 돌며 UI를 갱신
+        int ret = poll(fds, 3, 100);
         if (ret < 0) { if (errno == EINTR) continue; break; }
 
         if (fds[2].revents & POLLIN) {
@@ -110,8 +110,18 @@ static void draw_ui_for_current_state() {
         case UI_STATE_LOGGED_IN_MENU: draw_logged_in_menu(); break;
         case UI_STATE_DEVICE_LIST: draw_device_list(); break;
         case UI_STATE_INPUT_RESERVATION_TIME:
-            draw_device_list();
-            mvwprintw(global_ui_manager->menu_win, LINES - 5, 2, "예약할 시간(초) 입력 (1~86400, ESC:취소): %s", input_buffer);
+            {
+                draw_device_list();
+                mvwprintw(global_ui_manager->menu_win, LINES - 5, 2, "예약할 시간(초) 입력 (1~86400, ESC:취소): %s", input_buffer);
+                
+                int menu_win_height, menu_win_width;
+                // [수정] &를 제거한 올바른 매크로 사용법
+                getmaxyx(global_ui_manager->menu_win, menu_win_height, menu_win_width);
+                (void)menu_win_width;
+                char help_msg[128];
+                snprintf(help_msg, sizeof(help_msg), "도움말: 1 ~ 86400 사이의 예약 시간(초)을 입력하고 Enter를 누르세요.");
+                mvwprintw(global_ui_manager->menu_win, menu_win_height - 2, 2, "%-s", help_msg);
+            }
             break;
         case UI_STATE_QUITTING: break;
     }
@@ -198,7 +208,7 @@ static void draw_device_list() {
             default:
                 break; 
         }
-        mvwprintw(global_ui_manager->menu_win, menu_win_height - 2, 2, "%s", help_message);
+        mvwprintw(global_ui_manager->menu_win, menu_win_height - 2, 2, "%-s", help_message);
     }
 }
 
@@ -292,6 +302,7 @@ static void handle_input_reservation_time(int ch) {
     } else if (ch == 10) {
         long duration_sec = atol(input_buffer);
         const long MAX_RESERVATION_SECONDS = 86400;
+
         if (duration_sec > 0 && duration_sec <= MAX_RESERVATION_SECONDS) {
             Message* msg = create_reservation_message(device_list[reservation_target_device_index].id, input_buffer);
             if (msg) {
@@ -301,8 +312,9 @@ static void handle_input_reservation_time(int ch) {
             }
         } else {
             show_error_message("유효하지 않은 시간입니다. (1~86400초)");
+            memset(input_buffer, 0, sizeof(input_buffer));
+            input_pos = 0;
         }
-        current_state = UI_STATE_DEVICE_LIST;
     }
 }
 
@@ -329,9 +341,21 @@ static void handle_server_message(const Message* message) {
             break;
         case MSG_RESERVE_RESPONSE:
             if (strcmp(message->data, "success") == 0) {
-                show_success_message("예약이 성공적으로 완료되었습니다.");
+                show_success_message("예약 성공! 목록을 갱신합니다...");
+                
+                Message* msg = create_message(MSG_STATUS_REQUEST, NULL);
+                if (msg) {
+                    if (send_message(client_session.ssl, msg) < 0) {
+                        running = false;
+                    } else {
+                        expecting_network_response = true;
+                    }
+                    cleanup_message(msg);
+                    free(msg);
+                }
             } else {
                 show_error_message(message->data);
+                current_state = UI_STATE_DEVICE_LIST;
             }
             break;
         case MSG_ERROR:
