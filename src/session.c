@@ -74,15 +74,17 @@ ServerSession* create_session(SessionManager* manager, const char* username, con
         return NULL;  // NULL 반환
     }
 
-    pthread_mutex_lock(&manager->mutex);  // 뮤텍스 잠금
+     pthread_mutex_lock(&manager->mutex);
     LOG_INFO("Session", "세션 생성 시작: 사용자=%s, IP=%s, 포트=%d", username, client_ip, client_port);
 
-    // [개선] 해시 테이블에서 기존 세션 확인
-    ServerSession* existing_session = (ServerSession*)ht_get(manager->sessions, username);
-    if (existing_session) {  // 기존 세션이 존재하는 경우
-        LOG_INFO("Session", "기존 세션 발견, 교체: %s", username);
-        ht_delete(manager->sessions, username);  // 기존 세션 삭제
+    // [개선] 기존 세션이 존재하는지 확인
+    if (ht_get(manager->sessions, username)) {
+        // 이미 로그인된 사용자인 경우, 에러를 보고하고 NULL 반환
+        error_report(ERROR_SESSION_ALREADY_EXISTS, "Session", "이미 로그인된 사용자입니다: %s", username);
+        pthread_mutex_unlock(&manager->mutex);
+        return NULL;
     }
+
 
     // 새 세션 생성
     ServerSession* new_session = (ServerSession*)malloc(sizeof(ServerSession));  // 새 세션 메모리 할당

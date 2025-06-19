@@ -41,6 +41,8 @@ static void cleanup_client(Client* client);
 static void add_client_to_list(Client* client);
 static void remove_client_from_list(Client* client);
 static void broadcast_status_update(void);
+static int handle_login_request(Client* client, const Message* message);
+static bool is_user_authenticated(const char* username, const char* password); // 인증 함수 프로토타입 추가
 
 // 전역 변수
 static int server_sock;
@@ -282,32 +284,61 @@ Message* response = create_message(MSG_RESERVE_RESPONSE, "success");
     }
     return 0;
 }
-
+static bool is_user_authenticated(const char* username, const char* password) {
+    // TODO: 프로덕션 환경에서는 사용자 정보를 파일이나 데이터베이스에서 로드하고,
+    // Argon2, bcrypt 등의 안전한 해시 함수로 비밀번호를 비교해야 합니다.
+    if (strcmp(username, "test") == 0 && strcmp(password, "1234") == 0) {
+        return true;
+    }
+    if (strcmp(username, "admin") == 0 && strcmp(password, "admin") == 0) {
+        return true;
+    }
+    return false;
+}
 static int handle_login_request(Client* client, const Message* message) {
-    if (message->arg_count < 2) return send_error_response(client->ssl, "로그인 정보 부족");
+    if (message->arg_count < 2) {
+        return send_error_response(client->ssl, "로그인 정보가 부족합니다.");
+    }
     const char* user = message->args[0];
     const char* pass = message->args[1];
-    if (strcmp(user, "test") == 0 && strcmp(pass, "1234") == 0) {
-        client->state = SESSION_LOGGED_IN;
-        strncpy(client->username, user, MAX_USERNAME_LENGTH - 1);
-        client->username[MAX_USERNAME_LENGTH - 1] = '\0';
-        create_session(session_manager, user, client->ip, 0);
-         Message* login_response = create_message(MSG_LOGIN, "success");
-        if (login_response) {
-            login_response->args[0] = strdup(user);
-            login_response->arg_count = 1;
-            send_message(client->ssl, login_response);
-            cleanup_message(login_response);
-            free(login_response);
-        }
 
-        // 로그인 직후 바로 상태 목록을 보내 클라이언트가 초기 화면을 그리도록 함
-        handle_status_request(client, NULL); 
-
-        return 0;
-    } else {
+    // 1단계: 사용자 자격 증명 확인
+    if (!is_user_authenticated(user, pass)) {
+        LOG_WARNING("Auth", "로그인 실패: 사용자 '%s'의 자격 증명이 올바르지 않습니다.", user);
         return send_error_response(client->ssl, "아이디 또는 비밀번호가 틀립니다.");
     }
+
+    // 2단계: 세션 생성 (중복 로그인 방지)
+    // [버그 수정] 기존 코드에서는 create_session이 두 번 호출되었습니다.
+    // 이제 인증 후 한 번만 호출하여 반환값으로 중복 여부를 확인합니다.
+    ServerSession* session = create_session(session_manager, user, client->ip, 0);
+    if (!session) {
+        // create_session은 사용자가 이미 존재할 경우 NULL을 반환합니다.
+        LOG_WARNING("Auth", "로그인 실패: 사용자 '%s'는 이미 로그인되어 있습니다.", user);
+        return send_error_response(client->ssl, "이미 로그인된 사용자입니다.");
+    }
+
+    // 3단계: 로그인 성공 처리
+    client->state = SESSION_LOGGED_IN;
+    strncpy(client->username, user, MAX_USERNAME_LENGTH - 1);
+    client->username[MAX_USERNAME_LENGTH - 1] = '\0';
+    
+    LOG_INFO("Auth", "사용자 '%s'가 IP주소 %s 에서 로그인했습니다.", user, client->ip);
+
+    // 4단계: 클라이언트에 성공 응답 전송
+    Message* login_response = create_message(MSG_LOGIN, "success");
+    if (login_response) {
+        login_response->args[0] = strdup(user);
+        login_response->arg_count = 1;
+        send_message(client->ssl, login_response);
+        cleanup_message(login_response);
+        free(login_response);
+    }
+
+    // 5단계: 로그인 직후, 클라이언트가 다음 화면을 그릴 수 있도록 장비 현황 전송
+    handle_status_request(client, NULL); 
+
+    return 0;
 }
 static int handle_status_request(Client* client, const Message* message) {
     (void)message; 
@@ -366,15 +397,21 @@ static int handle_cancel_request(Client* client, const Message* message) {
 }
 static int handle_client_message(Client* client, const Message* message) {
     if (!client || !message) return -1;
+    // 로그인되지 않은 상태에서는 로그인 요청만 허용
     if (client->state != SESSION_LOGGED_IN && message->type != MSG_LOGIN) {
         return send_error_response(client->ssl, "로그인이 필요한 서비스입니다.");
     }
     switch (message->type) {
-        case MSG_LOGIN: return handle_login_request(client, message);
-        case MSG_STATUS_REQUEST: return handle_status_request(client, message);
-        case MSG_RESERVE_REQUEST: return handle_reserve_request(client, message);
-        case MSG_CANCEL_REQUEST: return handle_cancel_request(client, message); // [추가] 이 부분을 추가해야 합니다.
-        default: return send_error_response(client->ssl, "알 수 없거나 처리할 수 없는 요청입니다.");
+        case MSG_LOGIN: 
+            return handle_login_request(client, message); // 리팩토링된 함수 호출
+        case MSG_STATUS_REQUEST: 
+            return handle_status_request(client, message);
+        case MSG_RESERVE_REQUEST: 
+            return handle_reserve_request(client, message);
+        case MSG_CANCEL_REQUEST: 
+            return handle_cancel_request(client, message);
+        default: 
+            return send_error_response(client->ssl, "알 수 없거나 처리할 수 없는 요청입니다.");
     }
 }
 
