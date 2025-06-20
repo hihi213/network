@@ -235,37 +235,3 @@ const char* message_get_error_string(error_code_t error_code) {
         default: return "알 수 없는 오류가 발생했습니다";
     }
 }
-
-error_code_t message_get_error_code_from_string(const char* error_str) {
-    if (!error_str) return ERROR_UNKNOWN;
-    
-    if (strstr(error_str, "아이디") || strstr(error_str, "비밀번호")) {
-        return ERROR_SESSION_AUTHENTICATION_FAILED;
-    } else if (strstr(error_str, "이미 로그인")) {
-        return ERROR_SESSION_ALREADY_EXISTS;
-    } else if (strstr(error_str, "사용 불가") || strstr(error_str, "사용할 수 없")) {
-        return ERROR_RESOURCE_IN_USE;
-    } else if (strstr(error_str, "점검")) {
-        return ERROR_RESOURCE_MAINTENANCE_MODE;
-    } else if (strstr(error_str, "이미 예약") || strstr(error_str, "사용 중")) {
-        return ERROR_RESERVATION_ALREADY_EXISTS;
-    } else if (strstr(error_str, "예약을 찾을 수 없")) {
-        return ERROR_RESERVATION_NOT_FOUND;
-    } else if (strstr(error_str, "본인의 예약") || strstr(error_str, "권한이 없")) {
-        return ERROR_RESERVATION_PERMISSION_DENIED;
-    } else if (strstr(error_str, "유효하지 않은") || strstr(error_str, "시간")) {
-        return ERROR_RESERVATION_INVALID_TIME;
-    } else if (strstr(error_str, "서버 내부") || strstr(error_str, "내부 오류")) {
-        return ERROR_UNKNOWN;
-    } else if (strstr(error_str, "네트워크") || strstr(error_str, "연결")) {
-        return ERROR_NETWORK_CONNECT_FAILED;
-    } else if (strstr(error_str, "잘못된 요청")) {
-        return ERROR_INVALID_PARAMETER;
-    } else if (strstr(error_str, "세션")) {
-        return ERROR_SESSION_INVALID_STATE;
-    } else if (strstr(error_str, "권한")) {
-        return ERROR_PERMISSION_DENIED;
-    }
-    
-    return ERROR_UNKNOWN; // 기본값
-}

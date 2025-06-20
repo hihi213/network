@@ -63,5 +63,4 @@ void message_destroy(message_t* msg);
 
 /* 에러 코드 관련 함수 */
 const char* message_get_error_string(error_code_t error_code);
-error_code_t message_get_error_code_from_string(const char* error_str);
 #endif /* MESSAGE_H */

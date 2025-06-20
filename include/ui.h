@@ -70,14 +70,6 @@ void ui_show_status(const char* msg);
 void ui_show_error(const char* msg);
 void ui_refresh_all_windows(void);
 
-/* 서버 UI 함수 */
-ui_manager_t* ui_init_manager(void);
-void ui_cleanup_manager(ui_manager_t* manager);
-void ui_set_status_message(ui_manager_t* manager, const char* message);
-
-void ui_show_error_message(const char* message);
-void ui_show_success_message(const char* message);
-
 void client_draw_ui_for_current_state(void);
 void server_draw_ui_for_current_state(void);
 
@@ -85,5 +77,9 @@ int get_display_width(const char* str);
 void print_fixed_width(WINDOW* win, int y, int x, const char* str, int width);
 
 void ui_show_message(const char* prefix, const char* message, int color_pair);
+
+void ui_show_error_message(const char* message);
+
+void ui_show_success_message(const char* message);
 
 #endif /* UI_H */

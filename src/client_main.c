@@ -343,7 +343,6 @@ static void client_handle_input_main_menu(int ch) {
                 memset(login_password_buffer, 0, sizeof(login_password_buffer));
                 login_username_pos = 0;
                 login_password_pos = 0;
-                flushinp(); // ncurses 입력 버퍼를 비워 씹힘 현상을 방지합니다.
             } else { // "종료" 선택
                 running = false; 
             }
@@ -372,8 +371,10 @@ static void client_handle_input_login_input(int ch) {
     }
 
     // [로그 추가] 어떤 키가 어느 필드에 입력됐는지 기록
+#ifdef DEBUG
     LOG_INFO("LoginInput", "입력 필드: %s, 입력 키: %d (문자: %c)",
         (active_login_field == LOGIN_FIELD_USERNAME) ? "USERNAME" : "PASSWORD", ch, (ch >= 32 && ch <= 126) ? ch : ' ');
+#endif
 
     switch (ch) {
         case 9: // Tab 키
@@ -407,7 +408,9 @@ static void client_handle_input_login_input(int ch) {
                 (*current_pos)--;
                 current_buffer[*current_pos] = '\0';
                 // [로그 추가] 실제로 UI에서 삭제가 반영될 때만 로그
+#ifdef DEBUG
                 LOG_INFO("LoginInput", "UI 반영: %s 필드에서 백스페이스(코드:%d)로 1글자 삭제", (active_login_field == LOGIN_FIELD_USERNAME) ? "USERNAME" : "PASSWORD", ch);
+#endif
             }
             break;
 
@@ -417,7 +420,9 @@ static void client_handle_input_login_input(int ch) {
                 current_buffer[(*current_pos)++] = ch;
                 current_buffer[*current_pos] = '\0';
                 // [로그 추가] 실제로 UI에 문자가 추가될 때만 로그
+#ifdef DEBUG
                 LOG_INFO("LoginInput", "UI 반영: %s 필드에 키 입력(코드:%d, 문자:%c) 추가", (active_login_field == LOGIN_FIELD_USERNAME) ? "USERNAME" : "PASSWORD", ch, ch);
+#endif
             }
             break;
     }

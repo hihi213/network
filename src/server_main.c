@@ -5,6 +5,7 @@
 #include "../include/ui.h"
 #include "../include/resource.h"
 #include "../include/reservation.h" 
+#include "utils.h"
 
 // Client 구조체 정의
 typedef struct {
@@ -27,7 +28,6 @@ static int server_handle_status_request(Client* client, const message_t* message
 static int server_handle_reserve_request(Client* client, const message_t* message);
 static int server_handle_login_request(Client* client, const message_t* message);
 static int server_handle_cancel_request(Client* client, const message_t* message);
-static int server_send_error_response(SSL* ssl, const char* error_message);
 static int server_send_error_response_with_code(SSL* ssl, error_code_t error_code, const char* error_message);
 static int server_send_generic_response(Client* client, message_type_t type, const char* data, int arg_count, ...);
 static void server_client_message_loop(Client* client);
@@ -52,6 +52,7 @@ static Client* client_list[MAX_CLIENTS];
 static int num_clients = 0;
 static pthread_mutex_t client_list_mutex;
 static int g_server_port = 0; // [추가] 서버 포트 저장을 위한 전역 변수
+static performance_stats_t g_perf_stats;
 
 int main(int argc, char* argv[]) {
     if (argc != 2) {
@@ -150,8 +151,28 @@ static void server_client_message_loop(Client* client) {
     while (running) {
         message_t* msg = message_receive(client->ssl);
         if (msg) {
+            uint64_t start_time = utils_get_current_time();
+
             client->last_activity = time(NULL);
-            server_handle_client_message(client, msg); // 큐를 거치지 않고 바로 처리
+            int result = server_handle_client_message(client, msg);
+
+            uint64_t end_time = utils_get_current_time();
+            uint64_t response_time = (end_time - start_time); // 마이크로초 단위로 유지
+
+            pthread_mutex_lock(&g_perf_stats.mutex);
+            g_perf_stats.total_requests++;
+            if (result == 0) g_perf_stats.successful_requests++;
+            else g_perf_stats.failed_requests++;
+            g_perf_stats.total_response_time += response_time;
+            if (g_perf_stats.max_response_time < response_time)
+                g_perf_stats.max_response_time = response_time;
+            if (g_perf_stats.min_response_time == 0 || g_perf_stats.min_response_time > response_time)
+                g_perf_stats.min_response_time = response_time;
+            pthread_mutex_unlock(&g_perf_stats.mutex);
+
+            // 성능 통계 업데이트 후 UI 갱신 트리거
+            server_trigger_ui_refresh();
+
             message_destroy(msg);
         } else {
             // LOG_INFO("Thread", "클라이언트(%s)가 연결을 종료했습니다.", client->ip);
@@ -424,6 +445,19 @@ static int server_init(int port) {
     
     server_sock = network_init_server_socket(port);
     if (server_sock < 0) return -1;
+
+    // 성능 통계 뮤텍스 초기화
+    pthread_mutex_init(&g_perf_stats.mutex, NULL);
+    g_perf_stats.min_response_time = 0;
+    g_perf_stats.max_response_time = 0;
+    g_perf_stats.total_response_time = 0;
+    g_perf_stats.total_requests = 0;
+    g_perf_stats.successful_requests = 0;
+    g_perf_stats.failed_requests = 0;
+    g_perf_stats.max_concurrent_requests = 0;
+    g_perf_stats.total_data_sent = 0;
+    g_perf_stats.total_data_received = 0;
+    g_perf_stats.total_errors = 0;
     
     return 0;
 }
@@ -463,6 +497,10 @@ static void server_cleanup(void) {
     
     close(self_pipe[0]);
     close(self_pipe[1]);
+
+    // 성능 통계 출력 및 뮤텍스 해제
+    utils_print_performance_stats(&g_perf_stats);
+    pthread_mutex_destroy(&g_perf_stats.mutex);
 }
 
 /**
@@ -508,21 +546,6 @@ static int server_send_generic_response(Client* client, message_type_t type, con
     return ret;
 }
 
-/**
- * @brief 클라이언트에 에러 메시지를 전송합니다. (기존 함수 활용)
- * @param ssl 클라이언트의 SSL 객체
- * @param error_message 보낼 에러 메시지
- * @return 성공 시 0, 실패 시 -1
- */
-static int server_send_error_response(SSL* ssl, const char* error_message) {
-    if (!ssl || !error_message) return -1;
-    message_t* response = message_create_error(error_message);
-    if (!response) return -1;
-    int ret = network_send_message(ssl, response);
-    message_destroy(response);
-    return ret;
-}
-
 static void server_load_users_from_file(const char* filename) {
     user_credentials = utils_hashtable_create(MAX_CLIENTS, free); // 비밀번호 문자열을 free로 해제
     if (!user_credentials) {
@@ -564,7 +587,7 @@ void server_draw_ui_for_current_state(void) {
     if (!g_ui_manager) return;
     pthread_mutex_lock(&g_ui_manager->mutex);
 
-    // 1. 상단 정보 바 (status_win)
+    // 1. 상단 정보 바 (status_win) - 성능 통계 추가
     werase(g_ui_manager->status_win);
     box(g_ui_manager->status_win, 0, 0);
     int session_count = (session_manager && session_manager->sessions) ? session_manager->sessions->count : 0;
@@ -572,7 +595,24 @@ void server_draw_ui_for_current_state(void) {
     struct tm* tm_info = localtime(&now);
     char time_str[32];
     strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M:%S", tm_info);
+    
+    // 성능 통계 정보 가져오기
+    pthread_mutex_lock(&g_perf_stats.mutex);
+    uint64_t total_req = g_perf_stats.total_requests;
+    uint64_t success_req = g_perf_stats.successful_requests;
+    uint64_t failed_req = g_perf_stats.failed_requests;
+    uint64_t avg_response_time = (total_req > 0) ? (g_perf_stats.total_response_time / total_req) : 0;
+    uint64_t max_response_time = g_perf_stats.max_response_time;
+    uint64_t min_response_time = g_perf_stats.min_response_time;
+    pthread_mutex_unlock(&g_perf_stats.mutex);
+    
+    // 첫 번째 줄: 기본 서버 정보
     mvwprintw(g_ui_manager->status_win, 1, 2, "서버: MyServer  포트: %d  세션: %d  시간: %s", g_server_port, session_count, time_str);
+    
+    // 두 번째 줄: 성능 통계
+    mvwprintw(g_ui_manager->status_win, 2, 2, "요청: 총%lu 성공%lu 실패%lu | 응답시간: 평균%luμs 최대%luμs 최소%luμs", 
+              total_req, success_req, failed_req, avg_response_time, max_response_time, min_response_time);
+    
     wrefresh(g_ui_manager->status_win);
 
     // 2. 장비 목록 표 (menu_win)
