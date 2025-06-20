@@ -80,7 +80,7 @@ struct cleanup_ctx {
 static void collect_expired_callback(const char* key, void* value, void* user_data) {
     struct cleanup_ctx* ctx = (struct cleanup_ctx*)user_data;
     reservation_t* reservation = (reservation_t*)value;
-    if (reservation->status == RESERVATION_APPROVED && reservation->end_time < ctx->now) {
+    if (reservation->status == RESERVATION_APPROVED && reservation->end_time <= ctx->now) {
         // 장비 상태 available로 변경
         resource_update_device_status(ctx->res_manager, reservation->device_id, DEVICE_AVAILABLE, 0);
         reservation->status = RESERVATION_COMPLETED;

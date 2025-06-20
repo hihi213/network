@@ -426,6 +426,13 @@ static int server_handle_client_message(Client* client, const message_t* message
             return server_handle_reserve_request(client, message);
         case MSG_CANCEL_REQUEST: 
             return server_handle_cancel_request(client, message);
+        case MSG_TIME_SYNC_REQUEST:
+        {
+            char time_str[32];
+            snprintf(time_str, sizeof(time_str), "%ld", time(NULL));
+            server_send_generic_response(client, MSG_TIME_SYNC_RESPONSE, "sync", 1, time_str);
+            return 0;
+        }
         case MSG_LOGOUT:
             LOG_INFO("Server", "클라이언트 로그아웃 요청 수신: %s", client->username);
             if (client->state == SESSION_LOGGED_IN) {

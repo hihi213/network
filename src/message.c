@@ -111,6 +111,8 @@ const char *message_get_type_string(message_type_t type) {
         case MSG_STATUS_REQUEST: return "STATUS_REQUEST";
         case MSG_STATUS_RESPONSE: return "STATUS_RESPONSE";
         case MSG_STATUS_UPDATE: return "STATUS_UPDATE";
+        case MSG_TIME_SYNC_REQUEST: return "TIME_SYNC_REQUEST";
+        case MSG_TIME_SYNC_RESPONSE: return "TIME_SYNC_RESPONSE";
         case MSG_PING: return "PING";
         case MSG_PONG: return "PONG";
         case MSG_PING_RESPONSE: return "PING_RESPONSE";

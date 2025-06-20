@@ -92,6 +92,7 @@ static int self_pipe[2];
 static AppState current_state = APP_STATE_LOGIN;
 static int menu_highlight = 0;
 static int scroll_offset = 0;
+static time_t g_time_offset = 0; // 서버 시간 - 클라이언트 시간
 
 // 입력 버퍼 분리
 static char reservation_input_buffer[20] = {0};
@@ -105,6 +106,11 @@ static LoginField active_login_field = LOGIN_FIELD_USERNAME;
 static int reservation_target_device_index = -1;
 static device_t* device_list = NULL;
 static int device_count = 0;
+
+// [추가] 동기화된 시간을 반환하는 헬퍼 함수
+static time_t client_get_synced_time(void) {
+    return time(NULL) + g_time_offset;
+}
 
 int main(int argc, char* argv[]) {
     if (argc != 3) { 
@@ -121,8 +127,6 @@ int main(int argc, char* argv[]) {
     if (client_connect_to_server(argv[1], atoi(argv[2])) < 0) { client_cleanup_resources(); return 1; }
 
     while (running) {
-        client_draw_ui_for_current_state();
-        
         struct pollfd fds[3];
         fds[0].fd = client_session.socket_fd;
         fds[0].events = POLLIN;
@@ -153,6 +157,10 @@ int main(int argc, char* argv[]) {
                 running = false;
             }
         }
+
+        // 모든 입력(키보드, 네트워크)을 처리한 후,
+        // 최종적으로 확정된 상태를 기반으로 UI를 그립니다.
+        client_draw_ui_for_current_state();
     }
     client_cleanup_resources();
     return 0;
@@ -259,7 +267,7 @@ static void client_draw_device_list() {
         return;
     }
 
-    time_t current_time = time(NULL);
+    time_t current_time = client_get_synced_time();
     const int visible_items = menu_win_height - 5;
 
     // 각 열의 시작 x좌표와 폭(한글 포함)
@@ -632,6 +640,13 @@ static void client_handle_server_message(const message_t* message) {
                 current_state = APP_STATE_LOGGED_IN_MENU;
                 menu_highlight = 0;
                 ui_show_success_message("로그인 성공!");
+                
+                // [추가] 서버 시간 동기화 요청
+                message_t* sync_msg = message_create(MSG_TIME_SYNC_REQUEST, NULL);
+                if (sync_msg) {
+                    network_send_message(client_session.ssl, sync_msg);
+                    message_destroy(sync_msg);
+                }
             } else {
                 LOG_WARNING("Client", "로그인 실패 응답 수신: %s", message->data);
                 ui_show_error_message(message->data);
@@ -662,6 +677,15 @@ static void client_handle_server_message(const message_t* message) {
             menu_highlight = 0;
             scroll_offset = 0;
             break;
+        case MSG_TIME_SYNC_RESPONSE:
+        {
+            if (message->arg_count > 0) {
+                time_t server_time = atol(message->args[0]);
+                g_time_offset = server_time - time(NULL);
+                LOG_INFO("TimeSync", "서버 시간 동기화 완료. Offset: %ld초", g_time_offset);
+            }
+            break;
+        }
         default:
             break;
     }
