@@ -57,6 +57,7 @@ static hash_table_t* user_credentials = NULL; // 사용자 정보 해시 테이�
 static Client* client_list[MAX_CLIENTS];
 static int num_clients = 0;
 static pthread_mutex_t client_list_mutex;
+static int g_server_port = 0; // [추가] 서버 포트 저장을 위한 전역 변수
 
 #define MAX_PRIORITY 10
 
@@ -110,7 +111,8 @@ int main(int argc, char* argv[]) {
         utils_report_error(ERROR_INVALID_PARAMETER, "Server", "사용법: %s <포트>", argv[0]);
         return 1;
     }
-    if (server_init(atoi(argv[1])) != 0) {
+    g_server_port = atoi(argv[1]); // [추가] 포트 번호를 전역 변수에 저장
+    if (server_init(g_server_port) != 0) {
         utils_report_error(ERROR_NETWORK_SOCKET_CREATION_FAILED, "Main", "서버 초기화 실패");
         server_cleanup();
         return 1;
@@ -129,11 +131,7 @@ int main(int argc, char* argv[]) {
             break;
         }
         if (ret == 0) {
-            device_t devices[MAX_DEVICES];
-            int count = resource_get_device_list(resource_manager, devices, MAX_DEVICES);
-            if (count >= 0)  ui_update_server_devices(devices, count, resource_manager, reservation_manager);
-            ui_update_server_status(session_manager->sessions->count, atoi(argv[1]));
-            ui_refresh_all_windows();
+            server_draw_ui_for_current_state();
             continue;
         }
         if (fds[1].revents & POLLIN) {
@@ -445,7 +443,7 @@ static int server_init(int port) {
     signal(SIGTERM, server_signal_handler);
     if (utils_init_logger("logs/server.log") < 0) return -1;
     if (network_init_ssl_manager(&ssl_manager, true, "certs/server.crt", "certs/server.key") < 0) return -1;
-    if (ui_init() < 0) return -1;
+    if (ui_init(UI_SERVER) < 0) return -1;
     
     resource_manager = resource_init_manager();
     reservation_manager = reservation_init_manager(resource_manager, server_broadcast_status_update);
@@ -590,4 +588,116 @@ static void server_load_users_from_file(const char* filename) {
     
     fclose(fp);
     LOG_INFO("Auth", "사용자 정보 로드 완료: 총 %d명", user_count);
+}
+
+// [추가] 한글/영문 혼용 문자열의 실제 표시 폭 계산
+static int get_display_width(const char* str) {
+    int width = 0;
+    while (*str) {
+        unsigned char c = (unsigned char)*str;
+        if (c < 0x80) {
+            width += 1; // ASCII
+            str++;
+        } else if ((c & 0xE0) == 0xC0) {
+            width += 2; // 2바이트(한글 등)
+            str += 2;
+        } else if ((c & 0xF0) == 0xE0) {
+            width += 2; // 3바이트(한글 등)
+            str += 3;
+        } else {
+            str++;
+        }
+    }
+    return width;
+}
+// [추가] 지정한 폭에 맞춰 문자열을 출력하고, 남는 공간은 공백으로 채움
+static void print_fixed_width(WINDOW* win, int y, int x, const char* str, int width) {
+    mvwprintw(win, y, x, "%s", str);
+    int disp = get_display_width(str);
+    for (int i = disp; i < width; ++i) {
+        mvwaddch(win, y, x + i, ' ');
+    }
+}
+
+void server_draw_ui_for_current_state(void) {
+    if (!g_ui_manager) return;
+    pthread_mutex_lock(&g_ui_manager->mutex);
+
+    // 1. 상단 정보 바 (status_win)
+    werase(g_ui_manager->status_win);
+    box(g_ui_manager->status_win, 0, 0);
+    int session_count = (session_manager && session_manager->sessions) ? session_manager->sessions->count : 0;
+    time_t now = time(NULL);
+    struct tm* tm_info = localtime(&now);
+    char time_str[32];
+    strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M:%S", tm_info);
+    mvwprintw(g_ui_manager->status_win, 1, 2, "서버: MyServer  포트: %d  세션: %d  시간: %s", g_server_port, session_count, time_str);
+    wrefresh(g_ui_manager->status_win);
+
+    // 2. 장비 목록 표 (menu_win)
+    werase(g_ui_manager->menu_win);
+    box(g_ui_manager->menu_win, 0, 0);
+    int menu_win_height, menu_win_width;
+    getmaxyx(g_ui_manager->menu_win, menu_win_height, menu_win_width);
+    // 컬럼 위치/폭 설정 (예약자, 남은시간 칸을 더 작게)
+    int col_w[6] = {10, 27, 15, 14, 8, 8};
+    int col_x[6];
+    col_x[0] = 2;
+    for (int i = 1; i < 6; ++i) {
+        col_x[i] = col_x[i-1] + col_w[i-1] + 1;
+    }
+    // 헤더
+    wattron(g_ui_manager->menu_win, A_BOLD);
+    print_fixed_width(g_ui_manager->menu_win, 1, col_x[0], "ID", col_w[0]);
+    print_fixed_width(g_ui_manager->menu_win, 1, col_x[1], "이름", col_w[1]);
+    print_fixed_width(g_ui_manager->menu_win, 1, col_x[2], "타입", col_w[2]);
+    print_fixed_width(g_ui_manager->menu_win, 1, col_x[3], "상태", col_w[3]);
+    print_fixed_width(g_ui_manager->menu_win, 1, col_x[4], "예약자", col_w[4]);
+    print_fixed_width(g_ui_manager->menu_win, 1, col_x[5], "남은시간", col_w[5]);
+    wattroff(g_ui_manager->menu_win, A_BOLD);
+    // 구분선
+    for (int i = 0; i < 6; ++i) {
+        mvwaddch(g_ui_manager->menu_win, 1, col_x[i] - 2, '|');
+    }
+    // 장비 목록
+    device_t devices[MAX_DEVICES];
+    int count = resource_get_device_list(resource_manager, devices, MAX_DEVICES);
+    int max_rows = menu_win_height - 4;
+    for (int i = 0; i < count && i < max_rows; i++) {
+        const device_t* device = &devices[i];
+        char reservation_info[32] = "-";
+        char remain_str[16] = "-";
+        if (device->status == DEVICE_RESERVED) {
+            reservation_t* res = reservation_get_active_for_device(reservation_manager, resource_manager, device->id);
+            if (res) {
+                time_t current_time = time(NULL);
+                long remaining_sec = (res->end_time > current_time) ? (res->end_time - current_time) : 0;
+                snprintf(reservation_info, sizeof(reservation_info), "%s", res->username);
+                snprintf(remain_str, sizeof(remain_str), "%lds", remaining_sec);
+            }
+        }
+        const char* status_str = message_get_device_status_string(device->status);
+        // 상태별 색상 강조(예약:노랑, 점검:빨강, 사용가능:초록)
+        if (device->status == DEVICE_RESERVED) wattron(g_ui_manager->menu_win, COLOR_PAIR(2));
+        else if (device->status == DEVICE_MAINTENANCE) wattron(g_ui_manager->menu_win, COLOR_PAIR(3));
+        else if (device->status == DEVICE_AVAILABLE) wattron(g_ui_manager->menu_win, COLOR_PAIR(4));
+        print_fixed_width(g_ui_manager->menu_win, i + 2, col_x[0], device->id, col_w[0]);
+        print_fixed_width(g_ui_manager->menu_win, i + 2, col_x[1], device->name, col_w[1]);
+        print_fixed_width(g_ui_manager->menu_win, i + 2, col_x[2], device->type, col_w[2]);
+        print_fixed_width(g_ui_manager->menu_win, i + 2, col_x[3], status_str, col_w[3]);
+        print_fixed_width(g_ui_manager->menu_win, i + 2, col_x[4], reservation_info, col_w[4]);
+        print_fixed_width(g_ui_manager->menu_win, i + 2, col_x[5], remain_str, col_w[5]);
+        wattroff(g_ui_manager->menu_win, COLOR_PAIR(2));
+        wattroff(g_ui_manager->menu_win, COLOR_PAIR(3));
+        wattroff(g_ui_manager->menu_win, COLOR_PAIR(4));
+    }
+    wrefresh(g_ui_manager->menu_win);
+
+    // 3. 하단 안내/상태 바 (message_win)
+    werase(g_ui_manager->message_win);
+    box(g_ui_manager->message_win, 0, 0);
+    mvwprintw(g_ui_manager->message_win, 0, 2, "[ESC] 종료   [↑↓] 스크롤   상태: 서버 정상 동작 중");
+    wrefresh(g_ui_manager->message_win);
+
+    pthread_mutex_unlock(&g_ui_manager->mutex);
 }

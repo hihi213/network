@@ -5,6 +5,7 @@
 #include "resource.h"    // Device 정보 표시
 #include "reservation.h" // Reservation 정보 표시
 #include "session.h"     // ClientSession 정보 표시
+#include <ncurses.h>
 
 /* UI 상수 */
 #define COLOR_PAIR_TITLE 1
@@ -33,6 +34,8 @@ typedef struct ui_menu_item {
     void (*handler)(void);
 } ui_menu_item_t;
 
+typedef enum { UI_CLIENT, UI_SERVER } ui_mode_t;
+
 /* UI 매니저 구조체 */
 typedef struct ui_manager {
     WINDOW* main_win;
@@ -53,25 +56,29 @@ typedef struct ui_manager {
     char status_message[MAX_MESSAGE_LENGTH];
     char error_message[MAX_MESSAGE_LENGTH];
     char success_message[MAX_MESSAGE_LENGTH];
+    ui_mode_t mode;
 } ui_manager_t;
 
 /* 전역 UI 매니저 */
 extern ui_manager_t* g_ui_manager;
 
 /* UI 초기화 및 정리 함수 */
-int ui_init(void);
+int ui_init(ui_mode_t mode);
 void ui_cleanup(void);
+void ui_handle_resize(void);
+void ui_show_status(const char* msg);
+void ui_show_error(const char* msg);
 void ui_refresh_all_windows(void);
 
 /* 서버 UI 함수 */
-void ui_update_server_status(int session_count, int port);
-void ui_update_server_devices(const device_t* devices, int count, resource_manager_t* resource_manager, reservation_manager_t* reservation_manager);
-
 ui_manager_t* ui_init_manager(void);
 void ui_cleanup_manager(ui_manager_t* manager);
 void ui_set_status_message(ui_manager_t* manager, const char* message);
 
 void ui_show_error_message(const char* message);
 void ui_show_success_message(const char* message);
+
+void client_draw_ui_for_current_state(void);
+void server_draw_ui_for_current_state(void);
 
 #endif /* UI_H */

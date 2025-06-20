@@ -19,17 +19,44 @@ static void ui_set_error_message(ui_manager_t* manager, const char* message);  /
 
 /**
  * @brief UI 시스템을 초기화합니다.
+ * @param mode 초기화할 모드
  * @return 성공 시 0, 실패 시 -1
  */
-int ui_init(void) {
-    setlocale(LC_ALL, ""); // 로케일 설정 (한글 지원)
-    g_ui_manager = ui_init_manager();  // UI 매니저 초기화
-    if (!g_ui_manager) {  // UI 매니저 초기화 실패 시
-        utils_report_error(ERROR_UI_INIT_FAILED, "UI", "UI 매니저 초기화 실패");  // 에러 메시지 출력
-        return -1;  // 에러 코드 반환
+int ui_init(ui_mode_t mode) {
+    setlocale(LC_ALL, "");
+    g_ui_manager = (ui_manager_t*)malloc(sizeof(ui_manager_t));
+    if (!g_ui_manager) return -1;
+    memset(g_ui_manager, 0, sizeof(ui_manager_t));
+    g_ui_manager->mode = mode;
+    initscr();
+    cbreak();
+    noecho();
+    keypad(stdscr, TRUE);
+    curs_set(0);
+    if (has_colors()) {
+        start_color();
+        init_pair(1, COLOR_WHITE, COLOR_BLUE);
+        init_pair(2, COLOR_YELLOW, COLOR_BLACK);
+        init_pair(3, COLOR_RED, COLOR_BLACK);
+        init_pair(4, COLOR_GREEN, COLOR_BLACK);
+        init_pair(5, COLOR_CYAN, COLOR_BLACK);
     }
-    // LOG_INFO("UI", "UI 시스템 초기화 성공");  // 정보 로그 출력
-    return 0;  // 성공 코드 반환
+    int max_y, max_x;
+    getmaxyx(stdscr, max_y, max_x);
+    g_ui_manager->message_win = newwin(1, max_x, 0, 0);
+    g_ui_manager->menu_win = newwin(max_y - 3, max_x, 1, 0);
+    g_ui_manager->status_win = newwin(2, max_x, max_y - 2, 0);
+    box(g_ui_manager->menu_win, 0, 0);
+    box(g_ui_manager->status_win, 0, 0);
+    box(g_ui_manager->message_win, 0, 0);
+    scrollok(g_ui_manager->menu_win, TRUE);
+    keypad(g_ui_manager->menu_win, TRUE);
+    pthread_mutex_init(&g_ui_manager->mutex, NULL);
+    refresh();
+    wrefresh(g_ui_manager->menu_win);
+    wrefresh(g_ui_manager->status_win);
+    wrefresh(g_ui_manager->message_win);
+    return 0;
 }
 
 /**
@@ -61,95 +88,6 @@ void ui_show_success_message(const char* message) {
     if (!g_ui_manager || !message) return;  // 유효성 검사
     ui_set_status_message(g_ui_manager, message);  // 상태 메시지 설정
     ui_refresh_all_windows();  // 모든 윈도우 새로고침
-}
-
-/**
- * @brief 서버 상태 정보를 화면에 업데이트합니다.
- * @param session_count 활성 세션 수
- * @param port 서버 포트 번호
- */
-void ui_update_server_status(int session_count, int port) {
-    if (!g_ui_manager) return;  // UI 매니저가 NULL이면 함수 종료
-    char status_msg[MAX_MESSAGE_LENGTH];  // 상태 메시지 버퍼
-    snprintf(status_msg, sizeof(status_msg), "Server Running on Port: %d | Active Sessions: %d", port, session_count);  // 상태 메시지 생성
-    ui_set_status_message(g_ui_manager, status_msg);  // 상태 메시지 설정
-}
-
-/**
- * @brief 서버의 장비 목록을 화면에 업데이트합니다.
- * @param devices 장비 배열
- * @param count 장비 개수
- * @param resource_manager 리소스 매니저 (예약 정보 조회용)
- * @param reservation_manager 예약 매니저 (예약 정보 조회용)
- */
-void ui_update_server_devices(const device_t* devices, int count, resource_manager_t* resource_manager, reservation_manager_t* reservation_manager){
-    if (!g_ui_manager) {
-        utils_report_error(ERROR_UI_INIT_FAILED, "UI", "ui_update_server_devices: UI 매니저가 초기화되지 않음");
-        return;
-    }
-
-    // LOG_INFO("UI", "서버 장비 목록 업데이트 시작: 장비수=%d", count);
-
-    pthread_mutex_lock(&g_ui_manager->mutex);
-    
-    // 장비 목록 윈도우 지우기
-    werase(g_ui_manager->menu_win);
-    
-    // 제목 표시
-    mvwprintw(g_ui_manager->menu_win, 0, 2, " 장비 목록 ");
-    
-    if (count <= 0) {
-        mvwprintw(g_ui_manager->menu_win, 2, 2, "등록된 장비가 없습니다.");
-        // LOG_WARNING("UI", "등록된 장비가 없음");
-    } else {
-        // LOG_INFO("UI", "장비 목록 표시 시작: %d개 장비", count);
-        
-        // 헤더 표시
-        mvwprintw(g_ui_manager->menu_win, 1, 2, "%-10s | %-25s | %-15s | %-20s | %-15s", 
-                  "ID", "이름", "타입", "상태", "예약자");
-        
-        // 장비 목록 표시
-        for (int i = 0; i < count && i < LINES - 10; i++) {
-            const device_t* device = &devices[i];
-            
-            // 예약 정보 조회
-            char reservation_info[32] = "-";
-            if (device->status == DEVICE_RESERVED) {
-                reservation_t* res = reservation_get_active_for_device(reservation_manager, resource_manager, device->id);
-                if (res) {
-                    time_t current_time = time(NULL);
-                    long remaining_sec = (res->end_time > current_time) ? (res->end_time - current_time) : 0;
-                    snprintf(reservation_info, sizeof(reservation_info), "%s (%lds)", res->username, remaining_sec);
-                    // LOG_INFO("UI", "장비 %s 예약 정보: 사용자=%s, 남은시간=%ld초",
-                    //          device->id, res->username, remaining_sec);
-                } else {
-                    // LOG_WARNING("UI", "장비 %s가 예약 상태이지만 예약 정보를 찾을 수 없음", device->id);
-                }
-            }
-            
-            // 상태 문자열 가져오기
-            const char* status_str = message_get_device_status_string(device->status);
-            
-            // 장비 정보 표시
-            mvwprintw(g_ui_manager->menu_win, i + 2, 2, "%-10s | %-25s | %-15s | %-20s | %-15s",
-                      device->id, device->name, device->type, status_str, reservation_info);
-            
-            // LOG_INFO("UI", "장비 %d 표시: ID=%s, 이름=%s, 타입=%s, 상태=%s, 예약정보=%s",
-            //          i, device->id, device->name, device->type, status_str, reservation_info);
-        }
-        
-        // LOG_INFO("UI", "장비 목록 표시 완료: %d개 장비", count);
-    }
-    
-    // 윈도우 테두리 그리기
-    box(g_ui_manager->menu_win, 0, 0);
-    
-    // 윈도우 새로고침
-    wrefresh(g_ui_manager->menu_win);
-    
-    pthread_mutex_unlock(&g_ui_manager->mutex);
-    
-    // LOG_INFO("UI", "서버 장비 목록 업데이트 완료");
 }
 
 /**
@@ -282,4 +220,48 @@ void ui_set_error_message(ui_manager_t* manager, const char* message) {
     wattron(manager->status_win, COLOR_PAIR(5)); // 빨간색 배경
     mvwprintw(manager->status_win, 1, 2, "ERROR: %s", message);  // 에러 메시지 출력
     wattroff(manager->status_win, COLOR_PAIR(5));  // 색상 해제
+}
+
+void ui_handle_resize(void) {
+    if (!g_ui_manager) return;
+    delwin(g_ui_manager->menu_win);
+    delwin(g_ui_manager->status_win);
+    delwin(g_ui_manager->message_win);
+    endwin();
+    refresh();
+    clear();
+    int max_y, max_x;
+    getmaxyx(stdscr, max_y, max_x);
+    g_ui_manager->message_win = newwin(1, max_x, 0, 0);
+    g_ui_manager->menu_win = newwin(max_y - 3, max_x, 1, 0);
+    g_ui_manager->status_win = newwin(2, max_x, max_y - 2, 0);
+    box(g_ui_manager->menu_win, 0, 0);
+    box(g_ui_manager->status_win, 0, 0);
+    box(g_ui_manager->message_win, 0, 0);
+    scrollok(g_ui_manager->menu_win, TRUE);
+    keypad(g_ui_manager->menu_win, TRUE);
+    refresh();
+    wrefresh(g_ui_manager->menu_win);
+    wrefresh(g_ui_manager->status_win);
+    wrefresh(g_ui_manager->message_win);
+}
+
+void ui_show_status(const char* msg) {
+    if (!g_ui_manager || !msg) return;
+    werase(g_ui_manager->status_win);
+    box(g_ui_manager->status_win, 0, 0);
+    wattron(g_ui_manager->status_win, COLOR_PAIR(4));
+    mvwprintw(g_ui_manager->status_win, 1, 2, "STATUS: %s", msg);
+    wattroff(g_ui_manager->status_win, COLOR_PAIR(4));
+    wrefresh(g_ui_manager->status_win);
+}
+
+void ui_show_error(const char* msg) {
+    if (!g_ui_manager || !msg) return;
+    werase(g_ui_manager->status_win);
+    box(g_ui_manager->status_win, 0, 0);
+    wattron(g_ui_manager->status_win, COLOR_PAIR(3));
+    mvwprintw(g_ui_manager->status_win, 1, 2, "ERROR: %s", msg);
+    wattroff(g_ui_manager->status_win, COLOR_PAIR(3));
+    wrefresh(g_ui_manager->status_win);
 }

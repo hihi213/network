@@ -38,7 +38,7 @@ static void client_cleanup_resources(void);
 static int client_connect_to_server(const char* server_ip, int port);
 static void client_handle_server_message(const message_t* message);
 static void client_login_submitted(const char* username, const char* password);
-static void client_draw_ui_for_current_state(void);
+
 static void client_draw_main_menu(void);
 static void client_draw_logged_in_menu(void);
 static void client_draw_device_list(void);
@@ -52,6 +52,36 @@ static void client_handle_input_login_input(int ch);
 static device_status_t client_string_to_device_status(const char* status_str);
 static void client_process_and_store_device_list(const message_t* message);
 static void client_draw_message_win(const char* msg);
+
+// 한글/영문 혼용 문자열의 실제 표시 폭 계산
+static int get_display_width(const char* str) {
+    int width = 0;
+    while (*str) {
+        unsigned char c = (unsigned char)*str;
+        if (c < 0x80) {
+            width += 1; // ASCII
+            str++;
+        } else if ((c & 0xE0) == 0xC0) {
+            width += 2; // 2바이트(한글 등)
+            str += 2;
+        } else if ((c & 0xF0) == 0xE0) {
+            width += 2; // 3바이트(한글 등)
+            str += 3;
+        } else {
+            str++;
+        }
+    }
+    return width;
+}
+
+// 지정한 폭에 맞춰 문자열을 출력하고, 남는 공간은 공백으로 채움
+static void print_fixed_width(WINDOW* win, int y, int x, const char* str, int width) {
+    mvwprintw(win, y, x, "%s", str);
+    int disp = get_display_width(str);
+    for (int i = disp; i < width; ++i) {
+        mvwaddch(win, y, x + i, ' ');
+    }
+}
 
 // 전역 변수
 extern ui_manager_t* g_ui_manager;
@@ -87,7 +117,7 @@ int main(int argc, char* argv[]) {
         return 1; 
     }
     signal(SIGINT, client_signal_handler); signal(SIGTERM, client_signal_handler);
-    if (ui_init() < 0 || network_init_ssl_manager(&ssl_manager, false, NULL, NULL) < 0) { client_cleanup_resources(); return 1; }
+    if (ui_init(UI_CLIENT) < 0 || network_init_ssl_manager(&ssl_manager, false, NULL, NULL) < 0) { client_cleanup_resources(); return 1; }
     if (client_connect_to_server(argv[1], atoi(argv[2])) < 0) { client_cleanup_resources(); return 1; }
 
     while (running) {
@@ -128,38 +158,36 @@ int main(int argc, char* argv[]) {
     return 0;
 }
 
-static void client_draw_ui_for_current_state() {
+void client_draw_ui_for_current_state(void) {
     pthread_mutex_lock(&g_ui_manager->mutex);
     werase(g_ui_manager->menu_win);
-    curs_set(0); // 기본적으로 커서 숨김
-
+    curs_set(0);
     switch (current_state) {
-        case APP_STATE_LOGIN: 
+        case APP_STATE_LOGIN:
             client_draw_login_input_ui();
-            curs_set(1); // 로그인 화면에서 커서 보임
+            curs_set(1);
             break;
-        case APP_STATE_MAIN_MENU: 
-            client_draw_main_menu(); 
+        case APP_STATE_MAIN_MENU:
+            client_draw_main_menu();
             break;
-        case APP_STATE_LOGGED_IN_MENU: 
-            client_draw_logged_in_menu(); 
+        case APP_STATE_LOGGED_IN_MENU:
+            client_draw_logged_in_menu();
             break;
-        case APP_STATE_DEVICE_LIST: 
-            client_draw_device_list(); 
+        case APP_STATE_DEVICE_LIST:
+            client_draw_device_list();
             break;
         case APP_STATE_RESERVATION_TIME:
             client_draw_device_list();
             int menu_win_height, menu_win_width;
             getmaxyx(g_ui_manager->menu_win, menu_win_height, menu_win_width);
-            // 안내 메시지 message_win에 출력
             client_draw_message_win("[숫자] 시간 입력  [Enter] 예약  [ESC] 취소");
             mvwprintw(g_ui_manager->menu_win, LINES - 5, 2, "예약할 시간(초) 입력 (1~86400, ESC:취소): %s", reservation_input_buffer);
             char help_msg[128];
             snprintf(help_msg, sizeof(help_msg), "도움말: 1 ~ 86400 사이의 예약 시간(초)을 입력하고 Enter를 누르세요.");
             mvwprintw(g_ui_manager->menu_win, menu_win_height - 2, 2, "%-s", help_msg);
-            curs_set(1); // 예약 시간 입력 시 커서 보임
+            curs_set(1);
             break;
-        case APP_STATE_EXIT: 
+        case APP_STATE_EXIT:
             break;
         default:
             break;
@@ -232,7 +260,6 @@ static void client_draw_logged_in_menu() {
 static void client_draw_device_list() {
     int menu_win_height, menu_win_width;
     getmaxyx(g_ui_manager->menu_win, menu_win_height, menu_win_width);
-    // 안내 메시지 message_win에 출력
     client_draw_message_win("[↑↓] 이동  [Enter] 예약/선택  [C] 예약취소  [ESC] 뒤로");
 
     if (!device_list || device_count == 0) {
@@ -241,43 +268,45 @@ static void client_draw_device_list() {
     }
 
     time_t current_time = time(NULL);
-    
     const int visible_items = menu_win_height - 5;
+
+    // 각 열의 시작 x좌표와 폭(한글 포함)
+    int col_x[6] = {2, 12, 38, 56, 70, 84};
+    int col_w[6] = {8, 24, 15, 12, 12, 10};
+
+    // 헤더
+    print_fixed_width(g_ui_manager->menu_win, 1, col_x[0], "ID", col_w[0]);
+    print_fixed_width(g_ui_manager->menu_win, 1, col_x[1], "이름", col_w[1]);
+    print_fixed_width(g_ui_manager->menu_win, 1, col_x[2], "타입", col_w[2]);
+    print_fixed_width(g_ui_manager->menu_win, 1, col_x[3], "상태", col_w[3]);
+    print_fixed_width(g_ui_manager->menu_win, 1, col_x[4], "예약자", col_w[4]);
 
     for (int i = 0; i < visible_items; i++) {
         int device_index = scroll_offset + i;
         if (device_index >= device_count) break;
-        
         device_t* current_device = &device_list[device_index];
-
         if (current_device->status == DEVICE_RESERVED && current_device->reservation_end_time > 0) {
             if (current_time >= current_device->reservation_end_time) {
                 current_device->status = DEVICE_AVAILABLE;
                 current_device->reserved_by[0] = '\0';
             }
         }
-        
-        char display_str[256], status_str[128];
-
+        char status_str[32];
         if (current_device->status == DEVICE_RESERVED) {
             long remaining_sec = (current_device->reservation_end_time > current_time) ? (current_device->reservation_end_time - current_time) : 0;
-            snprintf(status_str, sizeof(status_str), "reserved by %s (%lds left)", 
-                     current_device->reserved_by, remaining_sec);
+            snprintf(status_str, sizeof(status_str), "reserved (%lds)", remaining_sec);
         } else {
             strncpy(status_str, message_get_device_status_string(current_device->status), sizeof(status_str) - 1);
             status_str[sizeof(status_str) - 1] = '\0';
         }
-        
-        snprintf(display_str, sizeof(display_str), "%-10s | %-25s | %-15s | %s",
-                 current_device->id, current_device->name, current_device->type, status_str);
-                 
-        if (device_index == menu_highlight) {
-            wattron(g_ui_manager->menu_win, A_REVERSE);
-        }
-        mvwprintw(g_ui_manager->menu_win, i + 2, 2, " > %s", display_str);
-        if (device_index == menu_highlight) {
-            wattroff(g_ui_manager->menu_win, A_REVERSE);
-        }
+        int row = i + 2;
+        if (device_index == menu_highlight) wattron(g_ui_manager->menu_win, A_REVERSE);
+        print_fixed_width(g_ui_manager->menu_win, row, col_x[0], current_device->id, col_w[0]);
+        print_fixed_width(g_ui_manager->menu_win, row, col_x[1], current_device->name, col_w[1]);
+        print_fixed_width(g_ui_manager->menu_win, row, col_x[2], current_device->type, col_w[2]);
+        print_fixed_width(g_ui_manager->menu_win, row, col_x[3], status_str, col_w[3]);
+        print_fixed_width(g_ui_manager->menu_win, row, col_x[4], current_device->reserved_by, col_w[4]);
+        if (device_index == menu_highlight) wattroff(g_ui_manager->menu_win, A_REVERSE);
     }
 
     if (device_count > 0 && menu_highlight < device_count) {
