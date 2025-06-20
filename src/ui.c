@@ -204,8 +204,8 @@ ui_manager_t* ui_init_manager(void) {
     }
 
     // 윈도우 생성
-    manager->menu_win = newwin(max_y - 2, max_x, 1, 0);
-    manager->status_win = newwin(1, max_x, max_y - 1, 0);
+    manager->menu_win = newwin(max_y - 3, max_x, 1, 0);
+    manager->status_win = newwin(2, max_x, max_y - 2, 0);
     manager->message_win = newwin(1, max_x, 0, 0);
 
     if (!manager->menu_win || !manager->status_win || !manager->message_win) {

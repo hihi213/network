@@ -565,9 +565,15 @@ static void client_handle_server_message(const message_t* message) {
     
     switch (message->type) {
         case MSG_ERROR:
+            LOG_WARNING("Client", "서버로부터 에러 메시지 수신: %s", message->data);
+            if (strcmp(message->data, "이미 로그인된 사용자입니다.") == 0) {
+                LOG_INFO("Client", "이미 로그인된 사용자로 로그인 시도: UI 에러 메시지 표시 및 입력 필드 초기화");
+            }
             ui_show_error_message(message->data);
-            // [수정] 로그인 시도 중에 발생한 에러라면, 다시 로그인 입력 화면으로 돌려보냄
-            if (current_state == APP_STATE_LOGGED_IN_MENU || current_state == APP_STATE_DEVICE_LIST) {
+            ui_refresh_all_windows(); // 강제 갱신
+            napms(1200); // 1.2초간 메시지 노출
+            // 로그인 관련 에러라면 항상 로그인 화면 상태/입력 초기화
+            if (current_state == APP_STATE_LOGGED_IN_MENU || current_state == APP_STATE_DEVICE_LIST || current_state == APP_STATE_LOGIN) {
                 current_state = APP_STATE_LOGIN;
                 menu_highlight = 0;
                 active_login_field = LOGIN_FIELD_USERNAME;
@@ -580,6 +586,7 @@ static void client_handle_server_message(const message_t* message) {
         
         case MSG_LOGIN:
             if (strcmp(message->data, "success") == 0) {
+                LOG_INFO("Client", "로그인 성공 응답 수신");
                 // 로그인 성공 시 사용자 정보 설정
                 strncpy(client_session.username, login_username_buffer, MAX_USERNAME_LENGTH - 1);
                 client_session.username[MAX_USERNAME_LENGTH - 1] = '\0';
@@ -588,6 +595,8 @@ static void client_handle_server_message(const message_t* message) {
                 menu_highlight = 0;
                 ui_show_success_message("로그인 성공!");
             } else {
+                LOG_WARNING("Client", "로그인 실패 응답 수신: %s", message->data);
+                ui_show_error_message(message->data);
                 // 로그인 실패 시 로그인 화면 상태를 유지합니다.
                 LOG_INFO("Client", "로그인 실패로 인해 로그인 화면 상태 유지 (APP_STATE_LOGIN)");
             }
