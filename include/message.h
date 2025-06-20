@@ -43,23 +43,18 @@ typedef struct {
 } MessageBuffer;
 
 /* 메시지 생성/소멸/파싱 함수 */
-Message* create_message(MessageType type, const char* data);
-int parse_message(const char* buffer, size_t len, Message* message);
-int serialize_message(const Message* message, char* buffer, size_t buffer_size);
-const char* get_message_type_string(MessageType type);
-const char* get_device_status_string(DeviceStatus status);
+Message* message_create(MessageType type, const char* data);
+const char* message_get_type_string(MessageType type);
+const char* message_get_device_status_string(DeviceStatus status);
 
 /* 메시지 생성 헬퍼 함수 */
-Message *create_status_response_message(const Device *devices, int device_count, ResourceManager* resource_manager, ReservationManager* reservation_manager);
-Message* create_error_message(const char* error_msg);
-Message *create_reservation_message(const char *device_id, const char* duration_str);
-Message* receive_message(SSL* ssl);
-Message* create_login_message(const char* username, const char* password);
-/* 메시지 유효성 검사 함수 */
-bool is_valid_message(const Message* message);
-bool validate_message_args(const Message* message, int expected_args);
+Message *message_create_status_response(const Device *devices, int device_count, ResourceManager* resource_manager, ReservationManager* reservation_manager);
+Message* message_create_error(const char* error_msg);
+Message *message_create_reservation(const char *device_id, const char* duration_str);
+Message* message_receive(SSL* ssl);
+Message* message_create_login(const char* username, const char* password);
 /* DeviceStatus를 문자열로 변환하는 함수 */
-const char* get_device_status_string(DeviceStatus status);
-bool fill_status_response_args(Message* msg, const Device* devices, int count, ResourceManager* rm, ReservationManager* rvm) ;
-void destroy_message(Message *msg);
+const char* message_get_device_status_string(DeviceStatus status);
+bool message_fill_status_response_args(Message* msg, const Device* devices, int count, ResourceManager* rm, ReservationManager* rvm) ;
+void message_destroy(Message *msg);
 #endif /* MESSAGE_H */

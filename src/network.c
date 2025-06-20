@@ -73,7 +73,7 @@ int network_send_message(SSL* ssl, const Message* message) {
         if (network_send(ssl, message->data, data_len) != (ssize_t)data_len) return -1;
     }
 
-    // LOG_INFO("Network", "메시지 전송 완료: 타입=%s", get_message_type_string(message->type));
+    // LOG_INFO("Network", "메시지 전송 완료: 타입=%s", message_get_type_string(message->type));
     return 0;
 }
 

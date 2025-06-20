@@ -128,7 +128,7 @@ void update_server_devices(const Device* devices, int count, ResourceManager* re
             }
             
             // 상태 문자열 가져오기
-            const char* status_str = get_device_status_string(device->status);
+            const char* status_str = message_get_device_status_string(device->status);
             
             // 장비 정보 표시
             mvwprintw(global_ui_manager->menu_win, i + 2, 2, "%-10s | %-25s | %-15s | %-20s | %-15s",

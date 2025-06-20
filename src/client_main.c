@@ -112,10 +112,10 @@ int main(int argc, char* argv[]) {
         if (fds[1].revents & POLLIN) { running = false; }
 
         if (fds[0].revents & POLLIN) {
-            Message* msg = receive_message(client_session.ssl);
+            Message* msg = message_receive(client_session.ssl);
             if (msg) {
                 handle_server_message(msg);
-                destroy_message(msg);
+                message_destroy(msg);
                
             } else {
                show_error_message("서버와의 연결이 끊어졌습니다. 종료합니다.");
@@ -264,7 +264,7 @@ static void draw_device_list() {
             snprintf(status_str, sizeof(status_str), "reserved by %s (%lds left)", 
                      current_device->reserved_by, remaining_sec);
         } else {
-            strncpy(status_str, get_device_status_string(current_device->status), sizeof(status_str) - 1);
+            strncpy(status_str, message_get_device_status_string(current_device->status), sizeof(status_str) - 1);
             status_str[sizeof(status_str) - 1] = '\0';
         }
         
@@ -418,10 +418,10 @@ static void handle_input_logged_in_menu(int ch) {
         case 10: // Enter 키
             if (menu_highlight == 0) { // "장비 목록" 선택
                 LOG_INFO("Client", "장비 목록 요청 전송");
-                Message* msg = create_message(MSG_STATUS_REQUEST, NULL);
+                Message* msg = message_create(MSG_STATUS_REQUEST, NULL);
                 if (msg) {
                     if(network_send_message(client_session.ssl, msg) < 0) running = false;
-                    destroy_message(msg);
+                    message_destroy(msg);
                 }
             } else { // "로그아웃" 선택
                 LOG_INFO("Client", "로그아웃 처리");
@@ -480,12 +480,12 @@ static void handle_input_device_list(int ch) {
                 Device* dev = &device_list[menu_highlight];
                 if (dev->status == DEVICE_RESERVED && strcmp(dev->reserved_by, client_session.username) == 0) {
                     show_success_message("예약 취소 요청 중...");
-                    Message* msg = create_message(MSG_CANCEL_REQUEST, NULL);
+                    Message* msg = message_create(MSG_CANCEL_REQUEST, NULL);
                     if (msg) {
                         msg->args[0] = strdup(dev->id);
                         msg->arg_count = 1;
                         if(network_send_message(client_session.ssl, msg) < 0) running = false;
-                        destroy_message(msg);
+                        message_destroy(msg);
                     }
                 }
             }
@@ -510,10 +510,10 @@ static void handle_input_reservation_time(int ch) {
         const long MAX_RESERVATION_SECONDS = 86400;
 
         if (duration_sec > 0 && duration_sec <= MAX_RESERVATION_SECONDS) {
-            Message* msg = create_reservation_message(device_list[reservation_target_device_index].id, reservation_input_buffer);
+            Message* msg = message_create_reservation(device_list[reservation_target_device_index].id, reservation_input_buffer);
             if (msg) {
                 if(network_send_message(client_session.ssl, msg) < 0) running = false;
-                 destroy_message(msg);
+                message_destroy(msg);
             }
         } else {
             show_error_message("유효하지 않은 시간입니다. (1~86400초)");
@@ -617,12 +617,12 @@ static void process_and_store_device_list(const Message* message) {
 }
 
 static bool handle_login(const char* username, const char* password) {
-    Message* msg = create_login_message(username, password);
+    Message* msg = message_create_login(username, password);
     if (!msg) { show_error_message("메시지 생성 실패"); return false; }
     if (network_send_message(client_session.ssl, msg) < 0) {
         running = false;
     }
-    destroy_message(msg);
+    message_destroy(msg);
     return true;
 }
 
@@ -630,7 +630,7 @@ static void on_login_submitted(const char* username, const char* password) {
     LOG_INFO("Client", "로그인 제출 처리 시작: 사용자='%s'", username);
     
     // 1) 로그인 메시지 생성 및 전송
-    Message* login_msg = create_login_message(username, password);
+    Message* login_msg = message_create_login(username, password);
     if (!login_msg) {
         LOG_WARNING("Client", "로그인 메시지 생성 실패");
         show_error_message("로그인 메시지 생성 실패");
@@ -641,12 +641,12 @@ static void on_login_submitted(const char* username, const char* password) {
     if (network_send_message(client_session.ssl, login_msg) < 0) {
         LOG_WARNING("Client", "로그인 요청 전송 실패");
         show_error_message("로그인 요청 전송 실패");
-        destroy_message(login_msg);
+        message_destroy(login_msg);
         return;
     }
     
     LOG_INFO("Client", "로그인 요청 전송 완료, 서버 응답 대기 중...");
-    destroy_message(login_msg);
+    message_destroy(login_msg);
     
     // 3) 서버 응답은 handle_server_message에서 처리됨
     // 로그인 성공 시: current_state = APP_STATE_LOGGED_IN_MENU
@@ -677,13 +677,14 @@ static int connect_to_server(const char* server_ip, int port) {
     client_session.state = SESSION_CONNECTING;
 
     show_success_message("서버에 연결되었습니다. 로그인 정보를 기다립니다...");
-    Message* msg = create_message(MSG_LOGIN, "success");
+    // 연결 확인을 위한 ping 메시지 전송
+    Message* msg = message_create(MSG_PING, NULL);
     if(msg) {
         if(network_send_message(client_session.ssl, msg) < 0) {
-            destroy_message(msg);
+            message_destroy(msg);
             return -1;
         }
-        destroy_message(msg);
+        message_destroy(msg);
     }
     
     return 0;

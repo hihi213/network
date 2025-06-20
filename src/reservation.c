@@ -72,7 +72,7 @@ Reservation* get_active_reservation_for_device(ReservationManager* resv_manager,
     }
 
     // LOG_INFO("Reservation", "장비 정보 조회: ID=%s, 상태=%s, 활성예약ID=%u", 
-    //          device_id, get_device_status_string(device->status), device->active_reservation_id);
+    //          device_id, message_get_device_status_string(device->status), device->active_reservation_id);
 
     if (device->active_reservation_id == 0) {
         // LOG_INFO("Reservation", "장비에 활성 예약이 없음: ID=%s", device_id);

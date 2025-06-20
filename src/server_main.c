@@ -96,7 +96,7 @@ void cleanup_client_queue(Client* client) {
         MsgNode* node = client->queues[p];
         while (node) {
             MsgNode* next = node->next;
-            destroy_message(node->msg);
+            message_destroy(node->msg);
             free(node);
             node = next;
         }
@@ -171,26 +171,27 @@ static void broadcast_status_update(void) {
     Device devices[MAX_DEVICES];
     int count = get_device_list(resource_manager, devices, MAX_DEVICES);
     if (count < 0) return;
-    Message* response = create_message(MSG_STATUS_UPDATE, NULL);
-    if (!response) return;
-    if (!fill_status_response_args(response, devices, count, resource_manager, reservation_manager)) {
-        destroy_message(response);
-        return;
-    }
-    pthread_mutex_lock(&client_list_mutex);
-    for (int i = 0; i < num_clients; i++) {
-        if (client_list[i] && client_list[i]->state == SESSION_LOGGED_IN) {
-            network_send_message(client_list[i]->ssl, response);
+    Message* response = message_create(MSG_STATUS_UPDATE, NULL);
+    if (response) {
+        if (!message_fill_status_response_args(response, devices, count, resource_manager, reservation_manager)) {
+            message_destroy(response);
+            return;
         }
+        pthread_mutex_lock(&client_list_mutex);
+        for (int i = 0; i < num_clients; i++) {
+            if (client_list[i] && client_list[i]->state == SESSION_LOGGED_IN) {
+                network_send_message(client_list[i]->ssl, response);
+            }
+        }
+        pthread_mutex_unlock(&client_list_mutex);
+        message_destroy(response);
     }
-    pthread_mutex_unlock(&client_list_mutex);
-    destroy_message(response);
 }
 
 static void client_message_loop(Client* client) {
     while (running) {
         // 1. 메시지 수신 후 큐에 삽입
-        Message* msg = receive_message(client->ssl);
+        Message* msg = message_receive(client->ssl);
         if (msg) {
             enqueue_message(client, msg);
             client->last_activity = time(NULL);
@@ -203,7 +204,7 @@ static void client_message_loop(Client* client) {
         Message* to_process;
         while ((to_process = dequeue_message(client)) != NULL) {
             handle_client_message(client, to_process);
-            destroy_message(to_process);
+            message_destroy(to_process);
         }
     }
 }
@@ -267,16 +268,18 @@ static int process_device_reservation(Client* client, const char* device_id, int
         return send_error_response(client->ssl, "서버 내부 오류: 예약 상태 동기화 실패");
     }
     broadcast_status_update();
-Message* response = create_message(MSG_RESERVE_RESPONSE, "success");
+    Message* response = message_create(MSG_RESERVE_RESPONSE, "success");
     if (response) {
         Device updated_device;
         Device* devices_ptr = (Device*)utils_hashtable_get(resource_manager->devices, device_id);
         if (devices_ptr) {
             memcpy(&updated_device, devices_ptr, sizeof(Device));
-            fill_status_response_args(response, &updated_device, 1, resource_manager, reservation_manager);
+            response->args[0] = strdup(device_id);
+            response->arg_count = 1;
+            message_fill_status_response_args(response, &updated_device, 1, resource_manager, reservation_manager);
         }
         network_send_message(client->ssl, response);
-        destroy_message(response);
+        message_destroy(response);
     }
     return 0;
 }
@@ -345,10 +348,11 @@ static int handle_status_request(Client* client, const Message* message) {
     Device devices[MAX_DEVICES];
     int count = get_device_list(resource_manager, devices, MAX_DEVICES);
     if (count < 0) return send_error_response(client->ssl, "서버에서 장비 목록을 가져오는 데 실패했습니다.");
-    Message* response = create_status_response_message(devices, count, resource_manager, reservation_manager);
-    if (!response) return send_error_response(client->ssl, "응답 메시지를 생성하는 데 실패했습니다.");
-    network_send_message(client->ssl, response);
-    destroy_message(response);
+    Message* response = message_create_status_response(devices, count, resource_manager, reservation_manager);
+    if (response) {
+        network_send_message(client->ssl, response);
+        message_destroy(response);
+    }
     return 0;
 }
 
@@ -494,7 +498,7 @@ static void cleanup_server(void) {
 static int send_generic_response(Client* client, MessageType type, const char* data, int arg_count, ...) {
     if (!client || !client->ssl) return -1;
 
-    Message* response = create_message(type, data);
+    Message* response = message_create(type, data);
     if (!response) {
         // LOG_ERROR("Response", "응답 메시지 생성 실패 (type: %d)", type);
         return -1;
@@ -509,7 +513,7 @@ static int send_generic_response(Client* client, MessageType type, const char* d
             if (!response->args[i]) {
                 // LOG_ERROR("Response", "응답 인자 메모리 복사 실패");
                 response->arg_count = i; 
-                destroy_message(response);
+                message_destroy(response);
                 va_end(args);
                 return -1;
             }
@@ -519,7 +523,7 @@ static int send_generic_response(Client* client, MessageType type, const char* d
     response->arg_count = arg_count;
 
     int ret = network_send_message(client->ssl, response);
-    destroy_message(response);
+    message_destroy(response);
 
     return ret;
 }
@@ -532,10 +536,10 @@ static int send_generic_response(Client* client, MessageType type, const char* d
  */
 static int send_error_response(SSL* ssl, const char* error_message) {
     if (!ssl || !error_message) return -1;
-    Message* response = create_error_message(error_message);
+    Message* response = message_create_error(error_message);
     if (!response) return -1;
     int ret = network_send_message(ssl, response);
-    destroy_message(response);
+    message_destroy(response);
     return ret;
 }
 

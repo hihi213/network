@@ -217,7 +217,7 @@ static void copy_device_callback(const char* key, void* value, void* user_data) 
         
         // LOG_INFO("Resource", "장비 복사 중: %d번째, ID=%s, 이름=%s, 타입=%s, 상태=%s", 
         //          data->current_count, source_device->id, source_device->name, 
-        //          source_device->type, get_device_status_string(source_device->status));
+        //          source_device->type, message_get_device_status_string(source_device->status));
         
         memcpy(dest_device, source_device, sizeof(Device));  // 장치 정보 복사
         data->current_count++;  // 현재 개수 증가
