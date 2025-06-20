@@ -16,7 +16,7 @@ error handling
  * @param error_code 에러 코드
  * @return 에러 메시지 문자열
  */
-static const char* get_error_message(ErrorCode error_code) {
+static const char* utils_get_error_message(ErrorCode error_code) {
     switch (error_code) {
         // 시스템 공통 에러
         case ERROR_NONE: return "성공";
@@ -110,10 +110,10 @@ static const char* get_error_message(ErrorCode error_code) {
  * @param additional_info 추가 정보 (가변 인자)
  * @param ... 가변 인자
  */
-void error_report(ErrorCode error_code, const char* module, const char* additional_info, ...) {
+void utils_report_error(ErrorCode error_code, const char* module, const char* additional_info, ...) {
     if (error_code == ERROR_NONE) return; // 성공인 경우 아무것도 하지 않음
 
-    const char* error_msg = get_error_message(error_code);
+    const char* error_msg = utils_get_error_message(error_code);
     char formatted_message[512];
     
     if (additional_info && strlen(additional_info) > 0) {
@@ -150,10 +150,10 @@ performance
  * @brief 현재 시간을 마이크로초 단위로 반환합니다.
  * @return 마이크로초 단위의 현재 시간
  */
-uint64_t get_current_time(void) {
+uint64_t utils_get_current_time(void) {
     struct timeval tv;  // 시간 구조체 선언
     if (gettimeofday(&tv, NULL) != 0) {  // 현재 시간 가져오기 실패 시
-        error_report(ERROR_PERFORMANCE_TIME_FAILED, "Performance", "gettimeofday 실패");  // 에러 로그 출력
+        utils_report_error(ERROR_PERFORMANCE_TIME_FAILED, "Performance", "gettimeofday 실패");  // 에러 로그 출력
         return 0;  // 0 반환
     }
     return (uint64_t)tv.tv_sec * 1000000ULL + (uint64_t)tv.tv_usec;  // 마이크로초 단위로 변환하여 반환
@@ -164,7 +164,7 @@ uint64_t get_current_time(void) {
  * @param stats 원본 성능 통계 포인터
  * @param output 복사할 대상 포인터
  */
-void get_performance_stats(PerformanceStats* stats, PerformanceStats* output) {
+void utils_get_performance_stats(PerformanceStats* stats, PerformanceStats* output) {
     if (!stats || !output) return;  // 유효성 검사
 
     pthread_mutex_lock(&stats->mutex);  // 뮤텍스 잠금
@@ -176,9 +176,9 @@ void get_performance_stats(PerformanceStats* stats, PerformanceStats* output) {
  * @brief 성능 통계를 콘솔에 출력합니다.
  * @param stats 출력할 성능 통계 포인터
  */
-void print_performance_stats(PerformanceStats* stats) {
+void utils_print_performance_stats(PerformanceStats* stats) {
     if (!stats) {  // 통계 포인터가 NULL인 경우
-        error_report(ERROR_PERFORMANCE_STATS_INVALID, "Performance", "잘못된 성능 통계 포인터");  // 에러 로그 출력
+        utils_report_error(ERROR_PERFORMANCE_STATS_INVALID, "Performance", "잘못된 성능 통계 포인터");  // 에러 로그 출력
         return;  // 함수 종료
     }
 
@@ -209,15 +209,15 @@ static LogLevel current_log_level = LOG_INFO; // 기본 로그 레벨은 INFO
 static pthread_mutex_t log_mutex;  // 로그 뮤텍스
 
 /* 정적 함수 선언 */
-static void write_to_log_file(LogLevel level, const char* category, const char* message);  // 로그 파일에 쓰기 함수
-static const char* get_log_level_string_internal(LogLevel level);  // 로그 레벨 문자열 변환 함수
+static void utils_write_to_log_file(LogLevel level, const char* category, const char* message);  // 로그 파일에 쓰기 함수
+static const char* utils_get_log_level_string(LogLevel level);  // 로그 레벨 문자열 변환 함수
 
 /**
  * @brief 로거를 초기화합니다.
  * @param filename 로그 파일 경로
  * @return 성공 시 0, 실패 시 -1
  */
-int init_logger(const char* filename) {
+int utils_init_logger(const char* filename) {
     if (log_file != NULL) {  // 이미 초기화된 경우
         return -1; // 이미 초기화됨
     }
@@ -235,7 +235,7 @@ int init_logger(const char* filename) {
 /**
  * @brief 로거를 정리합니다.
  */
-void cleanup_logger(void) {
+void utils_cleanup_logger(void) {
     if (log_file != NULL) {  // 로그 파일이 열려있는 경우
         // LOG_INFO("System", "로거 정리 중...");  // 정리 시작 로그
         fclose(log_file);  // 로그 파일 닫기
@@ -251,7 +251,7 @@ void cleanup_logger(void) {
  * @param format 포맷 문자열
  * @param ... 가변 인자
  */
-void log_message(LogLevel level, const char* category, const char* format, ...) {
+void utils_log_message(LogLevel level, const char* category, const char* format, ...) {
     if (level > current_log_level) {  // 로그 레벨이 낮으면 출력하지 않음
         return; // 로그 레벨이 낮으면 출력하지 않음
     }
@@ -262,7 +262,7 @@ void log_message(LogLevel level, const char* category, const char* format, ...) 
     vsnprintf(message_buffer, sizeof(message_buffer), format, args);  // 포맷된 메시지 생성
     va_end(args);  // 가변 인자 종료
 
-    write_to_log_file(level, category, message_buffer);  // 로그 파일에 메시지 쓰기
+    utils_write_to_log_file(level, category, message_buffer);  // 로그 파일에 메시지 쓰기
 }
 
 /**
@@ -271,7 +271,7 @@ void log_message(LogLevel level, const char* category, const char* format, ...) 
  * @param category 로그 카테고리
  * @param message 로그 메시지
  */
-static void write_to_log_file(LogLevel level, const char* category, const char* message) {
+static void utils_write_to_log_file(LogLevel level, const char* category, const char* message) {
     pthread_mutex_lock(&log_mutex);  // 로그 뮤텍스 잠금
 
     if (log_file != NULL) {  // 로그 파일이 열려있는 경우
@@ -284,14 +284,14 @@ static void write_to_log_file(LogLevel level, const char* category, const char* 
         strftime(timestamp_str, sizeof(timestamp_str), "%m월 %d일 %H:%M", timeinfo);  // 타임스탬프 포맷
 
         fprintf(log_file, "[%s] [%s] %s [%s]\n",  // 로그 메시지 출력
-                get_log_level_string_internal(level),
+                utils_get_log_level_string(level),
                 category,
                 message,
                 timestamp_str);
         fflush(log_file); // 즉시 디스크에 쓰기
     } else {  // 로그 파일이 열려있지 않은 경우
-        error_report(ERROR_LOGGER_FILE_NOT_OPEN, "Logger", "로그 파일이 열려 있지 않습니다. 메시지: [%s] [%s] %s", 
-                    get_log_level_string_internal(level), category, message);  // 경고 메시지 출력
+        utils_report_error(ERROR_LOGGER_FILE_NOT_OPEN, "Logger", "로그 파일이 열려 있지 않습니다. 메시지: [%s] [%s] %s", 
+                    utils_get_log_level_string(level), category, message);  // 경고 메시지 출력
     }
 
     pthread_mutex_unlock(&log_mutex);  // 로그 뮤텍스 해제
@@ -302,7 +302,7 @@ static void write_to_log_file(LogLevel level, const char* category, const char* 
  * @param level 로그 레벨
  * @return 로그 레벨에 해당하는 문자열
  */
-static const char* get_log_level_string_internal(LogLevel level) {
+static const char* utils_get_log_level_string(LogLevel level) {
     switch (level) {  // 로그 레벨에 따른 분기
         case LOG_ERROR: return "ERROR"; // common.h에 정의된 LogLevel 사용
         case LOG_WARNING: return "WARNING";  // 경고 레벨
@@ -317,7 +317,7 @@ static const char* get_log_level_string_internal(LogLevel level) {
  * @param timestamp 변환할 타임스탬프
  * @return 포맷된 시간 문자열
  */
-const char* get_timestamp_string(time_t timestamp) {
+const char* utils_get_timestamp_string(time_t timestamp) {
     static char buffer[64];  // 정적 버퍼
     struct tm *timeinfo = localtime(&timestamp);  // 로컬 시간으로 변환
     if (timeinfo == NULL) {  // 시간 변환 실패 시
@@ -337,7 +337,7 @@ hash_table
  * @param size 해시 테이블 크기
  * @return 해시 값
  */
-static uint32_t hash_function(const char* key, uint32_t size) {
+static uint32_t utils_hash_function(const char* key, uint32_t size) {
     unsigned long hash = 5381;  // 초기 해시 값
     int c;  // 문자 변수
     while ((c = *key++)) {  // 문자열의 끝까지 반복
@@ -352,10 +352,10 @@ static uint32_t hash_function(const char* key, uint32_t size) {
  * @param free_value_func 값 해제 함수 포인터
  * @return 생성된 HashTable 포인터, 실패 시 NULL
  */
-HashTable* ht_create(uint32_t size, void (*free_value_func)(void*)) {
+HashTable* utils_hashtable_create(uint32_t size, void (*free_value_func)(void*)) {
     HashTable* table = (HashTable*)malloc(sizeof(HashTable));  // 해시 테이블 메모리 할당
     if (!table) {  // 메모리 할당 실패 시
-        error_report(ERROR_HASHTABLE_CREATION_FAILED, "HashTable", "해시 테이블 메모리 할당 실패");  // 에러 로그 출력
+        utils_report_error(ERROR_HASHTABLE_CREATION_FAILED, "HashTable", "해시 테이블 메모리 할당 실패");  // 에러 로그 출력
         return NULL;  // NULL 반환
     }
     table->size = size;  // 해시 테이블 크기 설정
@@ -363,7 +363,7 @@ HashTable* ht_create(uint32_t size, void (*free_value_func)(void*)) {
     table->free_value = free_value_func;  // 값 해제 함수 설정
     table->buckets = (HashNode**)calloc(table->size, sizeof(HashNode*));  // 버킷 배열 메모리 할당
     if (!table->buckets) {  // 버킷 메모리 할당 실패 시
-        error_report(ERROR_HASHTABLE_CREATION_FAILED, "HashTable", "버킷 메모리 할당 실패");  // 에러 로그 출력
+        utils_report_error(ERROR_HASHTABLE_CREATION_FAILED, "HashTable", "버킷 메모리 할당 실패");  // 에러 로그 출력
         free(table);  // 해시 테이블 메모리 해제
         return NULL;  // NULL 반환
     }
@@ -374,7 +374,7 @@ HashTable* ht_create(uint32_t size, void (*free_value_func)(void*)) {
  * @brief 해시 테이블을 정리합니다.
  * @param table 정리할 HashTable 포인터
  */
-void ht_destroy(HashTable* table) {
+void utils_hashtable_destroy(HashTable* table) {
     if (!table) return;  // 테이블이 NULL이면 함수 종료
     for (uint32_t i = 0; i < table->size; i++) {  // 모든 버킷에 대해 반복
         HashNode* node = table->buckets[i];  // 현재 버킷의 첫 번째 노드
@@ -399,15 +399,15 @@ void ht_destroy(HashTable* table) {
  * @param value 삽입할 값
  * @return 성공 시 true, 실패 시 false
  */
-bool ht_insert(HashTable* table, const char* key, void* value) {
+bool utils_hashtable_insert(HashTable* table, const char* key, void* value) {
     if (!table || !key || !value) {
-        error_report(ERROR_INVALID_PARAMETER, "HashTable", "ht_insert: 잘못된 파라미터");
+        utils_report_error(ERROR_INVALID_PARAMETER, "HashTable", "utils_hashtable_insert: 잘못된 파라미터");
         return false;  // 유효성 검사
     }
 
     // LOG_INFO("HashTable", "해시 테이블 삽입 시작: 키=%s", key);
 
-    uint32_t index = hash_function(key, table->size);  // 해시 인덱스 계산
+    uint32_t index = utils_hash_function(key, table->size);  // 해시 인덱스 계산
     // LOG_INFO("HashTable", "해시 인덱스 계산: 키=%s, 인덱스=%u", key, index);
     
     HashNode* node = table->buckets[index];  // 해당 버킷의 첫 번째 노드
@@ -429,14 +429,14 @@ bool ht_insert(HashTable* table, const char* key, void* value) {
     // 새 노드 생성
     HashNode* new_node = (HashNode*)malloc(sizeof(HashNode));  // 새 노드 메모리 할당
     if (!new_node) {  // 메모리 할당 실패 시
-        error_report(ERROR_HASHTABLE_INSERT_FAILED, "HashTable", "새 노드 메모리 할당 실패: 키=%s", key);
+        utils_report_error(ERROR_HASHTABLE_INSERT_FAILED, "HashTable", "새 노드 메모리 할당 실패: 키=%s", key);
         return false;  // false 반환
     }
 
     // 노드 초기화
     new_node->key = strdup(key);  // 키 복사
     if (!new_node->key) {  // 키 복사 실패 시
-        error_report(ERROR_HASHTABLE_INSERT_FAILED, "HashTable", "키 복사 실패: 키=%s", key);
+        utils_report_error(ERROR_HASHTABLE_INSERT_FAILED, "HashTable", "키 복사 실패: 키=%s", key);
         free(new_node);  // 노드 메모리 해제
         return false;  // false 반환
     }
@@ -454,9 +454,9 @@ bool ht_insert(HashTable* table, const char* key, void* value) {
  * @param key 조회할 키
  * @return 키에 해당하는 값, 없으면 NULL
  */
-void* ht_get(HashTable* table, const char* key) {
+void* utils_hashtable_get(HashTable* table, const char* key) {
     if (!table || !key) return NULL;  // 유효성 검사
-    uint32_t index = hash_function(key, table->size);  // 해시 인덱스 계산
+    uint32_t index = utils_hash_function(key, table->size);  // 해시 인덱스 계산
     HashNode* node = table->buckets[index];  // 해당 버킷의 첫 번째 노드
     while (node) {  // 노드가 존재하는 동안 반복
         if (strcmp(node->key, key) == 0) {  // 키가 일치하는 경우
@@ -473,15 +473,15 @@ void* ht_get(HashTable* table, const char* key) {
  * @param key 삭제할 키
  * @return 성공 시 true, 실패 시 false
  */
-bool ht_delete(HashTable* table, const char* key) {
+bool utils_hashtable_delete(HashTable* table, const char* key) {
     if (!table || !key) {
-        error_report(ERROR_INVALID_PARAMETER, "HashTable", "ht_delete: 잘못된 파라미터");
+        utils_report_error(ERROR_INVALID_PARAMETER, "HashTable", "utils_hashtable_delete: 잘못된 파라미터");
         return false;  // 유효성 검사
     }
 
     // LOG_INFO("HashTable", "해시 테이블 삭제 시작: 키=%s", key);
 
-    uint32_t index = hash_function(key, table->size);  // 해시 인덱스 계산
+    uint32_t index = utils_hash_function(key, table->size);  // 해시 인덱스 계산
     // LOG_INFO("HashTable", "해시 인덱스 계산: 키=%s, 인덱스=%u", key, index);
     
     HashNode* node = table->buckets[index];  // 해당 버킷의 첫 번째 노드
@@ -520,9 +520,9 @@ bool ht_delete(HashTable* table, const char* key) {
  * @param callback 실행할 콜백 함수
  * @param user_data 콜백 함수에 전달할 사용자 데이터
  */
-void ht_traverse(HashTable* table, void (*callback)(const char* key, void* value, void* user_data), void* user_data) {
+void utils_hashtable_traverse(HashTable* table, void (*callback)(const char* key, void* value, void* user_data), void* user_data) {
     if (!table || !callback) {
-        error_report(ERROR_INVALID_PARAMETER, "HashTable", "ht_traverse: 잘못된 파라미터");
+        utils_report_error(ERROR_INVALID_PARAMETER, "HashTable", "utils_hashtable_traverse: 잘못된 파라미터");
         return;  // 유효성 검사
     }
 

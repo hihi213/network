@@ -22,15 +22,15 @@ typedef enum {
 } LoginField;
 
 
-// UI 상태를 관리하기 위한 enum
+// UI 상태를 관리하기 위한 enum (State Machine 기반)
 typedef enum {
-    UI_STATE_MAIN_MENU,
-    UI_STATE_LOGIN_INPUT, // 로그인 정보 입력 상태
-    UI_STATE_LOGGED_IN_MENU,
-    UI_STATE_DEVICE_LIST,
-    UI_STATE_INPUT_RESERVATION_TIME,
-    UI_STATE_QUITTING
-} UIState;
+    APP_STATE_LOGIN = 0,        // 로그인 화면 (초기 상태)
+    APP_STATE_MAIN_MENU,        // 메인 메뉴
+    APP_STATE_LOGGED_IN_MENU,   // 로그인된 메뉴
+    APP_STATE_DEVICE_LIST,      // 장비 목록
+    APP_STATE_RESERVATION_TIME, // 예약 시간 입력
+    APP_STATE_EXIT              // 종료
+} AppState;
 
 // 함수 프로토타입
 static void signal_handler(int signum);
@@ -38,6 +38,7 @@ static void cleanup_resources(void);
 static int connect_to_server(const char* server_ip, int port);
 static void handle_server_message(const Message* message);
 static bool handle_login(const char* username, const char* password);
+static void on_login_submitted(const char* username, const char* password);
 static void draw_ui_for_current_state(void);
 static void draw_main_menu(void);
 static void draw_logged_in_menu(void);
@@ -58,7 +59,7 @@ static ClientSession client_session;
 static SSLManager ssl_manager;
 static bool running = true;
 static int self_pipe[2];
-static UIState current_state = UI_STATE_MAIN_MENU;
+static AppState current_state = APP_STATE_LOGIN;
 static int menu_highlight = 0;
 static int scroll_offset = 0;
 
@@ -77,12 +78,12 @@ static int device_count = 0;
 
 int main(int argc, char* argv[]) {
     if (argc != 3) { 
-        error_report(ERROR_INVALID_PARAMETER, "Client", "사용법: %s <서버 IP> <포트>", argv[0]); 
+        utils_report_error(ERROR_INVALID_PARAMETER, "Client", "사용법: %s <서버 IP> <포트>", argv[0]); 
         return 1; 
     }
-    if (init_logger("logs/client.log") < 0) return 1;
+    if (utils_init_logger("logs/client.log") < 0) return 1;
     if (pipe(self_pipe) == -1) { 
-        error_report(ERROR_FILE_OPERATION_FAILED, "Client", "pipe 생성 실패"); 
+        utils_report_error(ERROR_FILE_OPERATION_FAILED, "Client", "pipe 생성 실패"); 
         return 1; 
     }
     signal(SIGINT, signal_handler); signal(SIGTERM, signal_handler);
@@ -133,24 +134,24 @@ static void draw_ui_for_current_state() {
     curs_set(0); // 기본적으로 커서 숨김
 
     switch (current_state) {
-        case UI_STATE_MAIN_MENU: 
-            LOG_INFO("Client", "UI 그리기: 메인 메뉴 화면");
-            draw_main_menu(); 
-            break;
-        case UI_STATE_LOGIN_INPUT:
-            LOG_INFO("Client", "UI 그리기: 로그인 입력 화면");
+        case APP_STATE_LOGIN: 
+            LOG_INFO("Client", "UI 그리기: 로그인 화면");
             draw_login_input_ui();
             curs_set(1); // 로그인 화면에서 커서 보임
             break;
-        case UI_STATE_LOGGED_IN_MENU: 
+        case APP_STATE_MAIN_MENU: 
+            LOG_INFO("Client", "UI 그리기: 메인 메뉴 화면");
+            draw_main_menu(); 
+            break;
+        case APP_STATE_LOGGED_IN_MENU: 
             LOG_INFO("Client", "UI 그리기: 로그인된 메뉴 화면");
             draw_logged_in_menu(); 
             break;
-        case UI_STATE_DEVICE_LIST: 
+        case APP_STATE_DEVICE_LIST: 
             LOG_INFO("Client", "UI 그리기: 장비 목록 화면");
             draw_device_list(); 
             break;
-        case UI_STATE_INPUT_RESERVATION_TIME:
+        case APP_STATE_RESERVATION_TIME:
             {
                 LOG_INFO("Client", "UI 그리기: 예약 시간 입력 화면");
                 draw_device_list();
@@ -165,7 +166,7 @@ static void draw_ui_for_current_state() {
                 curs_set(1); // 예약 시간 입력 시 커서 보임
             }
             break;
-        case UI_STATE_QUITTING: 
+        case APP_STATE_EXIT: 
             LOG_INFO("Client", "UI 그리기: 종료 상태");
             break;
         default:
@@ -309,12 +310,12 @@ static void draw_device_list() {
 
 static void handle_keyboard_input(int ch) {
     switch (current_state) {
-        case UI_STATE_MAIN_MENU: handle_input_main_menu(ch); break;
-        case UI_STATE_LOGIN_INPUT: handle_input_login_input(ch); break;
-        case UI_STATE_LOGGED_IN_MENU: handle_input_logged_in_menu(ch); break;
-        case UI_STATE_DEVICE_LIST: handle_input_device_list(ch); break;
-        case UI_STATE_INPUT_RESERVATION_TIME: handle_input_reservation_time(ch); break;
-        case UI_STATE_QUITTING: break;
+        case APP_STATE_LOGIN: handle_input_login_input(ch); break;
+        case APP_STATE_MAIN_MENU: handle_input_main_menu(ch); break;
+        case APP_STATE_LOGGED_IN_MENU: handle_input_logged_in_menu(ch); break;
+        case APP_STATE_DEVICE_LIST: handle_input_device_list(ch); break;
+        case APP_STATE_RESERVATION_TIME: handle_input_reservation_time(ch); break;
+        case APP_STATE_EXIT: break;
     }
 }
 
@@ -324,7 +325,7 @@ static void handle_input_main_menu(int ch) {
         case KEY_DOWN: menu_highlight = (menu_highlight == 1) ? 0 : 1; break;
         case 10: // Enter 키
             if (menu_highlight == 0) { // "로그인" 선택
-                current_state = UI_STATE_LOGIN_INPUT;
+                current_state = APP_STATE_LOGIN;
                 active_login_field = LOGIN_FIELD_USERNAME;
                 memset(login_username_buffer, 0, sizeof(login_username_buffer));
                 login_username_pos = 0;
@@ -365,7 +366,7 @@ static void handle_input_login_input(int ch) {
                 if (login_username_pos > 0 && login_password_pos > 0) {
                     LOG_INFO("Client", "로그인 시도: 사용자='%s'", login_username_buffer);
                     show_success_message("로그인 시도 중...");
-                    handle_login(login_username_buffer, login_password_buffer);
+                    on_login_submitted(login_username_buffer, login_password_buffer);
                 } else {
                     LOG_WARNING("Client", "로그인 시도 실패: 아이디 또는 비밀번호가 비어있음");
                     show_error_message("아이디와 비밀번호를 모두 입력하세요.");
@@ -383,7 +384,7 @@ static void handle_input_login_input(int ch) {
 
         case 27: // Escape 키
             LOG_INFO("Client", "로그인 입력: ESC 키로 메인 메뉴로 복귀");
-            current_state = UI_STATE_MAIN_MENU;
+            current_state = APP_STATE_MAIN_MENU;
             menu_highlight = 0;
             break;
 
@@ -407,21 +408,34 @@ static void handle_input_login_input(int ch) {
 
 
 static void handle_input_logged_in_menu(int ch) {
- switch (ch) {
+    switch (ch) {
+        case KEY_UP: 
+            menu_highlight = (menu_highlight == 0) ? 1 : 0; 
+            break;
+        case KEY_DOWN: 
+            menu_highlight = (menu_highlight == 1) ? 0 : 1; 
+            break;
         case 10: // Enter 키
-            if (active_login_field == LOGIN_FIELD_USERNAME) {
-                active_login_field = LOGIN_FIELD_PASSWORD;
-            } else {
-                if (login_username_pos > 0 && login_password_pos > 0) {
-                    show_success_message("로그인 시도 중..."); // 사용자에게 피드백
-                    // handle_login만 호출하고 즉시 상태를 변경하지 않음
-                    handle_login(login_username_buffer, login_password_buffer);
-                } else {
-                    show_error_message("아이디와 비밀번호를 모두 입력하세요.");
+            if (menu_highlight == 0) { // "장비 목록" 선택
+                LOG_INFO("Client", "장비 목록 요청 전송");
+                Message* msg = create_message(MSG_STATUS_REQUEST, NULL);
+                if (msg) {
+                    if(send_message(client_session.ssl, msg) < 0) running = false;
+                    destroy_message(msg);
                 }
+            } else { // "로그아웃" 선택
+                LOG_INFO("Client", "로그아웃 처리");
+                client_session.state = SESSION_DISCONNECTED;
+                current_state = APP_STATE_MAIN_MENU;
+                menu_highlight = 0;
+                show_success_message("로그아웃되었습니다.");
             }
             break;
-        case 27: break;
+        case 27: // Escape 키
+            LOG_INFO("Client", "ESC 키로 메인 메뉴로 복귀");
+            current_state = APP_STATE_MAIN_MENU;
+            menu_highlight = 0;
+            break;
     }
 }
 
@@ -439,20 +453,25 @@ static void handle_input_device_list(int ch) {
             if (menu_highlight < device_count - 1) menu_highlight++;
             if (menu_highlight >= scroll_offset + visible_items) scroll_offset = menu_highlight - visible_items + 1;
             break;
-        case 9: // Tab 키
-            active_login_field = (active_login_field == LOGIN_FIELD_USERNAME) 
-                               ? LOGIN_FIELD_PASSWORD 
-                               : LOGIN_FIELD_USERNAME;
-            LOG_INFO("Client", "로그인 입력: Tab 키로 필드 전환 (현재 필드: %s)", 
-                    active_login_field == LOGIN_FIELD_USERNAME ? "아이디" : "비밀번호");
-            break;
         case 10: // Enter 키
-            if (menu_highlight == 0) { // "로그인" 선택
-                current_state = UI_STATE_LOGIN_INPUT;
-                // ... (로그인 상태 변수 초기화) ...
-                flushinp(); // ncurses 입력 버퍼를 비워 씹힘 현상을 방지합니다.
-            } else { // "종료" 선택
-                running = false; 
+            if (device_list && menu_highlight < device_count) {
+                Device* dev = &device_list[menu_highlight];
+                if (dev->status == DEVICE_AVAILABLE) {
+                    LOG_INFO("Client", "장비 예약 시작: %s", dev->id);
+                    reservation_target_device_index = menu_highlight;
+                    current_state = APP_STATE_RESERVATION_TIME;
+                    reservation_input_pos = 0;
+                    memset(reservation_input_buffer, 0, sizeof(reservation_input_buffer));
+                    show_success_message("예약 시간을 입력하세요 (초 단위)");
+                } else if (dev->status == DEVICE_RESERVED) {
+                    if (strcmp(dev->reserved_by, client_session.username) == 0) {
+                        show_success_message("이미 예약한 장비입니다.");
+                    } else {
+                        show_error_message("다른 사용자가 예약한 장비입니다.");
+                    }
+                } else {
+                    show_error_message("점검 중인 장비입니다.");
+                }
             }
             break;
         case 'c':
@@ -471,8 +490,8 @@ static void handle_input_device_list(int ch) {
                 }
             }
             break;
-        case 27:
-            current_state = UI_STATE_LOGGED_IN_MENU;
+        case 27: // Escape 키
+            current_state = APP_STATE_LOGGED_IN_MENU;
             menu_highlight = 0;
             break;
     }
@@ -485,7 +504,7 @@ static void handle_input_reservation_time(int ch) {
     } else if ((ch == KEY_BACKSPACE || ch == 127 || ch == '\b') && reservation_input_pos > 0) {
         reservation_input_buffer[--reservation_input_pos] = '\0';
     } else if (ch == 27) {
-        current_state = UI_STATE_DEVICE_LIST;
+        current_state = APP_STATE_DEVICE_LIST;
     } else if (ch == 10) {
         long duration_sec = atol(reservation_input_buffer);
         const long MAX_RESERVATION_SECONDS = 86400;
@@ -510,15 +529,15 @@ static void handle_server_message(const Message* message) {
         LOG_WARNING("Client", "서버로부터 에러 메시지 수신: %s", message->data);
         show_error_message(message->data);
         // [수정] 로그인 시도 중에 발생한 에러라면, 다시 로그인 입력 화면으로 돌려보냄
-        if (current_state == UI_STATE_LOGGED_IN_MENU || current_state == UI_STATE_DEVICE_LIST) {
+        if (current_state == APP_STATE_LOGGED_IN_MENU || current_state == APP_STATE_DEVICE_LIST) {
             // 이 경우는 이미 로그인 된 사용자가 다른 오류를 받은 경우이므로,
             // 상태를 유지하거나 다른 적절한 처리 가능
             LOG_INFO("Client", "이미 로그인된 상태에서 에러 수신, 현재 상태 유지");
         } else {
             // 로그인 시도 중 에러(중복 로그인, 인증 실패 등)가 발생한 경우
             // UI 상태를 다시 로그인 화면으로 명확하게 설정
-            LOG_INFO("Client", "로그인 실패로 인해 로그인 화면으로 복귀 (현재 상태: %d -> UI_STATE_LOGIN_INPUT)", current_state);
-            current_state = UI_STATE_LOGIN_INPUT;
+            LOG_INFO("Client", "로그인 실패로 인해 로그인 화면으로 복귀 (현재 상태: %d -> APP_STATE_LOGIN)", current_state);
+            current_state = APP_STATE_LOGIN;
         }
         break;
         case MSG_LOGIN:
@@ -527,24 +546,24 @@ static void handle_server_message(const Message* message) {
                 client_session.state = SESSION_LOGGED_IN;
                 strncpy(client_session.username, message->args[0], MAX_USERNAME_LENGTH - 1);
                 client_session.username[MAX_USERNAME_LENGTH - 1] = '\0';
-                LOG_INFO("Client", "UI 상태 변경: 로그인 화면 -> 로그인된 메뉴 (UI_STATE_LOGIN_INPUT -> UI_STATE_LOGGED_IN_MENU)");
-                current_state = UI_STATE_LOGGED_IN_MENU;
+                LOG_INFO("Client", "UI 상태 변경: 로그인 화면 -> 로그인된 메뉴 (APP_STATE_LOGIN -> APP_STATE_LOGGED_IN_MENU)");
+                current_state = APP_STATE_LOGGED_IN_MENU;
                 menu_highlight = 0;
                 show_success_message("로그인 성공!");
             } else {
                 LOG_WARNING("Client", "로그인 실패: %s", message->data);
                 show_error_message(message->data);
                 // 로그인 실패 시 로그인 화면 상태를 유지합니다.
-                LOG_INFO("Client", "로그인 실패로 인해 로그인 화면 상태 유지 (UI_STATE_LOGIN_INPUT)");
-                current_state = UI_STATE_LOGIN_INPUT;
+                LOG_INFO("Client", "로그인 실패로 인해 로그인 화면 상태 유지 (APP_STATE_LOGIN)");
+                current_state = APP_STATE_LOGIN;
             }
             break;
         case MSG_STATUS_RESPONSE:
         case MSG_STATUS_UPDATE:
             LOG_INFO("Client", "장비 상태 응답 수신: 장비 수=%d개", message->arg_count / 6);
             process_and_store_device_list(message);
-            LOG_INFO("Client", "UI 상태 변경: 로그인된 메뉴 -> 장비 목록 (UI_STATE_LOGGED_IN_MENU -> UI_STATE_DEVICE_LIST)");
-            current_state = UI_STATE_DEVICE_LIST;
+            LOG_INFO("Client", "UI 상태 변경: 로그인된 메뉴 -> 장비 목록 (APP_STATE_LOGGED_IN_MENU -> APP_STATE_DEVICE_LIST)");
+            current_state = APP_STATE_DEVICE_LIST;
             menu_highlight = 0;
             scroll_offset = 0;
             break;
@@ -578,7 +597,7 @@ static void process_and_store_device_list(const Message* message) {
     if (device_count <= 0) return;
     device_list = (Device*)malloc(sizeof(Device) * device_count);
     if (!device_list) { 
-        error_report(ERROR_MEMORY_ALLOCATION_FAILED, "Client", "장비 목록 메모리 할당 실패"); 
+        utils_report_error(ERROR_MEMORY_ALLOCATION_FAILED, "Client", "장비 목록 메모리 할당 실패"); 
         device_count = 0; 
         return; 
     }
@@ -607,6 +626,33 @@ static bool handle_login(const char* username, const char* password) {
     return true;
 }
 
+static void on_login_submitted(const char* username, const char* password) {
+    LOG_INFO("Client", "로그인 제출 처리 시작: 사용자='%s'", username);
+    
+    // 1) 로그인 메시지 생성 및 전송
+    Message* login_msg = create_login_message(username, password);
+    if (!login_msg) {
+        LOG_WARNING("Client", "로그인 메시지 생성 실패");
+        show_error_message("로그인 메시지 생성 실패");
+        return;
+    }
+    
+    // 2) 서버에 전송
+    if (send_message(client_session.ssl, login_msg) < 0) {
+        LOG_WARNING("Client", "로그인 요청 전송 실패");
+        show_error_message("로그인 요청 전송 실패");
+        destroy_message(login_msg);
+        return;
+    }
+    
+    LOG_INFO("Client", "로그인 요청 전송 완료, 서버 응답 대기 중...");
+    destroy_message(login_msg);
+    
+    // 3) 서버 응답은 handle_server_message에서 처리됨
+    // 로그인 성공 시: current_state = APP_STATE_LOGGED_IN_MENU
+    // 로그인 실패 시: current_state = APP_STATE_LOGIN (로그인 화면 유지)
+}
+
 static void signal_handler(int signum) { (void)signum; (void)write(self_pipe[1], "s", 1); }
 
 static void cleanup_resources(void) {
@@ -614,7 +660,7 @@ static void cleanup_resources(void) {
     cleanup_client_session(&client_session);
     cleanup_ssl_manager(&ssl_manager);
     cleanup_ui();
-    cleanup_logger();
+    utils_cleanup_logger();
     close(self_pipe[0]);
     close(self_pipe[1]);
 }

@@ -20,7 +20,7 @@ static Message* create_message_with_two_args(MessageType type, const char* arg1,
 Message* create_message(MessageType type, const char *data) {
     Message *msg = (Message *)malloc(sizeof(Message));
     if (!msg) {
-        error_report(ERROR_MESSAGE_CREATION_FAILED, "Message", "메시지 메모리 할당 실패");
+        utils_report_error(ERROR_MESSAGE_CREATION_FAILED, "Message", "메시지 메모리 할당 실패");
         return NULL;
     }
     msg->type = type;

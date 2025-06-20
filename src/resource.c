@@ -17,24 +17,24 @@ static void free_device_wrapper(void* device) {
  * @return 성공 시 초기화된 ResourceManager 포인터, 실패 시 NULL
  */
 ResourceManager* init_resource_manager(void) {
-    ResourceManager* manager = (ResourceManager*)malloc(sizeof(ResourceManager));  // 리소스 매니저 메모리 할당
+    ResourceManager* manager = (ResourceManager*)malloc(sizeof(ResourceManager));  // 자원 관리자 메모리 할당
     if (!manager) {  // 메모리 할당 실패 시
-        error_report(ERROR_RESOURCE_INIT_FAILED, "Resource", "자원 관리자 메모리 할당 실패");  // 에러 로그 출력
+        utils_report_error(ERROR_RESOURCE_INIT_FAILED, "Resource", "자원 관리자 메모리 할당 실패");  // 에러 로그 출력
         return NULL;  // NULL 반환
     }
 
     // [개선] 해시 테이블 초기화. 최대 장비 수(MAX_DEVICES)를 크기로 지정.
-    manager->devices = ht_create(MAX_DEVICES, free_device_wrapper);  // 해시 테이블 생성
+    manager->devices = utils_hashtable_create(MAX_DEVICES, free_device_wrapper);  // 해시 테이블 생성
     if (!manager->devices) {  // 해시 테이블 생성 실패 시
-        error_report(ERROR_RESOURCE_INIT_FAILED, "Resource", "장치 해시 테이블 생성 실패");  // 에러 로그 출력
-        free(manager);  // 매니저 메모리 해제
+        utils_report_error(ERROR_RESOURCE_INIT_FAILED, "Resource", "장치 해시 테이블 생성 실패");  // 에러 로그 출력
+        free(manager);  // 관리자 메모리 해제
         return NULL;  // NULL 반환
     }
     
     if (pthread_mutex_init(&manager->mutex, NULL) != 0) {  // 뮤텍스 초기화 실패 시
-        error_report(ERROR_RESOURCE_INIT_FAILED, "Resource", "뮤텍스 초기화 실패");  // 에러 로그 출력
-        ht_destroy(manager->devices);  // 해시 테이블 정리
-        free(manager);  // 매니저 메모리 해제
+        utils_report_error(ERROR_RESOURCE_INIT_FAILED, "Resource", "뮤텍스 초기화 실패");  // 에러 로그 출력
+        utils_hashtable_destroy(manager->devices);  // 해시 테이블 정리
+        free(manager);  // 관리자 메모리 해제
         return NULL;  // NULL 반환
     }
 
@@ -57,7 +57,9 @@ void cleanup_resource_manager(ResourceManager* manager) {
     if (!manager) return;  // 매니저가 NULL이면 함수 종료
 
     // [개선] 해시 테이블의 모든 자원을 해제
-    ht_destroy(manager->devices);  // 해시 테이블 정리
+    if (manager->devices) {
+        utils_hashtable_destroy(manager->devices);  // 해시 테이블 정리
+    }
     pthread_mutex_destroy(&manager->mutex);  // 뮤텍스 정리
     free(manager);  // 매니저 메모리 해제
 }
@@ -72,7 +74,7 @@ void cleanup_resource_manager(ResourceManager* manager) {
  */
 bool add_device(ResourceManager* manager, const char* id, const char* type, const char* name) {
     if (!manager || !id || !type || !name) {  // 유효성 검사
-        error_report(ERROR_INVALID_PARAMETER, "Resource", "add_device: 잘못된 파라미터");
+        utils_report_error(ERROR_INVALID_PARAMETER, "Resource", "add_device: 잘못된 파라미터");
         return false;  // 에러 코드 반환
     }
 
@@ -81,17 +83,17 @@ bool add_device(ResourceManager* manager, const char* id, const char* type, cons
     pthread_mutex_lock(&manager->mutex);  // 뮤텍스 잠금
 
     // [개선] 해시 테이블에서 기존 장비 확인
-    Device* existing_device = (Device*)ht_get(manager->devices, id);
+    Device* existing_device = (Device*)utils_hashtable_get(manager->devices, id);
     if (existing_device) {  // 기존 장비가 존재하는 경우
         // LOG_INFO("Resource", "기존 장비 발견, 교체: ID=%s", id);
-        ht_delete(manager->devices, id);  // 기존 장비 삭제
+        utils_hashtable_delete(manager->devices, id);  // 기존 장비 삭제
     }
 
     // 새 장비 생성
     Device* new_device = (Device*)malloc(sizeof(Device));  // 새 장비 메모리 할당
     if (!new_device) {  // 메모리 할당 실패 시
-        error_report(ERROR_MEMORY_ALLOCATION_FAILED, "Resource", "장비 메모리 할당 실패: ID=%s", id);
         pthread_mutex_unlock(&manager->mutex);  // 뮤텍스 해제
+        utils_report_error(ERROR_MEMORY_ALLOCATION_FAILED, "Resource", "장비 메모리 할당 실패: ID=%s", id);
         return false;  // 에러 코드 반환
     }
 
@@ -107,10 +109,10 @@ bool add_device(ResourceManager* manager, const char* id, const char* type, cons
     new_device->reserved_by[0] = '\0';  // 예약자 정보를 빈 문자열로 초기화
 
     // [개선] 해시 테이블에 장비 삽입
-    if (!ht_insert(manager->devices, id, new_device)) {  // 해시 테이블 삽입 실패 시
-        error_report(ERROR_RESOURCE_INIT_FAILED, "Resource", "해시 테이블에 장비 삽입 실패: ID=%s", id);
-        free(new_device);  // 장비 메모리 해제
+    if (!utils_hashtable_insert(manager->devices, id, new_device)) {  // 해시 테이블 삽입 실패 시
         pthread_mutex_unlock(&manager->mutex);  // 뮤텍스 해제
+        utils_report_error(ERROR_RESOURCE_INIT_FAILED, "Resource", "해시 테이블에 장비 삽입 실패: ID=%s", id);
+        free(new_device);  // 장비 메모리 해제
         return false;  // 에러 코드 반환
     }
 
@@ -127,7 +129,7 @@ bool add_device(ResourceManager* manager, const char* id, const char* type, cons
  */
 bool remove_device(ResourceManager* manager, const char* id) {
     if (!manager || !id) {  // 유효성 검사
-        error_report(ERROR_INVALID_PARAMETER, "Resource", "잘못된 파라미터");  // 에러 로그 출력
+        utils_report_error(ERROR_INVALID_PARAMETER, "Resource", "잘못된 파라미터");  // 에러 로그 출력
         return false;  // 에러 코드 반환
     }
     
@@ -136,27 +138,27 @@ bool remove_device(ResourceManager* manager, const char* id) {
     pthread_mutex_lock(&manager->mutex);  // 뮤텍스 잠금
     
     // [개선] 해시 테이블에서 장비 조회
-    Device* device = (Device*)ht_get(manager->devices, id);
+    Device* device = (Device*)utils_hashtable_get(manager->devices, id);
     if (!device) {  // 장비를 찾을 수 없는 경우
-        error_report(ERROR_RESOURCE_NOT_FOUND, "Resource", "장치를 찾을 수 없음: %s", id);  // 에러 로그 출력
         pthread_mutex_unlock(&manager->mutex);  // 뮤텍스 해제
+        utils_report_error(ERROR_RESOURCE_NOT_FOUND, "Resource", "장치를 찾을 수 없음: %s", id);  // 에러 로그 출력
         return false;  // 에러 코드 반환
     }
     
     if (device->status == DEVICE_RESERVED) {  // 예약 중인 장치인 경우
-        error_report(ERROR_RESOURCE_IN_USE, "Resource", "예약 중인 장치는 제거할 수 없음: %s", id);  // 에러 로그 출력
         pthread_mutex_unlock(&manager->mutex);  // 뮤텍스 해제
+        utils_report_error(ERROR_RESOURCE_IN_USE, "Resource", "예약 중인 장치는 제거할 수 없음: %s", id);  // 에러 로그 출력
         return false;  // 에러 코드 반환
     }
     
     // [개선] 해시 테이블에서 장비 삭제
-    if (ht_delete(manager->devices, id)) {  // 해시 테이블에서 장비 삭제 성공 시
+    if (utils_hashtable_delete(manager->devices, id)) {  // 해시 테이블에서 장비 삭제 성공 시
         // LOG_INFO("Resource", "장비 제거 성공: ID=%s", id);  // 정보 로그 출력
         pthread_mutex_unlock(&manager->mutex);  // 뮤텍스 해제
         return true;  // 성공 코드 반환
     } else {  // 장비 삭제 실패 시
-        error_report(ERROR_RESOURCE_NOT_FOUND, "Resource", "장비 삭제 실패: ID=%s", id);  // 에러 로그 출력
         pthread_mutex_unlock(&manager->mutex);  // 뮤텍스 해제
+        utils_report_error(ERROR_RESOURCE_NOT_FOUND, "Resource", "장비 삭제 실패: ID=%s", id);  // 에러 로그 출력
         return false;  // 에러 코드 반환
     }
 }
@@ -174,7 +176,7 @@ bool update_device_status(ResourceManager* manager, const char* device_id, Devic
 
     pthread_mutex_lock(&manager->mutex);  // 뮤텍스 잠금
     
-    Device* device_to_update = (Device*)ht_get(manager->devices, device_id);  // 해시 테이블에서 장치 조회
+    Device* device_to_update = (Device*)utils_hashtable_get(manager->devices, device_id);  // 해시 테이블에서 장치 조회
     if (device_to_update == NULL) {  // 장치를 찾을 수 없는 경우
         // LOG_WARNING("Resource", "상태를 업데이트할 장비를 찾지 못함: ID=%s", device_id);  // 경고 로그 출력
         pthread_mutex_unlock(&manager->mutex);  // 뮤텍스 해제
@@ -234,7 +236,7 @@ static void copy_device_callback(const char* key, void* value, void* user_data) 
  */
 int get_device_list(ResourceManager* manager, Device* devices, int max_devices) {
     if (!manager || !devices || max_devices <= 0) {
-        error_report(ERROR_INVALID_PARAMETER, "Resource", "get_device_list: 잘못된 파라미터");
+        utils_report_error(ERROR_INVALID_PARAMETER, "Resource", "get_device_list: 잘못된 파라미터");
         return -1;  // 유효성 검사
     }
     
@@ -244,7 +246,7 @@ int get_device_list(ResourceManager* manager, Device* devices, int max_devices) 
     
     // [개선] 해시 테이블을 순회하며 장치 목록을 채움
     TraverseData data = { .devices = devices, .max_devices = max_devices, .current_count = 0 };  // 순회 데이터 초기화
-    ht_traverse(manager->devices, copy_device_callback, &data);  // 해시 테이블 순회
+    utils_hashtable_traverse(manager->devices, copy_device_callback, &data);  // 해시 테이블 순회
     int count = data.current_count;  // 조회된 장치 개수
 
     // LOG_INFO("Resource", "해시 테이블 순회 완료: 조회된 장비수=%d", count);
@@ -266,7 +268,7 @@ bool is_device_available(ResourceManager* manager, const char* id) {
     pthread_mutex_lock(&manager->mutex);  // 뮤텍스 잠금
     
     // [개선] 해시 테이블에서 O(1)에 장치 검색
-    Device* device = (Device*)ht_get(manager->devices, id);  // 해시 테이블에서 장치 조회
+    Device* device = (Device*)utils_hashtable_get(manager->devices, id);  // 해시 테이블에서 장치 조회
     bool available = (device != NULL && device->status == DEVICE_AVAILABLE);  // 사용 가능 여부 확인
     
     pthread_mutex_unlock(&manager->mutex);  // 뮤텍스 해제

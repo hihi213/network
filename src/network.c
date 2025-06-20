@@ -29,7 +29,7 @@ static bool ssl_write_fully(SSL* ssl, const void* buf, int len) {
         if (bytes_written <= 0) {
             int err = SSL_get_error(ssl, bytes_written);
             if (err != SSL_ERROR_ZERO_RETURN) {
-                error_report(ERROR_NETWORK_SEND_FAILED, "Network", "SSL_write 에러 발생: %d", err);
+                utils_report_error(ERROR_NETWORK_SEND_FAILED, "Network", "SSL_write 에러 발생: %d", err);
             }
             return false;
         }
@@ -42,7 +42,7 @@ static bool ssl_write_fully(SSL* ssl, const void* buf, int len) {
 // [핵심 수정] 길이가 0인 문자열도 올바르게 처리하도록 수정
 int send_message(SSL* ssl, const Message* message) {
     if (!ssl || !message) {
-        error_report(ERROR_INVALID_PARAMETER, "Network", "send_message: 잘못된 파라미터");
+        utils_report_error(ERROR_INVALID_PARAMETER, "Network", "send_message: 잘못된 파라미터");
         return -1;
     }
 
@@ -88,19 +88,19 @@ ssize_t net_send(SSL* ssl, const void* buf, size_t len) {
         }
         int err = SSL_get_error(ssl, ret);
         if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE || err == SSL_ERROR_SYSCALL) {
-            error_report(ERROR_NETWORK_SEND_FAILED, "Network", "net_send: 재시도 필요 (err=%d, retry=%d)", err, retry);
+            utils_report_error(ERROR_NETWORK_SEND_FAILED, "Network", "net_send: 재시도 필요 (err=%d, retry=%d)", err, retry);
             retry++;
             continue;
         } else if (err == SSL_ERROR_ZERO_RETURN) {
-            error_report(ERROR_NETWORK_SEND_FAILED, "Network", "net_send: 연결 종료 감지");
+            utils_report_error(ERROR_NETWORK_SEND_FAILED, "Network", "net_send: 연결 종료 감지");
             return 0;
         } else {
-            error_report(ERROR_NETWORK_SEND_FAILED, "Network", "net_send: 치명적 에러 (err=%d)", err);
+            utils_report_error(ERROR_NETWORK_SEND_FAILED, "Network", "net_send: 치명적 에러 (err=%d)", err);
             return -1;
         }
     }
     if (total_sent < len) {
-        error_report(ERROR_NETWORK_SEND_FAILED, "Network", "net_send: 송신 미완료 (total_sent=%zu, len=%zu)", total_sent, len);
+        utils_report_error(ERROR_NETWORK_SEND_FAILED, "Network", "net_send: 송신 미완료 (total_sent=%zu, len=%zu)", total_sent, len);
         return -1;
     }
     return (ssize_t)total_sent;
@@ -117,19 +117,19 @@ ssize_t net_recv(SSL* ssl, void* buf, size_t len) {
         }
         int err = SSL_get_error(ssl, ret);
         if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE || err == SSL_ERROR_SYSCALL) {
-            error_report(ERROR_NETWORK_RECEIVE_FAILED, "Network", "net_recv: 재시도 필요 (err=%d, retry=%d)", err, retry);
+            utils_report_error(ERROR_NETWORK_RECEIVE_FAILED, "Network", "net_recv: 재시도 필요 (err=%d, retry=%d)", err, retry);
             retry++;
             continue;
         } else if (err == SSL_ERROR_ZERO_RETURN) {
-            error_report(ERROR_NETWORK_RECEIVE_FAILED, "Network", "net_recv: 연결 종료 감지");
+            utils_report_error(ERROR_NETWORK_RECEIVE_FAILED, "Network", "net_recv: 연결 종료 감지");
             return 0;
         } else {
-            error_report(ERROR_NETWORK_RECEIVE_FAILED, "Network", "net_recv: 치명적 에러 (err=%d)", err);
+            utils_report_error(ERROR_NETWORK_RECEIVE_FAILED, "Network", "net_recv: 치명적 에러 (err=%d)", err);
             return -1;
         }
     }
     if (total_recv < len) {
-        error_report(ERROR_NETWORK_RECEIVE_FAILED, "Network", "net_recv: 수신 미완료 (total_recv=%zu, len=%zu)", total_recv, len);
+        utils_report_error(ERROR_NETWORK_RECEIVE_FAILED, "Network", "net_recv: 수신 미완료 (total_recv=%zu, len=%zu)", total_recv, len);
         return -1;
     }
     return (ssize_t)total_recv;
@@ -148,18 +148,18 @@ static void set_common_ssl_ctx_options(SSL_CTX* ctx) {
 
 static int init_ssl_context(SSLManager* manager, const char* cert_file, const char* key_file) {
     if (!manager || !cert_file || !key_file) {
-        error_report(ERROR_INVALID_PARAMETER, "SSL", "init_ssl_context: 잘못된 파라미터");
+        utils_report_error(ERROR_INVALID_PARAMETER, "SSL", "init_ssl_context: 잘못된 파라미터");
         return -1;
     }
     manager->ctx = SSL_CTX_new(TLS_server_method());
     if (!manager->ctx) {
-        error_report(ERROR_NETWORK_SSL_CONTEXT_FAILED, "SSL", "SSL_CTX_new 실패");
+        utils_report_error(ERROR_NETWORK_SSL_CONTEXT_FAILED, "SSL", "SSL_CTX_new 실패");
         return -1;
     }
     if (SSL_CTX_use_certificate_file(manager->ctx, cert_file, SSL_FILETYPE_PEM) <= 0 ||
         SSL_CTX_use_PrivateKey_file(manager->ctx, key_file, SSL_FILETYPE_PEM) <= 0 ||
         !SSL_CTX_check_private_key(manager->ctx)) {
-        error_report(ERROR_NETWORK_SSL_CERTIFICATE_FAILED, "SSL", "인증서 또는 개인키 파일 로드/검증 실패");
+        utils_report_error(ERROR_NETWORK_SSL_CERTIFICATE_FAILED, "SSL", "인증서 또는 개인키 파일 로드/검증 실패");
         ERR_print_errors_fp(stderr);
         SSL_CTX_free(manager->ctx);
         manager->ctx = NULL;
@@ -171,7 +171,7 @@ static int init_ssl_context(SSLManager* manager, const char* cert_file, const ch
 
 int init_ssl_manager(SSLManager* manager, bool is_server, const char* cert_file, const char* key_file) {
     if (!manager) {
-        error_report(ERROR_INVALID_PARAMETER, "SSL", "manager 포인터가 NULL입니다");
+        utils_report_error(ERROR_INVALID_PARAMETER, "SSL", "manager 포인터가 NULL입니다");
         return -1;
     }
     memset(manager, 0, sizeof(SSLManager));
@@ -182,14 +182,14 @@ int init_ssl_manager(SSLManager* manager, bool is_server, const char* cert_file,
 
     if (is_server) {
         if (!cert_file || !key_file) {
-            error_report(ERROR_INVALID_PARAMETER, "SSL", "서버 모드에서는 인증서와 키 파일이 필요합니다");
+            utils_report_error(ERROR_INVALID_PARAMETER, "SSL", "서버 모드에서는 인증서와 키 파일이 필요합니다");
             return -1;
         }
         return init_ssl_context(manager, cert_file, key_file);
     } else {
         manager->ctx = SSL_CTX_new(TLS_client_method());
         if (!manager->ctx) {
-            error_report(ERROR_NETWORK_SSL_CONTEXT_FAILED, "SSL", "클라이언트 SSL 컨텍스트 생성 실패");
+            utils_report_error(ERROR_NETWORK_SSL_CONTEXT_FAILED, "SSL", "클라이언트 SSL 컨텍스트 생성 실패");
             return -1;
         }
         set_common_ssl_ctx_options(manager->ctx);
@@ -207,11 +207,11 @@ int init_server_socket(int port) {
     server_addr.sin_addr.s_addr = INADDR_ANY;
     server_addr.sin_port = htons(port);
     if (bind(server_fd, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
-        error_report(ERROR_NETWORK_BIND_FAILED, "Network", "서버 소켓 바인딩 실패: %s", strerror(errno));
+        utils_report_error(ERROR_NETWORK_BIND_FAILED, "Network", "서버 소켓 바인딩 실패: %s", strerror(errno));
         CLEANUP_AND_RET(close(server_fd), -1);
     }
     if (listen(server_fd, SOMAXCONN) < 0) {
-        error_report(ERROR_NETWORK_LISTEN_FAILED, "Network", "서버 소켓 리스닝 실패: %s", strerror(errno));
+        utils_report_error(ERROR_NETWORK_LISTEN_FAILED, "Network", "서버 소켓 리스닝 실패: %s", strerror(errno));
         CLEANUP_AND_RET(close(server_fd), -1);
     }
     return server_fd;
@@ -229,11 +229,11 @@ int init_client_socket(const char* server_ip, int port) {
     server_addr.sin_family = AF_INET;
     server_addr.sin_port = htons(port);
     if (inet_pton(AF_INET, server_ip, &server_addr.sin_addr) <= 0) {
-        error_report(ERROR_NETWORK_IP_CONVERSION_FAILED, "Network", "IP 주소 변환 실패: %s", strerror(errno));
+        utils_report_error(ERROR_NETWORK_IP_CONVERSION_FAILED, "Network", "IP 주소 변환 실패: %s", strerror(errno));
         CLEANUP_AND_RET(close(client_fd), -1);
     }
     if (connect(client_fd, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
-        error_report(ERROR_NETWORK_CONNECT_FAILED, "Network", "서버 연결 실패: %s", strerror(errno));
+        utils_report_error(ERROR_NETWORK_CONNECT_FAILED, "Network", "서버 연결 실패: %s", strerror(errno));
         CLEANUP_AND_RET(close(client_fd), -1);
     }
     return client_fd;
@@ -243,7 +243,7 @@ int handle_ssl_handshake(SSLHandler* handler) {
     CHECK_PARAM_RET(handler && handler->ssl, ERROR_INVALID_PARAMETER, "SSL", "잘못된 SSL 핸들러");
     int ret = handler->is_server ? SSL_accept(handler->ssl) : SSL_connect(handler->ssl);
     if (ret <= 0) {
-        error_report(ERROR_NETWORK_SSL_HANDSHAKE_FAILED, "SSL", "SSL 핸드셰이크 실패");
+        utils_report_error(ERROR_NETWORK_SSL_HANDSHAKE_FAILED, "SSL", "SSL 핸드셰이크 실패");
         ERR_print_errors_fp(stderr);
         return -1;
     }
@@ -254,7 +254,7 @@ SSLHandler* create_ssl_handler(SSLManager* manager, int socket_fd) {
     CHECK_PARAM_RET_PTR(manager && manager->ctx, ERROR_INVALID_PARAMETER, "SSL", "잘못된 SSL Manager 또는 Context");
     SSLHandler* handler = (SSLHandler*)malloc(sizeof(SSLHandler));
     if (!handler) {
-        error_report(ERROR_MEMORY_ALLOCATION_FAILED, "SSL", "SSL 핸들러 메모리 할당 실패");
+        utils_report_error(ERROR_MEMORY_ALLOCATION_FAILED, "SSL", "SSL 핸들러 메모리 할당 실패");
         return NULL;
     }
     memset(handler, 0, sizeof(SSLHandler));
@@ -263,12 +263,12 @@ SSLHandler* create_ssl_handler(SSLManager* manager, int socket_fd) {
     handler->is_server = manager->is_server;
     handler->ssl = SSL_new(manager->ctx);
     if (!handler->ssl) {
-        error_report(ERROR_NETWORK_SSL_CONTEXT_FAILED, "SSL", "SSL 객체 생성 실패");
+        utils_report_error(ERROR_NETWORK_SSL_CONTEXT_FAILED, "SSL", "SSL 객체 생성 실패");
         free(handler);
         return NULL;
     }
     if (!SSL_set_fd(handler->ssl, socket_fd)) {
-        error_report(ERROR_NETWORK_SSL_CONTEXT_FAILED, "SSL", "SSL 소켓 설정 실패");
+        utils_report_error(ERROR_NETWORK_SSL_CONTEXT_FAILED, "SSL", "SSL 소켓 설정 실패");
         SSL_free(handler->ssl);
         free(handler);
         return NULL;
@@ -289,7 +289,7 @@ int set_socket_options(int socket_fd, bool is_server) {
     int opt = 1;
     // SO_REUSEADDR: 서버/클라이언트 모두 적용
     if (setsockopt(socket_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
-        error_report(ERROR_NETWORK_SOCKET_OPTION_FAILED, "Network", "SO_REUSEADDR 설정 실패: %s", strerror(errno));
+        utils_report_error(ERROR_NETWORK_SOCKET_OPTION_FAILED, "Network", "SO_REUSEADDR 설정 실패: %s", strerror(errno));
         return -1;
     }
 
@@ -297,7 +297,7 @@ int set_socket_options(int socket_fd, bool is_server) {
         // SO_REUSEPORT: 서버 소켓에만 적용 (macOS/Linux)
         #ifdef SO_REUSEPORT
         if (setsockopt(socket_fd, SOL_SOCKET, SO_REUSEPORT, &opt, sizeof(opt)) < 0) {
-            error_report(ERROR_NETWORK_SOCKET_OPTION_FAILED, "Network", "SO_REUSEPORT 설정 실패: %s", strerror(errno));
+            utils_report_error(ERROR_NETWORK_SOCKET_OPTION_FAILED, "Network", "SO_REUSEPORT 설정 실패: %s", strerror(errno));
             return -1;
         }
         #endif
@@ -305,14 +305,14 @@ int set_socket_options(int socket_fd, bool is_server) {
 
     // SO_KEEPALIVE: 서버/클라이언트 모두 적용
     if (setsockopt(socket_fd, SOL_SOCKET, SO_KEEPALIVE, &opt, sizeof(opt)) < 0) {
-        error_report(ERROR_NETWORK_SOCKET_OPTION_FAILED, "Network", "SO_KEEPALIVE 설정 실패: %s", strerror(errno));
+        utils_report_error(ERROR_NETWORK_SOCKET_OPTION_FAILED, "Network", "SO_KEEPALIVE 설정 실패: %s", strerror(errno));
         return -1;
     }
 
     // TCP_NODELAY: 서버/클라이언트 모두 적용
     #ifdef TCP_NODELAY
     if (setsockopt(socket_fd, IPPROTO_TCP, TCP_NODELAY, &opt, sizeof(opt)) < 0) {
-        error_report(ERROR_NETWORK_SOCKET_OPTION_FAILED, "Network", "TCP_NODELAY 설정 실패: %s", strerror(errno));
+        utils_report_error(ERROR_NETWORK_SOCKET_OPTION_FAILED, "Network", "TCP_NODELAY 설정 실패: %s", strerror(errno));
         return -1;
     }
     #endif
@@ -322,11 +322,11 @@ int set_socket_options(int socket_fd, bool is_server) {
     timeout.tv_sec = 30;
     timeout.tv_usec = 0;
     if (setsockopt(socket_fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) < 0) {
-        error_report(ERROR_NETWORK_SOCKET_OPTION_FAILED, "Network", "SO_RCVTIMEO 설정 실패: %s", strerror(errno));
+        utils_report_error(ERROR_NETWORK_SOCKET_OPTION_FAILED, "Network", "SO_RCVTIMEO 설정 실패: %s", strerror(errno));
         return -1;
     }
     if (setsockopt(socket_fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout)) < 0) {
-        error_report(ERROR_NETWORK_SOCKET_OPTION_FAILED, "Network", "SO_SNDTIMEO 설정 실패: %s", strerror(errno));
+        utils_report_error(ERROR_NETWORK_SOCKET_OPTION_FAILED, "Network", "SO_SNDTIMEO 설정 실패: %s", strerror(errno));
         return -1;
     }
 
@@ -335,27 +335,27 @@ int set_socket_options(int socket_fd, bool is_server) {
         #if defined(TCP_KEEPIDLE)
         int keepidle = 60;
         if (setsockopt(socket_fd, IPPROTO_TCP, TCP_KEEPIDLE, &keepidle, sizeof(keepidle)) < 0) {
-            error_report(ERROR_NETWORK_SOCKET_OPTION_FAILED, "Network", "TCP_KEEPIDLE 설정 실패: %s", strerror(errno));
+            utils_report_error(ERROR_NETWORK_SOCKET_OPTION_FAILED, "Network", "TCP_KEEPIDLE 설정 실패: %s", strerror(errno));
             return -1;
         }
         #elif defined(TCP_KEEPALIVE) // macOS
         int keepidle = 60;
         if (setsockopt(socket_fd, IPPROTO_TCP, TCP_KEEPALIVE, &keepidle, sizeof(keepidle)) < 0) {
-            error_report(ERROR_NETWORK_SOCKET_OPTION_FAILED, "Network", "TCP_KEEPALIVE(macOS) 설정 실패: %s", strerror(errno));
+            utils_report_error(ERROR_NETWORK_SOCKET_OPTION_FAILED, "Network", "TCP_KEEPALIVE(macOS) 설정 실패: %s", strerror(errno));
             return -1;
         }
         #endif
         #ifdef TCP_KEEPINTVL
         int keepintvl = 10;
         if (setsockopt(socket_fd, IPPROTO_TCP, TCP_KEEPINTVL, &keepintvl, sizeof(keepintvl)) < 0) {
-            error_report(ERROR_NETWORK_SOCKET_OPTION_FAILED, "Network", "TCP_KEEPINTVL 설정 실패: %s", strerror(errno));
+            utils_report_error(ERROR_NETWORK_SOCKET_OPTION_FAILED, "Network", "TCP_KEEPINTVL 설정 실패: %s", strerror(errno));
             return -1;
         }
         #endif
         #ifdef TCP_KEEPCNT
         int keepcnt = 3;
         if (setsockopt(socket_fd, IPPROTO_TCP, TCP_KEEPCNT, &keepcnt, sizeof(keepcnt)) < 0) {
-            error_report(ERROR_NETWORK_SOCKET_OPTION_FAILED, "Network", "TCP_KEEPCNT 설정 실패: %s", strerror(errno));
+            utils_report_error(ERROR_NETWORK_SOCKET_OPTION_FAILED, "Network", "TCP_KEEPCNT 설정 실패: %s", strerror(errno));
             return -1;
         }
         #endif
@@ -387,25 +387,25 @@ SSLHandler* accept_client(int server_fd, SSLManager* ssl_manager, char* client_i
     socklen_t client_len = sizeof(client_addr);
     int client_fd = accept(server_fd, (struct sockaddr*)&client_addr, &client_len);
     if (client_fd < 0) {
-        error_report(ERROR_NETWORK_ACCEPT_FAILED, "Network", "클라이언트 연결 수락 실패: %s", strerror(errno));
+        utils_report_error(ERROR_NETWORK_ACCEPT_FAILED, "Network", "클라이언트 연결 수락 실패: %s", strerror(errno));
         return NULL;
     }
     if (set_socket_options(client_fd, false) < 0) {
-        error_report(ERROR_NETWORK_SOCKET_OPTION_FAILED, "Network", "클라이언트 소켓 옵션 설정 실패");
+        utils_report_error(ERROR_NETWORK_SOCKET_OPTION_FAILED, "Network", "클라이언트 소켓 옵션 설정 실패");
         CLEANUP_AND_RET(close(client_fd), NULL);
     }
     if (inet_ntop(AF_INET, &client_addr.sin_addr, client_ip, INET_ADDRSTRLEN) == NULL) {
-        error_report(ERROR_NETWORK_IP_CONVERSION_FAILED, "Network", "클라이언트 IP 주소 변환 실패");
+        utils_report_error(ERROR_NETWORK_IP_CONVERSION_FAILED, "Network", "클라이언트 IP 주소 변환 실패");
         CLEANUP_AND_RET(close(client_fd), NULL);
     }
     // LOG_INFO("Network", "클라이언트 연결 수락: IP=%s, 소켓=%d", client_ip, client_fd);
     SSLHandler* ssl_handler = create_ssl_handler(ssl_manager, client_fd);
     if (!ssl_handler) {
-        error_report(ERROR_NETWORK_SSL_INIT_FAILED, "Network", "SSL 핸들러 생성 실패: IP=%s", client_ip);
+        utils_report_error(ERROR_NETWORK_SSL_INIT_FAILED, "Network", "SSL 핸들러 생성 실패: IP=%s", client_ip);
         CLEANUP_AND_RET(close(client_fd), NULL);
     }
     if (handle_ssl_handshake(ssl_handler) != 0) {
-        error_report(ERROR_NETWORK_SSL_HANDSHAKE_FAILED, "Network", "SSL 핸드셰이크 실패: IP=%s", client_ip);
+        utils_report_error(ERROR_NETWORK_SSL_HANDSHAKE_FAILED, "Network", "SSL 핸드셰이크 실패: IP=%s", client_ip);
         cleanup_ssl_handler(ssl_handler);
         CLEANUP_AND_RET(close(client_fd), NULL);
     }
@@ -424,12 +424,12 @@ SSLHandler* perform_ssl_handshake(int client_fd, SSLManager* mgr) {
     // LOG_INFO("Network", "SSL 핸드셰이크 시작: fd=%d", client_fd);
     SSLHandler* handler = create_ssl_handler(mgr, client_fd);
     if (!handler) {
-        error_report(ERROR_NETWORK_SSL_INIT_FAILED, "Network", "SSL 핸들러 생성 실패: fd=%d", client_fd);
+        utils_report_error(ERROR_NETWORK_SSL_INIT_FAILED, "Network", "SSL 핸들러 생성 실패: fd=%d", client_fd);
         close(client_fd);
         return NULL;
     }
     if (handle_ssl_handshake(handler) != 0) {
-        error_report(ERROR_NETWORK_SSL_HANDSHAKE_FAILED, "Network", "SSL 핸드셰이크 실패: fd=%d", client_fd);
+        utils_report_error(ERROR_NETWORK_SSL_HANDSHAKE_FAILED, "Network", "SSL 핸드셰이크 실패: fd=%d", client_fd);
         cleanup_ssl_handler(handler);
         close(client_fd);
         return NULL;

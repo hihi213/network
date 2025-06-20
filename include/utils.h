@@ -94,7 +94,7 @@ typedef enum {
 } ErrorCode;
 
 // 에러 보고 함수 프로토타입
-void error_report(ErrorCode error_code, const char* module, const char* additional_info, ...);
+void utils_report_error(ErrorCode error_code, const char* module, const char* additional_info, ...);
 
 /*
  * =====================================================================================
@@ -111,23 +111,23 @@ typedef enum {
 } LogLevel;
 
 // Logger 함수 프로토타입
-int init_logger(const char* filename);
-void cleanup_logger(void);
-void log_message(LogLevel level, const char* category, const char* format, ...);
-const char* get_timestamp_string(time_t timestamp);
+int utils_init_logger(const char* filename);
+void utils_cleanup_logger(void);
+void utils_log_message(LogLevel level, const char* category, const char* format, ...);
+const char* utils_get_timestamp_string(time_t timestamp);
 
 // 로그 매크로 - 위치 정보 자동 캡처
 #define LOG_ERROR(category, format, ...) \
-    log_message(LOG_ERROR, category, "[%s:%d:%s] " format, __FILE__, __LINE__, __func__, ##__VA_ARGS__)
+    utils_log_message(LOG_ERROR, category, "[%s:%d:%s] " format, __FILE__, __LINE__, __func__, ##__VA_ARGS__)
 
 #define LOG_WARNING(category, format, ...) \
-    log_message(LOG_WARNING, category, "[%s:%d:%s] " format, __FILE__, __LINE__, __func__, ##__VA_ARGS__)
+    utils_log_message(LOG_WARNING, category, "[%s:%d:%s] " format, __FILE__, __LINE__, __func__, ##__VA_ARGS__)
 
 #define LOG_INFO(category, format, ...) \
-    log_message(LOG_INFO, category, "[%s:%d:%s] " format, __FILE__, __LINE__, __func__, ##__VA_ARGS__)
+    utils_log_message(LOG_INFO, category, "[%s:%d:%s] " format, __FILE__, __LINE__, __func__, ##__VA_ARGS__)
 
 #define LOG_DEBUG(category, format, ...) \
-    log_message(LOG_DEBUG, category, "[%s:%d:%s] " format, __FILE__, __LINE__, __func__, ##__VA_ARGS__)
+    utils_log_message(LOG_DEBUG, category, "[%s:%d:%s] " format, __FILE__, __LINE__, __func__, ##__VA_ARGS__)
 
 /*
  * =====================================================================================
@@ -151,9 +151,9 @@ typedef struct {
 } PerformanceStats;
 
 // Performance 함수 프로토타입
-uint64_t get_current_time(void);
-void get_performance_stats(PerformanceStats* stats, PerformanceStats* output);
-void print_performance_stats(PerformanceStats* stats);
+uint64_t utils_get_current_time(void);
+void utils_get_performance_stats(PerformanceStats* stats, PerformanceStats* output);
+void utils_print_performance_stats(PerformanceStats* stats);
 
 
 /*
@@ -183,13 +183,13 @@ typedef struct HashTable {
  * @param free_value_func 값을 메모리에서 해제할 때 사용할 함수 포인터 (e.g., free).
  * @return 생성된 HashTable 객체 포인터.
  */
-HashTable* ht_create(uint32_t size, void (*free_value_func)(void*));
+HashTable* utils_hashtable_create(uint32_t size, void (*free_value_func)(void*));
 
 /**
  * @brief 해시 테이블 및 모든 노드의 메모리를 해제합니다.
  * @param table 해제할 해시 테이블.
  */
-void ht_destroy(HashTable* table);
+void utils_hashtable_destroy(HashTable* table);
 
 /**
  * @brief 해시 테이블에 키-값 쌍을 삽입합니다. 키가 이미 존재하면 값을 덮어씁니다.
@@ -198,7 +198,7 @@ void ht_destroy(HashTable* table);
  * @param value 저장할 값에 대한 포인터.
  * @return 성공 시 true, 실패 시 false.
  */
-bool ht_insert(HashTable* table, const char* key, void* value);
+bool utils_hashtable_insert(HashTable* table, const char* key, void* value);
 
 /**
  * @brief 키를 사용하여 해시 테이블에서 값을 검색합니다.
@@ -206,7 +206,7 @@ bool ht_insert(HashTable* table, const char* key, void* value);
  * @param key 검색할 키.
  * @return 값을 찾으면 값에 대한 포인터, 없으면 NULL.
  */
-void* ht_get(HashTable* table, const char* key);
+void* utils_hashtable_get(HashTable* table, const char* key);
 
 /**
  * @brief 키를 사용하여 해시 테이블에서 항목을 삭제합니다.
@@ -214,7 +214,7 @@ void* ht_get(HashTable* table, const char* key);
  * @param key 삭제할 키.
  * @return 성공 시 true, 키가 없을 경우 false.
  */
-bool ht_delete(HashTable* table, const char* key);
+bool utils_hashtable_delete(HashTable* table, const char* key);
 
 /**
  * @brief 해시 테이블을 순회하며 각 항목에 대해 콜백 함수를 실행합니다.
@@ -222,7 +222,7 @@ bool ht_delete(HashTable* table, const char* key);
  * @param callback 각 키-값 쌍에 대해 실행할 함수.
  * @param user_data 콜백 함수에 전달할 사용자 데이터.
  */
-void ht_traverse(HashTable* table, void (*callback)(const char* key, void* value, void* user_data), void* user_data);
+void utils_hashtable_traverse(HashTable* table, void (*callback)(const char* key, void* value, void* user_data), void* user_data);
 
 /**
  * 네트워크 함수 오류 처리/로깅/자원정리 일관화 매크로
@@ -230,7 +230,7 @@ void ht_traverse(HashTable* table, void (*callback)(const char* key, void* value
 #define CHECK_PARAM_RET(expr, errcode, module, msg, ...) \
     do { \
         if (!(expr)) { \
-            error_report(errcode, module, msg, ##__VA_ARGS__); \
+            utils_report_error(errcode, module, msg, ##__VA_ARGS__); \
             return -1; \
         } \
     } while(0)
@@ -238,7 +238,7 @@ void ht_traverse(HashTable* table, void (*callback)(const char* key, void* value
 #define CHECK_SYSCALL_RET(expr, errcode, module, msg, ...) \
     do { \
         if ((expr) < 0) { \
-            error_report(errcode, module, msg ", %s", ##__VA_ARGS__, strerror(errno)); \
+            utils_report_error(errcode, module, msg ", %s", ##__VA_ARGS__, strerror(errno)); \
             return -1; \
         } \
     } while(0)
@@ -249,7 +249,7 @@ void ht_traverse(HashTable* table, void (*callback)(const char* key, void* value
 #define CHECK_PARAM_RET_PTR(expr, errcode, module, msg, ...) \
     do { \
         if (!(expr)) { \
-            error_report(errcode, module, msg, ##__VA_ARGS__); \
+            utils_report_error(errcode, module, msg, ##__VA_ARGS__); \
             return NULL; \
         } \
     } while(0)

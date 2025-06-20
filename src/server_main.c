@@ -106,11 +106,11 @@ void cleanup_client_queue(Client* client) {
 
 int main(int argc, char* argv[]) {
     if (argc != 2) {
-        error_report(ERROR_INVALID_PARAMETER, "Server", "사용법: %s <포트>", argv[0]);
+        utils_report_error(ERROR_INVALID_PARAMETER, "Server", "사용법: %s <포트>", argv[0]);
         return 1;
     }
     if (init_server(atoi(argv[1])) != 0) {
-        error_report(ERROR_NETWORK_SOCKET_CREATION_FAILED, "Main", "서버 초기화 실패");
+        utils_report_error(ERROR_NETWORK_SOCKET_CREATION_FAILED, "Main", "서버 초기화 실패");
         cleanup_server();
         return 1;
     }
@@ -124,7 +124,7 @@ int main(int argc, char* argv[]) {
         int ret = poll(fds, 2, 1000);
         if (ret < 0) {
             if (errno == EINTR) continue;
-            error_report(ERROR_NETWORK_SOCKET_OPTION_FAILED, "Main", "Poll 에러: %s", strerror(errno));
+            utils_report_error(ERROR_NETWORK_SOCKET_OPTION_FAILED, "Main", "Poll 에러: %s", strerror(errno));
             break;
         }
         if (ret == 0) {
@@ -157,7 +157,7 @@ int main(int argc, char* argv[]) {
             
             pthread_t thread;
             if (pthread_create(&thread, NULL, client_thread_func, client) != 0) {
-                error_report(ERROR_SESSION_CREATION_FAILED, "Main", "클라이언트 스레드 생성 실패");
+                utils_report_error(ERROR_SESSION_CREATION_FAILED, "Main", "클라이언트 스레드 생성 실패");
                 cleanup_client(client);
             }
             pthread_detach(thread);
@@ -270,7 +270,7 @@ static int process_device_reservation(Client* client, const char* device_id, int
 Message* response = create_message(MSG_RESERVE_RESPONSE, "success");
     if (response) {
         Device updated_device;
-        Device* devices_ptr = (Device*)ht_get(resource_manager->devices, device_id);
+        Device* devices_ptr = (Device*)utils_hashtable_get(resource_manager->devices, device_id);
         if (devices_ptr) {
             memcpy(&updated_device, devices_ptr, sizeof(Device));
             fill_status_response_args(response, &updated_device, 1, resource_manager, reservation_manager);
@@ -287,7 +287,7 @@ static bool is_user_authenticated(const char* username, const char* password) {
     }
 
     // 해시 테이블에서 사용자 이름으로 저장된 비밀번호를 조회
-    char* stored_password = (char*)ht_get(user_credentials, username);
+    char* stored_password = (char*)utils_hashtable_get(user_credentials, username);
 
     if (stored_password && strcmp(stored_password, password) == 0) {
         LOG_INFO("Auth", "사용자 인증 성공: %s", username);
@@ -414,7 +414,7 @@ static int handle_client_message(Client* client, const Message* message) {
 static void signal_handler(int signum) {
     (void)signum;
     if (pipe(self_pipe) == -1) { 
-        error_report(ERROR_FILE_OPERATION_FAILED, "Server", "pipe 생성 실패"); 
+        utils_report_error(ERROR_FILE_OPERATION_FAILED, "Server", "pipe 생성 실패"); 
         return; 
     }
     (void)write(self_pipe[1], "s", 1);
@@ -422,12 +422,12 @@ static void signal_handler(int signum) {
 
 static int init_server(int port) {
     if (pipe(self_pipe) == -1) { 
-        error_report(ERROR_FILE_OPERATION_FAILED, "Server", "pipe 생성 실패"); 
+        utils_report_error(ERROR_FILE_OPERATION_FAILED, "Server", "pipe 생성 실패"); 
         return -1; 
     }
     signal(SIGINT, signal_handler);
     signal(SIGTERM, signal_handler);
-    if (init_logger("logs/server.log") < 0) return -1;
+    if (utils_init_logger("logs/server.log") < 0) return -1;
     if (init_ssl_manager(&ssl_manager, true, "certs/server.crt", "certs/server.key") < 0) return -1;
     if (init_ui() < 0) return -1;
     
@@ -448,7 +448,7 @@ static void cleanup_server(void) {
     running = false;
     
     if (user_credentials) {
-        ht_destroy(user_credentials);
+        utils_hashtable_destroy(user_credentials);
         user_credentials = NULL;
         LOG_INFO("Auth", "사용자 정보 해시 테이블 정리 완료");
     }
@@ -470,7 +470,7 @@ static void cleanup_server(void) {
     
     cleanup_ui();
     cleanup_ssl_manager(&ssl_manager);
-    cleanup_logger();
+    utils_cleanup_logger();
     
     if (server_sock >= 0) {
         close(server_sock);
@@ -540,15 +540,16 @@ static int send_error_response(SSL* ssl, const char* error_message) {
 }
 
 static void load_users_from_file(const char* filename) {
-    user_credentials = ht_create(MAX_CLIENTS, free); // 비밀번호 문자열을 free로 해제
+    user_credentials = utils_hashtable_create(MAX_CLIENTS, free); // 비밀번호 문자열을 free로 해제
     if (!user_credentials) {
-        error_report(ERROR_HASHTABLE_CREATION_FAILED, "Auth", "사용자 정보 해시 테이블 생성 실패");
+        utils_report_error(ERROR_HASHTABLE_CREATION_FAILED, "Auth", "사용자 정보 해시 테이블 생성 실패");
         return;
     }
 
     FILE* fp = fopen(filename, "r");
     if (!fp) {
-        error_report(ERROR_FILE_OPERATION_FAILED, "Auth", "'%s' 파일을 열 수 없습니다.", filename);
+        utils_report_error(ERROR_FILE_OPERATION_FAILED, "Auth", "'%s' 파일을 열 수 없습니다.", filename);
+        utils_hashtable_destroy(user_credentials);
         return;
     }
 
@@ -562,7 +563,7 @@ static void load_users_from_file(const char* filename) {
         line[strcspn(line, "\n")] = 0;
         
         if (sscanf(line, "%[^:]:%s", username, password) == 2) {
-            if (ht_insert(user_credentials, username, strdup(password))) {
+            if (utils_hashtable_insert(user_credentials, username, strdup(password))) {
                 LOG_INFO("Auth", "사용자 로드: %s", username);
                 user_count++;
             } else {

@@ -25,7 +25,7 @@ int init_ui(void) {
     setlocale(LC_ALL, ""); // 로케일 설정 (한글 지원)
     global_ui_manager = init_ui_manager();  // UI 매니저 초기화
     if (!global_ui_manager) {  // UI 매니저 초기화 실패 시
-        error_report(ERROR_UI_INIT_FAILED, "UI", "UI 매니저 초기화 실패");  // 에러 메시지 출력
+        utils_report_error(ERROR_UI_INIT_FAILED, "UI", "UI 매니저 초기화 실패");  // 에러 메시지 출력
         return -1;  // 에러 코드 반환
     }
     LOG_INFO("UI", "UI 시스템 초기화 성공");  // 정보 로그 출력
@@ -84,7 +84,7 @@ void update_server_status(int session_count, int port) {
  */
 void update_server_devices(const Device* devices, int count, ResourceManager* resource_manager, ReservationManager* reservation_manager){
     if (!global_ui_manager) {
-        error_report(ERROR_UI_INIT_FAILED, "UI", "update_server_devices: UI 매니저가 초기화되지 않음");
+        utils_report_error(ERROR_UI_INIT_FAILED, "UI", "update_server_devices: UI 매니저가 초기화되지 않음");
         return;
     }
 
@@ -172,7 +172,7 @@ void refresh_all_windows(void) {
 UIManager* init_ui_manager(void) {
     UIManager* manager = (UIManager*)malloc(sizeof(UIManager));
     if (!manager) {
-        error_report(ERROR_MEMORY_ALLOCATION_FAILED, "UI", "UI 매니저 메모리 할당 실패");
+        utils_report_error(ERROR_MEMORY_ALLOCATION_FAILED, "UI", "UI 매니저 메모리 할당 실패");
         return NULL;
     }
 
@@ -197,7 +197,7 @@ UIManager* init_ui_manager(void) {
     int max_y, max_x;
     getmaxyx(stdscr, max_y, max_x);
     if (max_y < 24 || max_x < 80) {
-        error_report(ERROR_UI_TERMINAL_TOO_SMALL, "UI", "터미널 크기가 너무 작습니다 (최소 80x24 필요).");
+        utils_report_error(ERROR_UI_TERMINAL_TOO_SMALL, "UI", "터미널 크기가 너무 작습니다 (최소 80x24 필요).");
         endwin();
         free(manager);
         return NULL;
@@ -209,7 +209,7 @@ UIManager* init_ui_manager(void) {
     manager->message_win = newwin(1, max_x, 0, 0);
 
     if (!manager->menu_win || !manager->status_win || !manager->message_win) {
-        error_report(ERROR_UI_INIT_FAILED, "UI", "윈도우 생성 실패");
+        utils_report_error(ERROR_UI_INIT_FAILED, "UI", "윈도우 생성 실패");
         if (manager->menu_win) delwin(manager->menu_win);
         if (manager->status_win) delwin(manager->status_win);
         if (manager->message_win) delwin(manager->message_win);

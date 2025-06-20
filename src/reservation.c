@@ -18,23 +18,23 @@ static void null_free_func(void* data) { (void)data; }
 ReservationManager* init_reservation_manager(ResourceManager* res_manager, void (*callback)(void)) {
     ReservationManager* manager = (ReservationManager*)malloc(sizeof(ReservationManager));
     if (!manager) {
-        error_report(ERROR_MEMORY_ALLOCATION_FAILED, "Reservation", "예약 관리자 메모리 할당 실패");
+        utils_report_error(ERROR_MEMORY_ALLOCATION_FAILED, "Reservation", "예약 관리자 메모리 할당 실패");
         return NULL;
     }
 
     manager->reservation_count = 0;
     manager->next_reservation_id = 1;
     manager->broadcast_callback = callback;
-    manager->reservation_map = ht_create(MAX_RESERVATIONS, null_free_func);
+    manager->reservation_map = utils_hashtable_create(MAX_RESERVATIONS, null_free_func);
     if (!manager->reservation_map) {
-        error_report(ERROR_HASHTABLE_CREATION_FAILED, "Reservation", "예약 해시 테이블 생성 실패");
+        utils_report_error(ERROR_HASHTABLE_CREATION_FAILED, "Reservation", "예약 해시 테이블 생성 실패");
         free(manager);
         return NULL;
     }
 
     if (pthread_mutex_init(&manager->mutex, NULL) != 0) {
-        error_report(ERROR_INVALID_STATE, "Reservation", "뮤텍스 초기화 실패");
-        ht_destroy(manager->reservation_map);
+        utils_report_error(ERROR_INVALID_STATE, "Reservation", "뮤텍스 초기화 실패");
+        utils_hashtable_destroy(manager->reservation_map);
         free(manager);
         return NULL;
     }
@@ -44,10 +44,10 @@ ReservationManager* init_reservation_manager(ResourceManager* res_manager, void 
     cleanup_thread_running = true;
 
     if (pthread_create(&cleanup_thread, NULL, cleanup_thread_function, NULL) != 0) {
-        error_report(ERROR_INVALID_STATE, "Reservation", "만료 예약 정리 스레드 생성 실패");
+        utils_report_error(ERROR_INVALID_STATE, "Reservation", "만료 예약 정리 스레드 생성 실패");
         cleanup_thread_running = false;
         global_manager = NULL;
-        ht_destroy(manager->reservation_map);
+        utils_hashtable_destroy(manager->reservation_map);
         pthread_mutex_destroy(&manager->mutex);
         free(manager);
         return NULL;
@@ -59,13 +59,13 @@ ReservationManager* init_reservation_manager(ResourceManager* res_manager, void 
 
 Reservation* get_active_reservation_for_device(ReservationManager* resv_manager, ResourceManager* rsrc_manager, const char* device_id) {
     if (!resv_manager || !rsrc_manager || !device_id) {
-        error_report(ERROR_INVALID_PARAMETER, "Reservation", "get_active_reservation_for_device: 잘못된 파라미터");
+        utils_report_error(ERROR_INVALID_PARAMETER, "Reservation", "get_active_reservation_for_device: 잘못된 파라미터");
         return NULL;
     }
 
     // LOG_INFO("Reservation", "장비 활성 예약 조회 시작: 장비ID=%s", device_id);
 
-    Device* device = (Device*)ht_get(rsrc_manager->devices, device_id);
+    Device* device = (Device*)utils_hashtable_get(rsrc_manager->devices, device_id);
     if (!device) {
         // LOG_WARNING("Reservation", "장비를 찾을 수 없음: ID=%s", device_id);
         return NULL;
@@ -83,7 +83,7 @@ Reservation* get_active_reservation_for_device(ReservationManager* resv_manager,
     snprintf(id_str, sizeof(id_str), "%u", device->active_reservation_id);
     
     pthread_mutex_lock(&resv_manager->mutex);
-    Reservation* reservation = (Reservation*)ht_get(resv_manager->reservation_map, id_str);
+    Reservation* reservation = (Reservation*)utils_hashtable_get(resv_manager->reservation_map, id_str);
     pthread_mutex_unlock(&resv_manager->mutex);
 
     if (reservation && reservation->status == RESERVATION_APPROVED) {
@@ -120,7 +120,9 @@ void cleanup_reservation_manager(ReservationManager* manager) {
         global_manager = NULL;
     }
 
-    ht_destroy(manager->reservation_map);
+    if (manager->reservation_map) {
+        utils_hashtable_destroy(manager->reservation_map);
+    }
     pthread_mutex_destroy(&manager->mutex);
     free(manager);
     // LOG_INFO("Reservation", "예약 관리자 정리 완료");
@@ -130,7 +132,7 @@ uint32_t create_reservation(ReservationManager* manager, const char* device_id,
                             const char* username, time_t start_time,
                             time_t end_time, const char* reason)   {
     if (!manager || !device_id || !username || !reason) {
-        error_report(ERROR_INVALID_PARAMETER, "Reservation", "잘못된 파라미터");
+        utils_report_error(ERROR_INVALID_PARAMETER, "Reservation", "잘못된 파라미터");
         return 0;
     }
 
@@ -138,15 +140,14 @@ uint32_t create_reservation(ReservationManager* manager, const char* device_id,
     pthread_mutex_lock(&manager->mutex);
 
     if (manager->reservation_count >= MAX_RESERVATIONS) {
-        error_report(ERROR_RESERVATION_MAX_LIMIT_REACHED, "Reservation", "예약 최대 개수 초과");
         pthread_mutex_unlock(&manager->mutex);
+        utils_report_error(ERROR_RESERVATION_MAX_LIMIT_REACHED, "Reservation", "예약 최대 개수 초과");
         return 0;
     }
     
-    time_t current_time = time(NULL);
-    if (start_time < current_time || end_time <= start_time) {
-        error_report(ERROR_RESERVATION_INVALID_TIME, "Reservation", "잘못된 예약 시간");
+    if (start_time >= end_time || start_time < time(NULL)) {
         pthread_mutex_unlock(&manager->mutex);
+        utils_report_error(ERROR_RESERVATION_INVALID_TIME, "Reservation", "잘못된 예약 시간");
         return 0;
     }
 
@@ -155,8 +156,8 @@ uint32_t create_reservation(ReservationManager* manager, const char* device_id,
             manager->reservations[i].status == RESERVATION_APPROVED) {
             if (!(end_time <= manager->reservations[i].start_time ||
                   start_time >= manager->reservations[i].end_time)) {
-                error_report(ERROR_RESERVATION_CONFLICT, "Reservation", "해당 장비는 요청된 시간에 이미 예약이 존재합니다.");
                 pthread_mutex_unlock(&manager->mutex);
+                utils_report_error(ERROR_RESERVATION_CONFLICT, "Reservation", "해당 장비는 요청된 시간에 이미 예약이 존재합니다.");
                 return 0;
             }
         }
@@ -179,7 +180,7 @@ uint32_t create_reservation(ReservationManager* manager, const char* device_id,
 
     char id_str[16];
     snprintf(id_str, sizeof(id_str), "%u", new_reservation->id);
-    ht_insert(manager->reservation_map, id_str, new_reservation);
+    utils_hashtable_insert(manager->reservation_map, id_str, new_reservation);
 
     manager->reservation_count++;
 
@@ -191,7 +192,7 @@ uint32_t create_reservation(ReservationManager* manager, const char* device_id,
 bool cancel_reservation(ReservationManager* manager, uint32_t reservation_id,
                        const char* username) {
     if (!manager || !username) {
-        error_report(ERROR_INVALID_PARAMETER, "Reservation", "잘못된 파라미터");
+        utils_report_error(ERROR_INVALID_PARAMETER, "Reservation", "잘못된 파라미터");
         return false;
     }
 
@@ -200,28 +201,28 @@ bool cancel_reservation(ReservationManager* manager, uint32_t reservation_id,
 
     char id_str[16];
     snprintf(id_str, sizeof(id_str), "%u", reservation_id);
-    Reservation* reservation = (Reservation*)ht_get(manager->reservation_map, id_str);
+    Reservation* reservation = (Reservation*)utils_hashtable_get(manager->reservation_map, id_str);
 
     if (!reservation) {
-        error_report(ERROR_RESERVATION_NOT_FOUND, "Reservation", "예약을 찾을 수 없음: ID=%u", reservation_id);
         pthread_mutex_unlock(&manager->mutex);
+        utils_report_error(ERROR_RESERVATION_NOT_FOUND, "Reservation", "예약을 찾을 수 없음: ID=%u", reservation_id);
         return false;
     }
 
     if (strcmp(reservation->username, username) != 0) {
-        error_report(ERROR_RESERVATION_PERMISSION_DENIED, "Reservation", "예약 취소 권한 없음: ID=%u, 사용자=%s", reservation_id, username);
         pthread_mutex_unlock(&manager->mutex);
+        utils_report_error(ERROR_RESERVATION_PERMISSION_DENIED, "Reservation", "예약 취소 권한 없음: ID=%u, 사용자=%s", reservation_id, username);
         return false;
     }
 
     if (reservation->status != RESERVATION_APPROVED) {
-        error_report(ERROR_RESERVATION_CANCELLATION_FAILED, "Reservation", "이미 처리되었거나 취소된 예약입니다: ID=%u", reservation_id);
         pthread_mutex_unlock(&manager->mutex);
+        utils_report_error(ERROR_RESERVATION_CANCELLATION_FAILED, "Reservation", "이미 처리되었거나 취소된 예약입니다: ID=%u", reservation_id);
         return false;
     }
 
     reservation->status = RESERVATION_CANCELLED;
-    ht_delete(manager->reservation_map, id_str);
+    utils_hashtable_delete(manager->reservation_map, id_str);
 
     // LOG_INFO("Reservation", "예약 취소 성공: ID=%u", reservation_id);
     pthread_mutex_unlock(&manager->mutex);
@@ -247,7 +248,7 @@ void cleanup_expired_reservations(ReservationManager* manager, ResourceManager* 
             
             char id_str[16];
             snprintf(id_str, sizeof(id_str), "%u", r->id);
-            ht_delete(manager->reservation_map, id_str);
+            utils_hashtable_delete(manager->reservation_map, id_str);
             
             // LOG_INFO("Reservation", "예약 만료 감지: 장비 ID=%s", r->device_id);
         }
