@@ -332,33 +332,36 @@ int network_set_socket_options(int socket_fd, bool is_server) {
 
     // TCP_KEEPALIVE 관련 옵션: 서버 소켓에만 적용, 플랫폼별 분기
     if (is_server) {
-        #if defined(TCP_KEEPIDLE)
-        int keepidle = 60;
-        if (setsockopt(socket_fd, IPPROTO_TCP, TCP_KEEPIDLE, &keepidle, sizeof(keepidle)) < 0) {
-            utils_report_error(ERROR_NETWORK_SOCKET_OPTION_FAILED, "Network", "TCP_KEEPIDLE 설정 실패: %s", strerror(errno));
-            return -1;
-        }
-        #elif defined(TCP_KEEPALIVE) // macOS
+#ifdef __APPLE__
+        // macOS에서는 TCP_KEEPALIVE (초 단위)
         int keepidle = 60;
         if (setsockopt(socket_fd, IPPROTO_TCP, TCP_KEEPALIVE, &keepidle, sizeof(keepidle)) < 0) {
             utils_report_error(ERROR_NETWORK_SOCKET_OPTION_FAILED, "Network", "TCP_KEEPALIVE(macOS) 설정 실패: %s", strerror(errno));
             return -1;
         }
-        #endif
-        #ifdef TCP_KEEPINTVL
+#else
+    #if defined(TCP_KEEPIDLE)
+        int keepidle = 60;
+        if (setsockopt(socket_fd, IPPROTO_TCP, TCP_KEEPIDLE, &keepidle, sizeof(keepidle)) < 0) {
+            utils_report_error(ERROR_NETWORK_SOCKET_OPTION_FAILED, "Network", "TCP_KEEPIDLE 설정 실패: %s", strerror(errno));
+            return -1;
+        }
+    #endif
+#endif
+#ifdef TCP_KEEPINTVL
         int keepintvl = 10;
         if (setsockopt(socket_fd, IPPROTO_TCP, TCP_KEEPINTVL, &keepintvl, sizeof(keepintvl)) < 0) {
             utils_report_error(ERROR_NETWORK_SOCKET_OPTION_FAILED, "Network", "TCP_KEEPINTVL 설정 실패: %s", strerror(errno));
             return -1;
         }
-        #endif
-        #ifdef TCP_KEEPCNT
+#endif
+#ifdef TCP_KEEPCNT
         int keepcnt = 3;
         if (setsockopt(socket_fd, IPPROTO_TCP, TCP_KEEPCNT, &keepcnt, sizeof(keepcnt)) < 0) {
             utils_report_error(ERROR_NETWORK_SOCKET_OPTION_FAILED, "Network", "TCP_KEEPCNT 설정 실패: %s", strerror(errno));
             return -1;
         }
-        #endif
+#endif
     }
 
     // LOG_INFO("Network", "소켓 옵션 설정 완료: fd=%d, is_server=%d", socket_fd, is_server);

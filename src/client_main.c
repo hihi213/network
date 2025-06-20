@@ -51,6 +51,7 @@ static void client_handle_input_reservation_time(int ch);
 static void client_handle_input_login_input(int ch);
 static device_status_t client_string_to_device_status(const char* status_str);
 static void client_process_and_store_device_list(const message_t* message);
+static void client_draw_message_win(const char* msg);
 
 // 전역 변수
 extern ui_manager_t* g_ui_manager;
@@ -147,18 +148,16 @@ static void client_draw_ui_for_current_state() {
             client_draw_device_list(); 
             break;
         case APP_STATE_RESERVATION_TIME:
-            {
-                client_draw_device_list();
-                mvwprintw(g_ui_manager->menu_win, LINES - 5, 2, "예약할 시간(초) 입력 (1~86400, ESC:취소): %s", reservation_input_buffer);
-                
-                int menu_win_height, menu_win_width;
-                getmaxyx(g_ui_manager->menu_win, menu_win_height, menu_win_width);
-                (void)menu_win_width;
-                char help_msg[128];
-                snprintf(help_msg, sizeof(help_msg), "도움말: 1 ~ 86400 사이의 예약 시간(초)을 입력하고 Enter를 누르세요.");
-                mvwprintw(g_ui_manager->menu_win, menu_win_height - 2, 2, "%-s", help_msg);
-                curs_set(1); // 예약 시간 입력 시 커서 보임
-            }
+            client_draw_device_list();
+            int menu_win_height, menu_win_width;
+            getmaxyx(g_ui_manager->menu_win, menu_win_height, menu_win_width);
+            // 안내 메시지 message_win에 출력
+            client_draw_message_win("[숫자] 시간 입력  [Enter] 예약  [ESC] 취소");
+            mvwprintw(g_ui_manager->menu_win, LINES - 5, 2, "예약할 시간(초) 입력 (1~86400, ESC:취소): %s", reservation_input_buffer);
+            char help_msg[128];
+            snprintf(help_msg, sizeof(help_msg), "도움말: 1 ~ 86400 사이의 예약 시간(초)을 입력하고 Enter를 누르세요.");
+            mvwprintw(g_ui_manager->menu_win, menu_win_height - 2, 2, "%-s", help_msg);
+            curs_set(1); // 예약 시간 입력 시 커서 보임
             break;
         case APP_STATE_EXIT: 
             break;
@@ -171,7 +170,10 @@ static void client_draw_ui_for_current_state() {
 }
 
 static void client_draw_login_input_ui() {
-    mvwprintw(g_ui_manager->menu_win, 0, 2, " 로그인 (Tab: 필드 전환, Enter: 로그인, ESC: 뒤로) ");
+    int menu_win_height, menu_win_width;
+    getmaxyx(g_ui_manager->menu_win, menu_win_height, menu_win_width);
+    // 안내 메시지 message_win에 출력
+    client_draw_message_win("[Tab] 필드 전환  [Enter] 로그인  [ESC] 메인 메뉴");
 
     // 아이디 필드 그리기
     if (active_login_field == LOGIN_FIELD_USERNAME) wattron(g_ui_manager->menu_win, A_REVERSE);
@@ -202,8 +204,11 @@ static void client_draw_login_input_ui() {
 
 
 static void client_draw_main_menu() {
+    int menu_win_height, menu_win_width;
+    getmaxyx(g_ui_manager->menu_win, menu_win_height, menu_win_width);
+    // 안내 메시지 message_win에 출력
+    client_draw_message_win("[↑↓] 이동  [Enter] 선택  [ESC] 종료");
     const char* items[] = { "로그인", "종료" };
-    mvwprintw(g_ui_manager->menu_win, 0, 2, " 메인 메뉴 ");
     for (int i = 0; i < 2; i++) {
         if (i == menu_highlight) wattron(g_ui_manager->menu_win, A_REVERSE);
         mvwprintw(g_ui_manager->menu_win, i + 2, 2, " > %s", items[i]);
@@ -212,8 +217,11 @@ static void client_draw_main_menu() {
 }
 
 static void client_draw_logged_in_menu() {
+    int menu_win_height, menu_win_width;
+    getmaxyx(g_ui_manager->menu_win, menu_win_height, menu_win_width);
+    // 안내 메시지 message_win에 출력
+    client_draw_message_win("[↑↓] 이동  [Enter] 선택  [ESC] 로그아웃");
     const char* items[] = { "장비 현황 조회 및 예약", "로그아웃" };
-    mvwprintw(g_ui_manager->menu_win, 0, 2, " 메인 메뉴 ");
     for (int i = 0; i < 2; i++) {
         if (i == menu_highlight) wattron(g_ui_manager->menu_win, A_REVERSE);
         mvwprintw(g_ui_manager->menu_win, i + 2, 2, " > %s", items[i]);
@@ -222,7 +230,10 @@ static void client_draw_logged_in_menu() {
 }
 
 static void client_draw_device_list() {
-    mvwprintw(g_ui_manager->menu_win, 0, 2, " 장비 목록 (↑↓: 이동, Enter: 예약/선택, C: 예약취소, ESC: 뒤로) ");
+    int menu_win_height, menu_win_width;
+    getmaxyx(g_ui_manager->menu_win, menu_win_height, menu_win_width);
+    // 안내 메시지 message_win에 출력
+    client_draw_message_win("[↑↓] 이동  [Enter] 예약/선택  [C] 예약취소  [ESC] 뒤로");
 
     if (!device_list || device_count == 0) {
         mvwprintw(g_ui_manager->menu_win, 2, 2, "장비 목록을 가져오는 중이거나, 등록된 장비가 없습니다.");
@@ -230,9 +241,6 @@ static void client_draw_device_list() {
     }
 
     time_t current_time = time(NULL);
-    int menu_win_height, menu_win_width;
-    getmaxyx(g_ui_manager->menu_win, menu_win_height, menu_win_width);
-    (void)menu_win_width;
     
     const int visible_items = menu_win_height - 5;
 
@@ -364,6 +372,10 @@ static void client_handle_input_login_input(int ch) {
         buffer_size = sizeof(login_password_buffer);
     }
 
+    // [로그 추가] 어떤 키가 어느 필드에 입력됐는지 기록
+    LOG_INFO("LoginInput", "입력 필드: %s, 입력 키: %d (문자: %c)",
+        (active_login_field == LOGIN_FIELD_USERNAME) ? "USERNAME" : "PASSWORD", ch, (ch >= 32 && ch <= 126) ? ch : ' ');
+
     switch (ch) {
         case 9: // Tab 키
             active_login_field = (active_login_field == LOGIN_FIELD_USERNAME) 
@@ -393,15 +405,20 @@ static void client_handle_input_login_input(int ch) {
         case KEY_BACKSPACE:
         case 127:
             if (*current_pos > 0) {
-                current_buffer[--(*current_pos)] = '\0';
+                (*current_pos)--;
+                current_buffer[*current_pos] = '\0';
+                // [로그 추가] 실제로 UI에서 삭제가 반영될 때만 로그
+                LOG_INFO("LoginInput", "UI 반영: %s 필드에서 백스페이스(코드:%d)로 1글자 삭제", (active_login_field == LOGIN_FIELD_USERNAME) ? "USERNAME" : "PASSWORD", ch);
             }
             break;
 
         default:
             // 화면에 표시 가능한 문자인지 확인 후 버퍼에 추가
-            if (isprint(ch) && (size_t)(*current_pos) < buffer_size - 1) {
+            if ((ch >= 32 && ch <= 126) && (size_t)(*current_pos) < buffer_size - 1) {
                 current_buffer[(*current_pos)++] = ch;
                 current_buffer[*current_pos] = '\0';
+                // [로그 추가] 실제로 UI에 문자가 추가될 때만 로그
+                LOG_INFO("LoginInput", "UI 반영: %s 필드에 키 입력(코드:%d, 문자:%c) 추가", (active_login_field == LOGIN_FIELD_USERNAME) ? "USERNAME" : "PASSWORD", ch, ch);
             }
             break;
     }
@@ -755,4 +772,12 @@ static device_status_t client_string_to_device_status(const char* status_str) {
     if (strcmp(status_str, "maintenance") == 0) return DEVICE_MAINTENANCE;
     
     return DEVICE_MAINTENANCE;
+}
+
+static void client_draw_message_win(const char* msg) {
+    if (!g_ui_manager || !g_ui_manager->message_win) return;
+    werase(g_ui_manager->message_win);
+    box(g_ui_manager->message_win, 0, 0);
+    mvwprintw(g_ui_manager->message_win, 0, 2, "%s", msg);
+    wrefresh(g_ui_manager->message_win);
 }
