@@ -19,25 +19,25 @@
 #define NET_IO_MAX_RETRY 3
 
 // [내부 함수] 요청한 길이만큼 데이터를 완전히 전송하는 안정적인 쓰기 함수
-static bool network_ssl_write_fully(SSL* ssl, const void* buf, int len) {
-    if (!ssl || !buf) return false;
-    if (len == 0) return true;
-
-    const char* ptr = (const char*)buf;
-    while (len > 0) {
-        int bytes_written = SSL_write(ssl, ptr, len);
-        if (bytes_written <= 0) {
-            int err = SSL_get_error(ssl, bytes_written);
-            if (err != SSL_ERROR_ZERO_RETURN) {
-                utils_report_error(ERROR_NETWORK_SEND_FAILED, "Network", "SSL_write 에러 발생: %d", err);
-            }
-            return false;
-        }
-        ptr += bytes_written;
-        len -= bytes_written;
-    }
-    return true;
-}
+// static bool network_ssl_write_fully(SSL* ssl, const void* buf, int len) {
+//     if (!ssl || !buf) return false;
+//     if (len == 0) return true;
+//
+//     const char* ptr = (const char*)buf;
+//     while (len > 0) {
+//         int bytes_written = SSL_write(ssl, ptr, len);
+//         if (bytes_written <= 0) {
+//             int err = SSL_get_error(ssl, bytes_written);
+//             if (err != SSL_ERROR_ZERO_RETURN) {
+//                 utils_report_error(ERROR_NETWORK_SEND_FAILED, "Network", "SSL_write 에러 발생: %d", err);
+//             }
+//             return false;
+//         }
+//         ptr += bytes_written;
+//         len -= bytes_written;
+//     }
+//     return true;
+// }
 
 // [핵심 수정] 길이가 0인 문자열도 올바르게 처리하도록 수정
 int network_send_message(SSL* ssl, const message_t* message) {
@@ -379,7 +379,7 @@ void network_cleanup_ssl_manager(ssl_manager_t* manager) {
  * @param server_fd 서버 소켓 파일 디스크립터
  * @param ssl_manager SSL 매니저 포인터
  * @param client_ip 클라이언트 IP 주소를 저장할 버퍼
- * @return 성공 시 SSLHandler* 포인터, 실패 시 NULL
+ * @return 성공 시 ssl_handler_t* 포인터, 실패 시 NULL
  */
 ssl_handler_t* network_accept_client(int server_fd, ssl_manager_t* ssl_manager, char* client_ip) {
     CHECK_PARAM_RET_PTR(ssl_manager && client_ip, ERROR_INVALID_PARAMETER, "Network", "network_accept_client: 잘못된 파라미터");
@@ -417,7 +417,7 @@ ssl_handler_t* network_accept_client(int server_fd, ssl_manager_t* ssl_manager, 
  * @brief SSL 핸드셰이크를 수행합니다.
  * @param client_fd 클라이언트 소켓 파일 디스크립터
  * @param mgr SSL 매니저 포인터
- * @return 성공 시 SSLHandler 포인터, 실패 시 NULL
+ * @return 성공 시 ssl_handler_t* 포인터, 실패 시 NULL
  */
 ssl_handler_t* network_perform_ssl_handshake(int client_fd, ssl_manager_t* mgr) {
     CHECK_PARAM_RET_PTR(mgr, ERROR_INVALID_PARAMETER, "Network", "network_perform_ssl_handshake: SSL 매니저가 NULL입니다");

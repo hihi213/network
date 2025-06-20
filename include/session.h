@@ -9,7 +9,7 @@
 // 실제 정의는 다른 헤더파일에 있지만, 여기서는 포인터만 사용하므로
 // 컴파일러에게 해당 이름의 구조체가 존재한다는 것만 알려줍니다.
 typedef struct ssl_st SSL;
-struct SSLHandler;
+struct ssl_handler;
 // ----------------------------
 
 #define MAX_USERNAME_LENGTH 32
@@ -47,7 +47,7 @@ typedef struct server_session {
 typedef struct client_session {
     int socket_fd;
     SSL* ssl;
-    struct SSLHandler* ssl_handler;
+    struct ssl_handler* ssl_handler;
     char server_ip[MAX_IP_LENGTH];
     int server_port;
     session_state_t state;

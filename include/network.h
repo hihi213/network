@@ -60,7 +60,7 @@ ssl_handler_t* network_accept_client(int server_fd, ssl_manager_t* ssl_manager, 
  * @brief SSL 핸드셰이크를 수행합니다.
  * @param client_fd 클라이언트 소켓 파일 디스크립터
  * @param mgr SSL 매니저 포인터
- * @return 성공 시 SSLHandler 포인터, 실패 시 NULL
+ * @return 성공 시 ssl_handler_t 포인터, 실패 시 NULL
  */
 ssl_handler_t* network_perform_ssl_handshake(int client_fd, ssl_manager_t* mgr);
 
