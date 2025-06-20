@@ -10,7 +10,7 @@
  */
 
 // 에러 코드 열거형 - 모듈별/상황별 에러 코드 정의
-typedef enum {
+typedef enum error_code {
     // 시스템 공통 에러 (0-99)
     ERROR_NONE = 0,
     ERROR_INVALID_PARAMETER,
@@ -91,10 +91,10 @@ typedef enum {
     // 성능 측정 관련 에러 (900-999)
     ERROR_PERFORMANCE_TIME_FAILED = 900,
     ERROR_PERFORMANCE_STATS_INVALID
-} ErrorCode;
+} error_code_t;
 
 // 에러 보고 함수 프로토타입
-void utils_report_error(ErrorCode error_code, const char* module, const char* additional_info, ...);
+void utils_report_error(error_code_t error_code, const char* module, const char* additional_info, ...);
 
 /*
  * =====================================================================================
@@ -103,17 +103,17 @@ void utils_report_error(ErrorCode error_code, const char* module, const char* ad
  */
 
 // 로그 레벨 정의
-typedef enum {
+typedef enum log_level {
     LOG_ERROR,
     LOG_WARNING,
     LOG_INFO,
     LOG_DEBUG
-} LogLevel;
+} log_level_t;
 
 // Logger 함수 프로토타입
 int utils_init_logger(const char* filename);
 void utils_cleanup_logger(void);
-void utils_log_message(LogLevel level, const char* category, const char* format, ...);
+void utils_log_message(log_level_t level, const char* category, const char* format, ...);
 const char* utils_get_timestamp_string(time_t timestamp);
 
 // 로그 매크로 - 위치 정보 자동 캡처
@@ -136,7 +136,7 @@ const char* utils_get_timestamp_string(time_t timestamp);
  */
 
 // 성능 통계 구조체
-typedef struct {
+typedef struct performance_stats {
     uint64_t total_requests;
     uint64_t successful_requests;
     uint64_t failed_requests;
@@ -148,12 +148,12 @@ typedef struct {
     uint64_t total_data_received;
     uint64_t total_errors;
     pthread_mutex_t mutex;
-} PerformanceStats;
+} performance_stats_t;
 
 // Performance 함수 프로토타입
 uint64_t utils_get_current_time(void);
-void utils_get_performance_stats(PerformanceStats* stats, PerformanceStats* output);
-void utils_print_performance_stats(PerformanceStats* stats);
+void utils_get_performance_stats(performance_stats_t* stats, performance_stats_t* output);
+void utils_print_performance_stats(performance_stats_t* stats);
 
 
 /*
@@ -163,19 +163,19 @@ void utils_print_performance_stats(PerformanceStats* stats);
  */
 
 // 해시 테이블의 각 항목(노드)
-typedef struct HashNode {
+typedef struct hash_node {
     char* key;
     void* value;
-    struct HashNode* next; // 충돌 발생 시 체이닝을 위한 포인터
-} HashNode;
+    struct hash_node* next; // 충돌 발생 시 체이닝을 위한 포인터
+} hash_node_t;
 
 // 해시 테이블 구조체
-typedef struct HashTable {
+typedef struct hash_table {
     uint32_t size;
     uint32_t count;
-    HashNode** buckets;
+    hash_node_t** buckets;
     void (*free_value)(void*); // 값을 해제하는 함수 포인터
-} HashTable;
+} hash_table_t;
 
 /**
  * @brief 새로운 해시 테이블을 생성합니다.
@@ -183,13 +183,13 @@ typedef struct HashTable {
  * @param free_value_func 값을 메모리에서 해제할 때 사용할 함수 포인터 (e.g., free).
  * @return 생성된 HashTable 객체 포인터.
  */
-HashTable* utils_hashtable_create(uint32_t size, void (*free_value_func)(void*));
+hash_table_t* utils_hashtable_create(uint32_t size, void (*free_value_func)(void*));
 
 /**
  * @brief 해시 테이블 및 모든 노드의 메모리를 해제합니다.
  * @param table 해제할 해시 테이블.
  */
-void utils_hashtable_destroy(HashTable* table);
+void utils_hashtable_destroy(hash_table_t* table);
 
 /**
  * @brief 해시 테이블에 키-값 쌍을 삽입합니다. 키가 이미 존재하면 값을 덮어씁니다.
@@ -198,7 +198,7 @@ void utils_hashtable_destroy(HashTable* table);
  * @param value 저장할 값에 대한 포인터.
  * @return 성공 시 true, 실패 시 false.
  */
-bool utils_hashtable_insert(HashTable* table, const char* key, void* value);
+bool utils_hashtable_insert(hash_table_t* table, const char* key, void* value);
 
 /**
  * @brief 키를 사용하여 해시 테이블에서 값을 검색합니다.
@@ -206,7 +206,7 @@ bool utils_hashtable_insert(HashTable* table, const char* key, void* value);
  * @param key 검색할 키.
  * @return 값을 찾으면 값에 대한 포인터, 없으면 NULL.
  */
-void* utils_hashtable_get(HashTable* table, const char* key);
+void* utils_hashtable_get(hash_table_t* table, const char* key);
 
 /**
  * @brief 키를 사용하여 해시 테이블에서 항목을 삭제합니다.
@@ -214,7 +214,7 @@ void* utils_hashtable_get(HashTable* table, const char* key);
  * @param key 삭제할 키.
  * @return 성공 시 true, 키가 없을 경우 false.
  */
-bool utils_hashtable_delete(HashTable* table, const char* key);
+bool utils_hashtable_delete(hash_table_t* table, const char* key);
 
 /**
  * @brief 해시 테이블을 순회하며 각 항목에 대해 콜백 함수를 실행합니다.
@@ -222,7 +222,7 @@ bool utils_hashtable_delete(HashTable* table, const char* key);
  * @param callback 각 키-값 쌍에 대해 실행할 함수.
  * @param user_data 콜백 함수에 전달할 사용자 데이터.
  */
-void utils_hashtable_traverse(HashTable* table, void (*callback)(const char* key, void* value, void* user_data), void* user_data);
+void utils_hashtable_traverse(hash_table_t* table, void (*callback)(const char* key, void* value, void* user_data), void* user_data);
 
 /**
  * 네트워크 함수 오류 처리/로깅/자원정리 일관화 매크로

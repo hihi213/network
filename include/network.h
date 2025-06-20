@@ -11,30 +11,30 @@
 #define TCP_KEEPCNT 0x13
 
 /* SSL 핸드셰이크 상태 열거형 */
-typedef enum {
+typedef enum ssl_handshake_state {
     SSL_HANDSHAKE_INIT,
     SSL_HANDSHAKE_WANT_READ,
     SSL_HANDSHAKE_WANT_WRITE,
     SSL_HANDSHAKE_COMPLETE,
     SSL_HANDSHAKE_ERROR
-} SSLHandshakeState;
+} ssl_handshake_state_t;
 
 /* SSL 핸들러/매니저 구조체 */
-typedef struct {
+typedef struct ssl_handler {
     SSL* ssl;
     SSL_CTX* ctx;
     int socket_fd;
-    SSLHandshakeState handshake_state;
+    ssl_handshake_state_t handshake_state;
     time_t last_activity;
     bool is_server;
-} SSLHandler;
+} ssl_handler_t;
 
-typedef struct {
+typedef struct ssl_manager {
     SSL_CTX* ctx;
     char cert_file[256];
     char key_file[256];
     bool is_server;
-} SSLManager;
+} ssl_manager_t;
 
 /* 소켓/SSL 초기화 및 정리 함수 */
 int network_init_server_socket(int port);
@@ -47,14 +47,14 @@ int network_init_server_socket(int port);
  */
 int network_init_client_socket(const char* ip, int port);
 
-int network_init_ssl_manager(SSLManager* manager, bool is_server, const char* cert_file, const char* key_file);
-void network_cleanup_ssl_manager(SSLManager* manager);
+int network_init_ssl_manager(ssl_manager_t* manager, bool is_server, const char* cert_file, const char* key_file);
+void network_cleanup_ssl_manager(ssl_manager_t* manager);
 
 /* SSL 핸들러 관리 함수 */
-SSLHandler* network_create_ssl_handler(SSLManager* manager, int socket_fd);
-void network_cleanup_ssl_handler(SSLHandler* handler);
-int network_handle_ssl_handshake(SSLHandler* handler);
-SSLHandler* network_accept_client(int server_fd, SSLManager* ssl_manager, char* client_ip);
+ssl_handler_t* network_create_ssl_handler(ssl_manager_t* manager, int socket_fd);
+void network_cleanup_ssl_handler(ssl_handler_t* handler);
+int network_handle_ssl_handshake(ssl_handler_t* handler);
+ssl_handler_t* network_accept_client(int server_fd, ssl_manager_t* ssl_manager, char* client_ip);
 
 /**
  * @brief SSL 핸드셰이크를 수행합니다.
@@ -62,10 +62,10 @@ SSLHandler* network_accept_client(int server_fd, SSLManager* ssl_manager, char* 
  * @param mgr SSL 매니저 포인터
  * @return 성공 시 SSLHandler 포인터, 실패 시 NULL
  */
-SSLHandler* network_perform_ssl_handshake(int client_fd, SSLManager* mgr);
+ssl_handler_t* network_perform_ssl_handshake(int client_fd, ssl_manager_t* mgr);
 
 /* 메시지 송수신 함수 */
-int network_send_message(SSL* ssl, const Message* message);
+int network_send_message(SSL* ssl, const message_t* message);
 
 /**
  * @brief 소켓 옵션을 설정합니다. (서버/클라이언트 구분)
@@ -75,7 +75,7 @@ int network_send_message(SSL* ssl, const Message* message);
  */
 int network_set_socket_options(int socket_fd, bool is_server);
 
-void network_update_ssl_activity(SSLHandler* handler);
+void network_update_ssl_activity(ssl_handler_t* handler);
 
 /**
  * @brief SSL을 통한 안전한 송신 함수 (타임아웃, 재시도, 에러 로깅 포함)

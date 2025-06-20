@@ -8,7 +8,7 @@
 
 // 메시지 노드 구조체
 typedef struct MsgNode {
-    Message* msg;
+    message_t* msg;
     struct MsgNode* next;
 } MsgNode;
 
@@ -16,9 +16,9 @@ typedef struct MsgNode {
 typedef struct {
     int socket_fd;
     SSL* ssl;
-    SSLHandler* ssl_handler;
+    ssl_handler_t* ssl_handler;
     char ip[INET_ADDRSTRLEN];
-    SessionState state;
+    session_state_t state;
     char username[MAX_USERNAME_LENGTH];
     time_t last_activity;
     MsgNode* queues[11]; // 우선순위 0~10 (MAX_PRIORITY=10 가정)
@@ -30,13 +30,13 @@ static int server_init(int port);
 static void server_cleanup(void);
 static void server_signal_handler(int signum);
 static void* server_client_thread_func(void* arg);
-static int server_handle_client_message(Client* client, const Message* message);
-static int server_handle_status_request(Client* client, const Message* message);
-static int server_handle_reserve_request(Client* client, const Message* message);
-static int server_handle_login_request(Client* client, const Message* message);
-static int server_handle_cancel_request(Client* client, const Message* message);
+static int server_handle_client_message(Client* client, const message_t* message);
+static int server_handle_status_request(Client* client, const message_t* message);
+static int server_handle_reserve_request(Client* client, const message_t* message);
+static int server_handle_login_request(Client* client, const message_t* message);
+static int server_handle_cancel_request(Client* client, const message_t* message);
 static int server_send_error_response(SSL* ssl, const char* error_message);
-static int server_send_generic_response(Client* client, MessageType type, const char* data, int arg_count, ...);
+static int server_send_generic_response(Client* client, message_type_t type, const char* data, int arg_count, ...);
 static void server_client_message_loop(Client* client);
 static void server_cleanup_client(Client* client);
 static void server_add_client_to_list(Client* client);
@@ -49,11 +49,11 @@ static int server_process_device_reservation(Client* client, const char* device_
 static int server_sock;
 static bool running = true;
 static int self_pipe[2];
-static SSLManager ssl_manager;
-static ResourceManager* resource_manager = NULL;
-static ReservationManager* reservation_manager = NULL;
-static SessionManager* session_manager = NULL;
-static HashTable* user_credentials = NULL; // 사용자 정보 해시 테이블 추가
+static ssl_manager_t ssl_manager;
+static resource_manager_t* resource_manager = NULL;
+static reservation_manager_t* reservation_manager = NULL;
+static session_manager_t* session_manager = NULL;
+static hash_table_t* user_credentials = NULL; // 사용자 정보 해시 테이블 추가
 static Client* client_list[MAX_CLIENTS];
 static int num_clients = 0;
 static pthread_mutex_t client_list_mutex;
@@ -61,7 +61,7 @@ static pthread_mutex_t client_list_mutex;
 #define MAX_PRIORITY 10
 
 // 메시지 삽입 (우선순위 큐)
-void enqueue_message(Client* client, Message* m) {
+void enqueue_message(Client* client, message_t* m) {
     int p = m->priority;
     if (p < 0) p = 0;
     if (p > MAX_PRIORITY) p = MAX_PRIORITY;
@@ -77,11 +77,11 @@ void enqueue_message(Client* client, Message* m) {
 }
 
 // 메시지 꺼내기 (우선순위 높은 것부터)
-Message* dequeue_message(Client* client) {
+message_t* dequeue_message(Client* client) {
     for (int p = MAX_PRIORITY; p >= 0; --p) {
         if (client->queues[p]) {
             MsgNode* node = client->queues[p];
-            Message* m = node->msg;
+            message_t* m = node->msg;
             client->queues[p] = node->next;
             if (!client->queues[p]) client->tails[p] = NULL;
             free(node);
@@ -129,7 +129,7 @@ int main(int argc, char* argv[]) {
             break;
         }
         if (ret == 0) {
-            Device devices[MAX_DEVICES];
+            device_t devices[MAX_DEVICES];
             int count = resource_get_device_list(resource_manager, devices, MAX_DEVICES);
             if (count >= 0)  ui_update_server_devices(devices, count, resource_manager, reservation_manager);
             ui_update_server_status(session_manager->sessions->count, atoi(argv[1]));
@@ -169,10 +169,10 @@ int main(int argc, char* argv[]) {
 }
 
 static void server_broadcast_status_update(void) {
-    Device devices[MAX_DEVICES];
+    device_t devices[MAX_DEVICES];
     int count = resource_get_device_list(resource_manager, devices, MAX_DEVICES);
     if (count < 0) return;
-    Message* response = message_create(MSG_STATUS_UPDATE, NULL);
+    message_t* response = message_create(MSG_STATUS_UPDATE, NULL);
     if (response) {
         if (!message_fill_status_response_args(response, devices, count, resource_manager, reservation_manager)) {
             message_destroy(response);
@@ -192,7 +192,7 @@ static void server_broadcast_status_update(void) {
 static void server_client_message_loop(Client* client) {
     while (running) {
         // 1. 메시지 수신 후 큐에 삽입
-        Message* msg = message_receive(client->ssl);
+        message_t* msg = message_receive(client->ssl);
         if (msg) {
             enqueue_message(client, msg);
             client->last_activity = time(NULL);
@@ -202,7 +202,7 @@ static void server_client_message_loop(Client* client) {
         }
 
         // 2. 큐에 있는 모든 메시지를 우선순위 순서대로 처리
-        Message* to_process;
+        message_t* to_process;
         while ((to_process = dequeue_message(client)) != NULL) {
             server_handle_client_message(client, to_process);
             message_destroy(to_process);
@@ -250,7 +250,7 @@ static void* server_client_thread_func(void* arg) {
 static int server_process_device_reservation(Client* client, const char* device_id, int duration_sec) {
     if (!resource_is_device_available(resource_manager, device_id)) {
         char error_msg[256];
-        Reservation* active_res = reservation_get_active_for_device(reservation_manager, resource_manager, device_id);
+        reservation_t* active_res = reservation_get_active_for_device(reservation_manager, resource_manager, device_id);
         if (active_res) {
             snprintf(error_msg, sizeof(error_msg), "사용 불가: '%s'님이 사용 중입니다.", active_res->username);
         } else {
@@ -269,12 +269,12 @@ static int server_process_device_reservation(Client* client, const char* device_
         return server_send_error_response(client->ssl, "서버 내부 오류: 예약 상태 동기화 실패");
     }
     server_broadcast_status_update();
-    Message* response = message_create(MSG_RESERVE_RESPONSE, "success");
+    message_t* response = message_create(MSG_RESERVE_RESPONSE, "success");
     if (response) {
-        Device updated_device;
-        Device* devices_ptr = (Device*)utils_hashtable_get(resource_manager->devices, device_id);
+        device_t updated_device;
+        device_t* devices_ptr = (device_t*)utils_hashtable_get(resource_manager->devices, device_id);
         if (devices_ptr) {
-            memcpy(&updated_device, devices_ptr, sizeof(Device));
+            memcpy(&updated_device, devices_ptr, sizeof(device_t));
             response->args[0] = strdup(device_id);
             response->arg_count = 1;
             message_fill_status_response_args(response, &updated_device, 1, resource_manager, reservation_manager);
@@ -301,7 +301,7 @@ static bool server_is_user_authenticated(const char* username, const char* passw
     LOG_WARNING("Auth", "사용자 인증 실패: %s (사용자 없음 또는 비밀번호 불일치)", username);
     return false; // 사용자가 없거나 비밀번호 불일치
 }
-static int server_handle_login_request(Client* client, const Message* message) {
+static int server_handle_login_request(Client* client, const message_t* message) {
     if (message->arg_count < 2) {
         LOG_WARNING("Auth", "로그인 요청 실패: 인수 부족 (필요: 2, 받음: %d)", message->arg_count);
         return server_send_error_response(client->ssl, "로그인 정보가 부족합니다.");
@@ -320,7 +320,7 @@ static int server_handle_login_request(Client* client, const Message* message) {
     LOG_INFO("Auth", "사용자 자격 증명 확인 성공: '%s'", user);
 
     // 2단계: 세션 생성 (중복 로그인 방지)
-    ServerSession* session = session_create(session_manager, user, client->ip, 0);
+    server_session_t* session = session_create(session_manager, user, client->ip, 0);
     if (!session) {
         // session_create는 사용자가 이미 존재할 경우 NULL을 반환합니다.
         LOG_WARNING("Auth", "로그인 실패: 사용자 '%s'는 이미 로그인되어 있습니다. (IP: %s)", user, client->ip);
@@ -342,13 +342,13 @@ static int server_handle_login_request(Client* client, const Message* message) {
 
     return 0;
 }
-static int server_handle_status_request(Client* client, const Message* message) {
+static int server_handle_status_request(Client* client, const message_t* message) {
     (void)message; 
-    Device devices[MAX_DEVICES];
+    device_t devices[MAX_DEVICES];
     int count = resource_get_device_list(resource_manager, devices, MAX_DEVICES);
     if (count < 0) return server_send_error_response(client->ssl, "서버에서 장비 목록을 가져오는 데 실패했습니다.");
     LOG_INFO("Server", "장비 목록 요청 수신, 장비 개수: %d", count);
-    Message* response = message_create_status_response(devices, count, resource_manager, reservation_manager);
+    message_t* response = message_create_status_response(devices, count, resource_manager, reservation_manager);
     if (response) {
         network_send_message(client->ssl, response);
         LOG_INFO("Server", "MSG_STATUS_RESPONSE 전송 완료");
@@ -359,7 +359,7 @@ static int server_handle_status_request(Client* client, const Message* message) 
     return 0;
 }
 
-static int server_handle_reserve_request(Client* client, const Message* message) {
+static int server_handle_reserve_request(Client* client, const message_t* message) {
     if (message->arg_count < 2) return server_send_error_response(client->ssl, "예약 요청 정보(장비 ID, 시간)가 부족합니다.");
     const char* device_id = message->args[0];
     int duration_sec = atoi(message->args[1]);
@@ -367,7 +367,7 @@ static int server_handle_reserve_request(Client* client, const Message* message)
     server_process_device_reservation(client, device_id, duration_sec);
     return 0;
 }
-static int server_handle_cancel_request(Client* client, const Message* message) {
+static int server_handle_cancel_request(Client* client, const message_t* message) {
     if (message->arg_count < 1) {
         return server_send_error_response(client->ssl, "예약 취소 정보(장비 ID)가 부족합니다.");
     }
@@ -375,7 +375,7 @@ static int server_handle_cancel_request(Client* client, const Message* message) 
     const char* device_id = message->args[0];
     
     // 예약 정보 확인
-    Reservation* res = reservation_get_active_for_device(reservation_manager, resource_manager, device_id);
+    reservation_t* res = reservation_get_active_for_device(reservation_manager, resource_manager, device_id);
 
     // 본인의 예약이 맞는지 확인
     if (!res || strcmp(res->username, client->username) != 0) {
@@ -398,7 +398,7 @@ static int server_handle_cancel_request(Client* client, const Message* message) 
 
     return 0;
 }
-static int server_handle_client_message(Client* client, const Message* message) {
+static int server_handle_client_message(Client* client, const message_t* message) {
     if (!client || !message) return -1;
     // 로그인되지 않은 상태에서는 로그인 요청만 허용
     if (client->state != SESSION_LOGGED_IN && message->type != MSG_LOGIN) {
@@ -507,10 +507,10 @@ static void server_cleanup(void) {
  * @param ... 전달할 가변 인자 (const char* 타입)
  * @return 성공 시 0, 실패 시 -1
  */
-static int server_send_generic_response(Client* client, MessageType type, const char* data, int arg_count, ...) {
+static int server_send_generic_response(Client* client, message_type_t type, const char* data, int arg_count, ...) {
     if (!client || !client->ssl) return -1;
 
-    Message* response = message_create(type, data);
+    message_t* response = message_create(type, data);
     if (!response) {
         // LOG_ERROR("Response", "응답 메시지 생성 실패 (type: %d)", type);
         return -1;
@@ -548,7 +548,7 @@ static int server_send_generic_response(Client* client, MessageType type, const 
  */
 static int server_send_error_response(SSL* ssl, const char* error_message) {
     if (!ssl || !error_message) return -1;
-    Message* response = message_create_error(error_message);
+    message_t* response = message_create_error(error_message);
     if (!response) return -1;
     int ret = network_send_message(ssl, response);
     message_destroy(response);

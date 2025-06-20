@@ -18,59 +18,59 @@ struct SSLHandler;
 // #define SESSION_TIMEOUT 300 // 세션 타임아웃 (초)
 
 // 서버 측에서 관리하는 세션의 상태
-typedef enum {
+typedef enum server_session_state {
     SESSION_ACTIVE,
     SESSION_EXPIRED,
     SESSION_ENDED
-} ServerSessionState;
+} server_session_state_t;
 
 // 클라이언트 측에서 관리하는 세션의 상태
-typedef enum {
+typedef enum session_state {
     SESSION_DISCONNECTED,
     SESSION_CONNECTING,
     SESSION_LOGGED_IN
-} SessionState;
+} session_state_t;
 
 
 // 서버가 관리하는 사용자 세션 정보
-typedef struct {
+typedef struct server_session {
     char username[MAX_USERNAME_LENGTH];
     char client_ip[MAX_IP_LENGTH];
     int client_port;
     char token[MAX_TOKEN_LENGTH];
-    ServerSessionState state;
+    server_session_state_t state;
     time_t created_at;
     time_t last_activity;
-} ServerSession;
+} server_session_t;
 
 // 클라이언트 프로그램이 서버와의 연결 정보를 담는 구조체
-typedef struct {
+typedef struct client_session {
     int socket_fd;
     SSL* ssl;
-    SSLHandler* ssl_handler;
+    struct SSLHandler* ssl_handler;
     char server_ip[MAX_IP_LENGTH];
     int server_port;
-    SessionState state;
+    session_state_t state;
     char username[MAX_USERNAME_LENGTH];
     time_t last_activity;
-} ClientSession;
+} client_session_t;
 
 // 서버의 세션 매니저
-typedef struct {
-    HashTable* sessions;  // Key: username, Value: ServerSession*
+typedef struct session_manager {
+    hash_table_t* sessions;  // Key: username, Value: ServerSession*
     pthread_mutex_t mutex;
-} SessionManager;
+} session_manager_t;
 
 
 /* 함수 프로토타입 */
 
 // 서버용 세션 관리 함수
-SessionManager* session_init_manager(void);
-void session_cleanup_manager(SessionManager* manager);
-ServerSession* session_create(SessionManager* manager, const char* username, const char* client_ip, int client_port);
-int session_close(SessionManager* manager, const char* username);
+session_manager_t* session_init_manager(void);
+void session_cleanup_manager(session_manager_t* manager);
+server_session_t* session_create(session_manager_t* manager, const char* username, const char* client_ip, int client_port);
+int session_close(session_manager_t* manager, const char* username);
 
 // 클라이언트용 세션 정리 함수
-void session_cleanup_client(ClientSession* session);
+void session_cleanup_client(client_session_t* session);
 
 #endif // SESSION_H

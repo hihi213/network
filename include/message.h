@@ -14,48 +14,46 @@ typedef enum {
     MSG_CANCEL_REQUEST,
     MSG_CANCEL_RESPONSE,
     MSG_STATUS_REQUEST,
-    MSG_STATUS_UPDATE, // [추가] 서버가 먼저 보내는 상태 업데이트 메시지
+    MSG_STATUS_UPDATE,
     MSG_STATUS_RESPONSE,
     MSG_PING,
     MSG_PONG,
     MSG_PING_RESPONSE,
     MSG_ERROR
-} MessageType;
+} message_type_t;
 
 /* 메시지 구조체 */
 #define MAX_MESSAGE_LENGTH 1024
 #define MAX_ARG_LENGTH 256
 
-typedef struct {
-    MessageType type;
+typedef struct message {
+    message_type_t type;
     char data[MAX_MESSAGE_LENGTH];
     char* args[MAX_ARGS];
     int arg_count;
-    int priority; // 우선순위 필드 추가
-} Message;
+    int priority;
+} message_t;
 
 /* 메시지 버퍼 구조체 */
-typedef struct {
+typedef struct message_buffer {
     char* buffer;
     size_t size;
     size_t position;
     bool is_reading;
-} MessageBuffer;
+} message_buffer_t;
 
 /* 메시지 생성/소멸/파싱 함수 */
-Message* message_create(MessageType type, const char* data);
-const char* message_get_type_string(MessageType type);
-const char* message_get_device_status_string(DeviceStatus status);
+message_t* message_create(message_type_t type, const char* data);
+const char* message_get_type_string(message_type_t type);
+const char* message_get_device_status_string(device_status_t status);
 
 /* 메시지 생성 헬퍼 함수 */
-Message *message_create_status_response(const Device *devices, int device_count, ResourceManager* resource_manager, ReservationManager* reservation_manager);
-Message* message_create_error(const char* error_msg);
-Message *message_create_reservation(const char *device_id, const char* duration_str);
-Message* message_receive(SSL* ssl);
-Message* message_create_login(const char* username, const char* password);
-Message* message_create_cancel(const char* device_id);
-/* DeviceStatus를 문자열로 변환하는 함수 */
-const char* message_get_device_status_string(DeviceStatus status);
-bool message_fill_status_response_args(Message* msg, const Device* devices, int count, ResourceManager* rm, ReservationManager* rvm) ;
-void message_destroy(Message *msg);
+message_t* message_create_status_response(const device_t* devices, int device_count, resource_manager_t* resource_manager, reservation_manager_t* reservation_manager);
+message_t* message_create_error(const char* error_msg);
+message_t* message_create_reservation(const char* device_id, const char* duration_str);
+message_t* message_receive(SSL* ssl);
+message_t* message_create_login(const char* username, const char* password);
+message_t* message_create_cancel(const char* device_id);
+bool message_fill_status_response_args(message_t* msg, const device_t* devices, int count, resource_manager_t* rm, reservation_manager_t* rvm);
+void message_destroy(message_t* msg);
 #endif /* MESSAGE_H */

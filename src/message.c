@@ -3,8 +3,8 @@
 #include "../include/reservation.h"
 #include "../include/network.h"
 
-static Message* message_create_with_two_args(MessageType type, const char* arg1, const char* arg2) {
-    Message* msg = message_create(type, NULL);
+static message_t* message_create_with_two_args(message_type_t type, const char* arg1, const char* arg2) {
+    message_t* msg = message_create(type, NULL);
     if (!msg) return NULL;
     
     msg->args[0] = strdup(arg1);
@@ -17,8 +17,8 @@ static Message* message_create_with_two_args(MessageType type, const char* arg1,
     return msg;
 }
 
-Message* message_create(MessageType type, const char *data) {
-    Message *msg = (Message *)malloc(sizeof(Message));
+message_t* message_create(message_type_t type, const char *data) {
+    message_t *msg = (message_t *)malloc(sizeof(message_t));
     if (!msg) {
         utils_report_error(ERROR_MESSAGE_CREATION_FAILED, "Message", "메시지 메모리 할당 실패");
         return NULL;
@@ -35,7 +35,7 @@ Message* message_create(MessageType type, const char *data) {
     return msg;
 }
 
-bool message_fill_status_response_args(Message* msg, const Device* devices, int count, ResourceManager* rm, ReservationManager* rvm) {
+bool message_fill_status_response_args(message_t* msg, const device_t* devices, int count, resource_manager_t* rm, reservation_manager_t* rvm) {
     if (!msg || !devices || !rm || !rvm) return false;
     msg->arg_count = 0;
     for (int i = 0; i < count; i++) {
@@ -45,7 +45,7 @@ bool message_fill_status_response_args(Message* msg, const Device* devices, int 
         char end_time_str[32] = "0";
         char username_str[MAX_USERNAME_LENGTH] = "";
         if (devices[i].status == DEVICE_RESERVED) {
-            Reservation* res = reservation_get_active_for_device(rvm, rm, devices[i].id);
+            reservation_t* res = reservation_get_active_for_device(rvm, rm, devices[i].id);
             if (res) {
                 snprintf(end_time_str, sizeof(end_time_str), "%ld", res->end_time);
                 strncpy(username_str, res->username, sizeof(username_str) - 1);
@@ -66,8 +66,8 @@ bool message_fill_status_response_args(Message* msg, const Device* devices, int 
     return true;
 }
 
-Message* message_create_status_response(const Device *devices, int device_count, ResourceManager* resource_manager, ReservationManager* reservation_manager) {
-    Message *message = message_create(MSG_STATUS_RESPONSE, NULL);
+message_t* message_create_status_response(const device_t *devices, int device_count, resource_manager_t* resource_manager, reservation_manager_t* reservation_manager) {
+    message_t *message = message_create(MSG_STATUS_RESPONSE, NULL);
     if (!message) return NULL;
     if (!message_fill_status_response_args(message, devices, device_count, resource_manager, reservation_manager)) {
         message_destroy(message);
@@ -76,20 +76,20 @@ Message* message_create_status_response(const Device *devices, int device_count,
     return message;
 }
 
-Message* message_create_login(const char* username, const char* password) {
+message_t* message_create_login(const char* username, const char* password) {
     return message_create_with_two_args(MSG_LOGIN, username, password);
 }
 
-Message* message_create_reservation(const char *device_id, const char* duration_str) {
+message_t* message_create_reservation(const char *device_id, const char* duration_str) {
     return message_create_with_two_args(MSG_RESERVE_REQUEST, device_id, duration_str);
 }
 
-Message* message_create_error(const char* error_message) {
+message_t* message_create_error(const char* error_message) {
     return message_create(MSG_ERROR, error_message);
 }
 
-Message* message_create_cancel(const char* device_id) {
-    Message* msg = message_create(MSG_CANCEL_REQUEST, NULL);
+message_t* message_create_cancel(const char* device_id) {
+    message_t* msg = message_create(MSG_CANCEL_REQUEST, NULL);
     if (!msg) return NULL;
     msg->args[0] = strdup(device_id);
     if (!msg->args[0]) {
@@ -100,7 +100,7 @@ Message* message_create_cancel(const char* device_id) {
     return msg;
 }
 
-const char *message_get_type_string(MessageType type) {
+const char *message_get_type_string(message_type_t type) {
     switch (type) {
         case MSG_LOGIN: return "LOGIN";
         case MSG_LOGOUT: return "LOGOUT";
@@ -119,7 +119,7 @@ const char *message_get_type_string(MessageType type) {
     }
 }
 
-void message_destroy(Message *msg) {
+void message_destroy(message_t *msg) {
     if (!msg) return;
     for (int i = 0; i < msg->arg_count; i++) {
         if (msg->args[i]) {
@@ -130,7 +130,7 @@ void message_destroy(Message *msg) {
     free(msg);
 }
 
-static bool message_read_arguments(SSL* ssl, Message* msg, uint32_t arg_count) {
+static bool message_read_arguments(SSL* ssl, message_t* msg, uint32_t arg_count) {
     for (uint32_t i = 0; i < arg_count; i++) {
         uint32_t arg_len_net;
         if (network_recv(ssl, &arg_len_net, sizeof(arg_len_net)) != sizeof(arg_len_net)) return false;
@@ -149,7 +149,7 @@ static bool message_read_arguments(SSL* ssl, Message* msg, uint32_t arg_count) {
     return true;
 }
 
-static bool message_read_data(SSL* ssl, Message* msg) {
+static bool message_read_data(SSL* ssl, message_t* msg) {
     uint32_t data_len_net;
     if (network_recv(ssl, &data_len_net, sizeof(data_len_net)) != sizeof(data_len_net)) return false;
     uint32_t data_len = ntohl(data_len_net);
@@ -161,13 +161,13 @@ static bool message_read_data(SSL* ssl, Message* msg) {
     return true;
 }
 
-Message* message_receive(SSL* ssl) {
+message_t* message_receive(SSL* ssl) {
     uint32_t type_net, arg_count_net;
     if (network_recv(ssl, &type_net, sizeof(type_net)) != sizeof(type_net)) return NULL;
     if (network_recv(ssl, &arg_count_net, sizeof(arg_count_net)) != sizeof(arg_count_net)) return NULL;
-    MessageType type = ntohl(type_net);
+    message_type_t type = ntohl(type_net);
     uint32_t arg_count = ntohl(arg_count_net);
-    Message* message = message_create(type, NULL);
+    message_t* message = message_create(type, NULL);
     if (!message) return NULL;
     if (!message_read_arguments(ssl, message, arg_count)) {
         message_destroy(message);
@@ -180,7 +180,7 @@ Message* message_receive(SSL* ssl) {
     return message;
 }
 
-const char *message_get_device_status_string(DeviceStatus status) {
+const char *message_get_device_status_string(device_status_t status) {
     switch (status) {
         case DEVICE_AVAILABLE: return "available";
         case DEVICE_RESERVED: return "reserved";

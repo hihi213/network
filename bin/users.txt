@@ -1,7 +1,0 @@
-//아이디: 비밀번호 형식
-user1:pw1
-user2:pw2
-user3:pw3 
-user4:pw4
-user5:pw5  
-1:1

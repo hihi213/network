@@ -40,7 +40,7 @@ static bool network_ssl_write_fully(SSL* ssl, const void* buf, int len) {
 }
 
 // [핵심 수정] 길이가 0인 문자열도 올바르게 처리하도록 수정
-int network_send_message(SSL* ssl, const Message* message) {
+int network_send_message(SSL* ssl, const message_t* message) {
     if (!ssl || !message) {
         utils_report_error(ERROR_INVALID_PARAMETER, "Network", "network_send_message: 잘못된 파라미터");
         return -1;
@@ -146,7 +146,7 @@ static void network_set_common_ssl_ctx_options(SSL_CTX* ctx) {
     SSL_CTX_set_verify(ctx, SSL_VERIFY_NONE, NULL);
 }
 
-static int network_init_ssl_context(SSLManager* manager, const char* cert_file, const char* key_file) {
+static int network_init_ssl_context(ssl_manager_t* manager, const char* cert_file, const char* key_file) {
     if (!manager || !cert_file || !key_file) {
         utils_report_error(ERROR_INVALID_PARAMETER, "SSL", "network_init_ssl_context: 잘못된 파라미터");
         return -1;
@@ -169,12 +169,12 @@ static int network_init_ssl_context(SSLManager* manager, const char* cert_file, 
     return 0;
 }
 
-int network_init_ssl_manager(SSLManager* manager, bool is_server, const char* cert_file, const char* key_file) {
+int network_init_ssl_manager(ssl_manager_t* manager, bool is_server, const char* cert_file, const char* key_file) {
     if (!manager) {
         utils_report_error(ERROR_INVALID_PARAMETER, "SSL", "manager 포인터가 NULL입니다");
         return -1;
     }
-    memset(manager, 0, sizeof(SSLManager));
+    memset(manager, 0, sizeof(ssl_manager_t));
     manager->is_server = is_server;
     SSL_load_error_strings();
     OpenSSL_add_all_algorithms();
@@ -239,7 +239,7 @@ int network_init_client_socket(const char* server_ip, int port) {
     return client_fd;
 }
 
-int network_handle_ssl_handshake(SSLHandler* handler) {
+int network_handle_ssl_handshake(ssl_handler_t* handler) {
     CHECK_PARAM_RET(handler && handler->ssl, ERROR_INVALID_PARAMETER, "SSL", "잘못된 SSL 핸들러");
     int ret = handler->is_server ? SSL_accept(handler->ssl) : SSL_connect(handler->ssl);
     if (ret <= 0) {
@@ -250,14 +250,14 @@ int network_handle_ssl_handshake(SSLHandler* handler) {
     return 0;
 }
 
-SSLHandler* network_create_ssl_handler(SSLManager* manager, int socket_fd) {
+ssl_handler_t* network_create_ssl_handler(ssl_manager_t* manager, int socket_fd) {
     CHECK_PARAM_RET_PTR(manager && manager->ctx, ERROR_INVALID_PARAMETER, "SSL", "잘못된 SSL Manager 또는 Context");
-    SSLHandler* handler = (SSLHandler*)malloc(sizeof(SSLHandler));
+    ssl_handler_t* handler = (ssl_handler_t*)malloc(sizeof(ssl_handler_t));
     if (!handler) {
         utils_report_error(ERROR_MEMORY_ALLOCATION_FAILED, "SSL", "SSL 핸들러 메모리 할당 실패");
         return NULL;
     }
-    memset(handler, 0, sizeof(SSLHandler));
+    memset(handler, 0, sizeof(ssl_handler_t));
     handler->socket_fd = socket_fd;
     handler->ctx = manager->ctx;
     handler->is_server = manager->is_server;
@@ -276,7 +276,7 @@ SSLHandler* network_create_ssl_handler(SSLManager* manager, int socket_fd) {
     return handler;
 }
 
-void network_cleanup_ssl_handler(SSLHandler* handler) {
+void network_cleanup_ssl_handler(ssl_handler_t* handler) {
     if (!handler) return;
     if (handler->ssl) {
         SSL_shutdown(handler->ssl);
@@ -365,7 +365,7 @@ int network_set_socket_options(int socket_fd, bool is_server) {
     return 0;
 }
 
-void network_cleanup_ssl_manager(SSLManager* manager) {
+void network_cleanup_ssl_manager(ssl_manager_t* manager) {
     if (!manager) return;
     if (manager->ctx) {
         SSL_CTX_free(manager->ctx);
@@ -381,7 +381,7 @@ void network_cleanup_ssl_manager(SSLManager* manager) {
  * @param client_ip 클라이언트 IP 주소를 저장할 버퍼
  * @return 성공 시 SSLHandler* 포인터, 실패 시 NULL
  */
-SSLHandler* network_accept_client(int server_fd, SSLManager* ssl_manager, char* client_ip) {
+ssl_handler_t* network_accept_client(int server_fd, ssl_manager_t* ssl_manager, char* client_ip) {
     CHECK_PARAM_RET_PTR(ssl_manager && client_ip, ERROR_INVALID_PARAMETER, "Network", "network_accept_client: 잘못된 파라미터");
     struct sockaddr_in client_addr;
     socklen_t client_len = sizeof(client_addr);
@@ -399,7 +399,7 @@ SSLHandler* network_accept_client(int server_fd, SSLManager* ssl_manager, char* 
         CLEANUP_AND_RET(close(client_fd), NULL);
     }
     // LOG_INFO("Network", "클라이언트 연결 수락: IP=%s, 소켓=%d", client_ip, client_fd);
-    SSLHandler* ssl_handler = network_create_ssl_handler(ssl_manager, client_fd);
+    ssl_handler_t* ssl_handler = network_create_ssl_handler(ssl_manager, client_fd);
     if (!ssl_handler) {
         utils_report_error(ERROR_NETWORK_SSL_INIT_FAILED, "Network", "SSL 핸들러 생성 실패: IP=%s", client_ip);
         CLEANUP_AND_RET(close(client_fd), NULL);
@@ -419,10 +419,10 @@ SSLHandler* network_accept_client(int server_fd, SSLManager* ssl_manager, char* 
  * @param mgr SSL 매니저 포인터
  * @return 성공 시 SSLHandler 포인터, 실패 시 NULL
  */
-SSLHandler* network_perform_ssl_handshake(int client_fd, SSLManager* mgr) {
+ssl_handler_t* network_perform_ssl_handshake(int client_fd, ssl_manager_t* mgr) {
     CHECK_PARAM_RET_PTR(mgr, ERROR_INVALID_PARAMETER, "Network", "network_perform_ssl_handshake: SSL 매니저가 NULL입니다");
     // LOG_INFO("Network", "SSL 핸드셰이크 시작: fd=%d", client_fd);
-    SSLHandler* handler = network_create_ssl_handler(mgr, client_fd);
+    ssl_handler_t* handler = network_create_ssl_handler(mgr, client_fd);
     if (!handler) {
         utils_report_error(ERROR_NETWORK_SSL_INIT_FAILED, "Network", "SSL 핸들러 생성 실패: fd=%d", client_fd);
         close(client_fd);

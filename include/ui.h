@@ -15,26 +15,26 @@
 #define COLOR_PAIR_INFO 6
 
 /* UI 메뉴 타입 */
-typedef enum {
+typedef enum menu_type {
     MAIN_MENU,
     DEVICE_MENU,
     RESERVATION_MENU,
     SETTINGS_MENU
-} MenuType;
+} menu_type_t;
 
 /* UI 메시지 관련 상수 */
 #define MAX_MESSAGE_LENGTH 1024
 #define MAX_ARG_LENGTH 256
 
 /* UI 메뉴 항목 구조체 */
-typedef struct {
+typedef struct ui_menu_item {
     char key;
     const char* description;
     void (*handler)(void);
-} UIMenuItem;
+} ui_menu_item_t;
 
 /* UI 매니저 구조체 */
-typedef struct {
+typedef struct ui_manager {
     WINDOW* main_win;
     WINDOW* status_win;
     WINDOW* menu_win;
@@ -48,15 +48,15 @@ typedef struct {
     pthread_mutex_t mutex;
     int menu_count;
     int field_count;
-    MenuType current_menu;
+    menu_type_t current_menu;
     int selected_item;
     char status_message[MAX_MESSAGE_LENGTH];
     char error_message[MAX_MESSAGE_LENGTH];
     char success_message[MAX_MESSAGE_LENGTH];
-} UIManager;
+} ui_manager_t;
 
 /* 전역 UI 매니저 */
-extern UIManager* global_ui_manager;
+extern ui_manager_t* g_ui_manager;
 
 /* UI 초기화 및 정리 함수 */
 int ui_init(void);
@@ -65,11 +65,11 @@ void ui_refresh_all_windows(void);
 
 /* 서버 UI 함수 */
 void ui_update_server_status(int session_count, int port);
-void ui_update_server_devices(const Device* devices, int count, ResourceManager* resource_manager, ReservationManager* reservation_manager);
+void ui_update_server_devices(const device_t* devices, int count, resource_manager_t* resource_manager, reservation_manager_t* reservation_manager);
 
-UIManager* ui_init_manager(void);
-void ui_cleanup_manager(UIManager* manager);
-void ui_set_status_message(UIManager* manager, const char* message);
+ui_manager_t* ui_init_manager(void);
+void ui_cleanup_manager(ui_manager_t* manager);
+void ui_set_status_message(ui_manager_t* manager, const char* message);
 
 void ui_show_error_message(const char* message);
 void ui_show_success_message(const char* message);
