@@ -347,14 +347,14 @@ static int server_handle_status_request(Client* client, const message_t* message
     device_t devices[MAX_DEVICES];
     int count = resource_get_device_list(resource_manager, devices, MAX_DEVICES);
     if (count < 0) return server_send_error_response(client->ssl, "서버에서 장비 목록을 가져오는 데 실패했습니다.");
-    LOG_INFO("Server", "장비 목록 요청 수신, 장비 개수: %d", count);
+    // LOG_INFO("Server", "장비 목록 요청 수신, 장비 개수: %d", count);
     message_t* response = message_create_status_response(devices, count, resource_manager, reservation_manager);
     if (response) {
         network_send_message(client->ssl, response);
-        LOG_INFO("Server", "MSG_STATUS_RESPONSE 전송 완료");
+        // LOG_INFO("Server", "MSG_STATUS_RESPONSE 전송 완료");
         message_destroy(response);
     } else {
-        LOG_WARNING("Server", "MSG_STATUS_RESPONSE 생성 실패");
+        // LOG_WARNING("Server", "MSG_STATUS_RESPONSE 생성 실패");
     }
     return 0;
 }

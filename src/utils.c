@@ -367,6 +367,7 @@ hash_table_t* utils_hashtable_create(uint32_t size, void (*free_value_func)(void
         free(table);
         return NULL;
     }
+    // LOG_INFO("Utils", "해시테이블 생성 성공: 크기=%u", size);
     return table;
 }
 

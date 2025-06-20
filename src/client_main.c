@@ -134,25 +134,20 @@ static void client_draw_ui_for_current_state() {
 
     switch (current_state) {
         case APP_STATE_LOGIN: 
-            LOG_INFO("Client", "UI 그리기: 로그인 화면");
             client_draw_login_input_ui();
             curs_set(1); // 로그인 화면에서 커서 보임
             break;
         case APP_STATE_MAIN_MENU: 
-            LOG_INFO("Client", "UI 그리기: 메인 메뉴 화면");
             client_draw_main_menu(); 
             break;
         case APP_STATE_LOGGED_IN_MENU: 
-            LOG_INFO("Client", "UI 그리기: 로그인된 메뉴 화면");
             client_draw_logged_in_menu(); 
             break;
         case APP_STATE_DEVICE_LIST: 
-            LOG_INFO("Client", "UI 그리기: 장비 목록 화면");
             client_draw_device_list(); 
             break;
         case APP_STATE_RESERVATION_TIME:
             {
-                LOG_INFO("Client", "UI 그리기: 예약 시간 입력 화면");
                 client_draw_device_list();
                 mvwprintw(g_ui_manager->menu_win, LINES - 5, 2, "예약할 시간(초) 입력 (1~86400, ESC:취소): %s", reservation_input_buffer);
                 
@@ -166,10 +161,8 @@ static void client_draw_ui_for_current_state() {
             }
             break;
         case APP_STATE_EXIT: 
-            LOG_INFO("Client", "UI 그리기: 종료 상태");
             break;
         default:
-            LOG_WARNING("Client", "알 수 없는 UI 상태: %d", current_state);
             break;
     }
     box(g_ui_manager->menu_win, 0, 0);
@@ -376,12 +369,9 @@ static void client_handle_input_login_input(int ch) {
             active_login_field = (active_login_field == LOGIN_FIELD_USERNAME) 
                                ? LOGIN_FIELD_PASSWORD 
                                : LOGIN_FIELD_USERNAME;
-            LOG_INFO("Client", "로그인 입력: Tab 키로 필드 전환 (현재 필드: %s)", 
-                    active_login_field == LOGIN_FIELD_USERNAME ? "아이디" : "비밀번호");
             break;
 
         case 27: // Escape 키
-            LOG_INFO("Client", "로그인 입력: ESC 키로 메인 메뉴로 복귀");
             current_state = APP_STATE_MAIN_MENU;
             menu_highlight = 0;
             break;
@@ -389,15 +379,11 @@ static void client_handle_input_login_input(int ch) {
         case 10: // Enter 키
             if (active_login_field == LOGIN_FIELD_USERNAME) {
                 active_login_field = LOGIN_FIELD_PASSWORD; // 아이디 필드에서 Enter -> 비밀번호 필드로 이동
-                LOG_INFO("Client", "로그인 입력: 아이디 필드에서 비밀번호 필드로 이동");
             } else {
                 // 비밀번호 필드에서 Enter -> 로그인 시도
                 if (login_username_pos > 0 && login_password_pos > 0) {
-                    LOG_INFO("Client", "로그인 시도: 사용자='%s'", login_username_buffer);
-                    ui_show_success_message("로그인 시도 중...");
                     client_login_submitted(login_username_buffer, login_password_buffer);
                 } else {
-                    LOG_WARNING("Client", "로그인 시도 실패: 아이디 또는 비밀번호가 비어있음");
                     ui_show_error_message("아이디와 비밀번호를 모두 입력하세요.");
                 }
             }
@@ -431,16 +417,7 @@ static void client_handle_input_logged_in_menu(int ch) {
             break;
         case 10: // Enter 키
             if (menu_highlight == 0) { // "장비 현황 조회 및 예약" 선택
-                LOG_INFO("Client", "장비 목록 요청 전송");
-                message_t* msg = message_create(MSG_STATUS_REQUEST, NULL);
-                if (msg) {
-                    if (network_send_message(client_session.ssl, msg) < 0) {
-                        running = false;
-                    }
-                    message_destroy(msg);
-                }
             } else { // "로그아웃" 선택
-                LOG_INFO("Client", "로그아웃 처리");
                 message_t* logout_msg = message_create(MSG_LOGOUT, NULL);
                 if (logout_msg) {
                     network_send_message(client_session.ssl, logout_msg);
@@ -454,7 +431,6 @@ static void client_handle_input_logged_in_menu(int ch) {
             }
             break;
         case 27: // ESC 키로 메인 메뉴 복귀 (로그아웃과 동일하게 처리)
-            LOG_INFO("Client", "로그아웃 처리 (ESC)");
             message_t* logout_msg = message_create(MSG_LOGOUT, NULL);
             if (logout_msg) {
                 network_send_message(client_session.ssl, logout_msg);
@@ -580,11 +556,8 @@ static void client_handle_input_reservation_time(int ch) {
 static void client_handle_server_message(const message_t* message) {
     if (!message) return;
     
-    LOG_INFO("Client", "서버로부터 메시지 수신: 타입=%d, 데이터=%s", message->type, strlen(message->data) > 0 ? message->data : "NULL");
-    
     switch (message->type) {
         case MSG_ERROR:
-            LOG_WARNING("Client", "서버로부터 에러 메시지 수신: %s", message->data);
             ui_show_error_message(message->data);
             // [수정] 로그인 시도 중에 발생한 에러라면, 다시 로그인 입력 화면으로 돌려보냄
             if (current_state == APP_STATE_LOGGED_IN_MENU || current_state == APP_STATE_DEVICE_LIST) {
@@ -600,25 +573,20 @@ static void client_handle_server_message(const message_t* message) {
         
         case MSG_LOGIN:
             if (strcmp(message->data, "success") == 0) {
-                LOG_INFO("Client", "로그인 성공 응답 수신");
                 // 로그인 성공 시 사용자 정보 설정
                 strncpy(client_session.username, login_username_buffer, MAX_USERNAME_LENGTH - 1);
                 client_session.username[MAX_USERNAME_LENGTH - 1] = '\0';
                 client_session.state = SESSION_LOGGED_IN;
-                LOG_INFO("Client", "사용자 정보 설정 완료: %s", client_session.username);
                 current_state = APP_STATE_LOGGED_IN_MENU;
                 menu_highlight = 0;
                 ui_show_success_message("로그인 성공!");
             } else {
-                LOG_WARNING("Client", "로그인 실패 응답 수신: %s", message->data);
-                ui_show_error_message(message->data);
                 // 로그인 실패 시 로그인 화면 상태를 유지합니다.
                 LOG_INFO("Client", "로그인 실패로 인해 로그인 화면 상태 유지 (APP_STATE_LOGIN)");
             }
             break;
             
         case MSG_STATUS_RESPONSE:
-            LOG_INFO("Client", "MSG_STATUS_RESPONSE 수신, 데이터: %s", message->data);
             client_process_and_store_device_list(message);
             // 장비 목록을 받은 후 UI 상태 업데이트
             if (current_state == APP_STATE_LOGGED_IN_MENU) {
@@ -629,32 +597,18 @@ static void client_handle_server_message(const message_t* message) {
             break;
             
         case MSG_RESERVE_RESPONSE:
-            if (strcmp(message->data, "success") == 0) {
-                LOG_INFO("Client", "예약 성공 응답 수신");
-                ui_show_success_message("예약이 성공적으로 완료되었습니다.");
-            } else {
-                LOG_WARNING("Client", "예약 실패 응답 수신: %s", message->data);
-                ui_show_error_message(message->data);
-            }
+            ui_show_success_message("예약이 성공적으로 완료되었습니다.");
             break;
         case MSG_CANCEL_RESPONSE:
-            if (strcmp(message->data, "success") == 0) {
-                LOG_INFO("Client", "예약 취소 성공 응답 수신");
-                ui_show_success_message("예약이 성공적으로 취소되었습니다.");
-            } else {
-                LOG_WARNING("Client", "예약 취소 실패 응답 수신: %s", message->data);
-                ui_show_error_message(message->data);
-            }
+            ui_show_success_message("예약이 성공적으로 취소되었습니다.");
             break;
         case MSG_STATUS_UPDATE:
-            LOG_INFO("Client", "장비 상태 업데이트 메시지 수신");
             client_process_and_store_device_list(message);
             current_state = APP_STATE_DEVICE_LIST;
             menu_highlight = 0;
             scroll_offset = 0;
             break;
         default:
-            LOG_WARNING("Client", "알 수 없는 메시지 타입: %d", message->type);
             break;
     }
 }
@@ -698,23 +652,16 @@ static void client_process_and_store_device_list(const message_t* message) {
         }
         device_count = device_count_from_args;
     }
-    
-    LOG_INFO("Client", "파싱된 장비 개수: %d", device_count);
-    for (int i = 0; i < device_count; i++) {
-        LOG_INFO("Client", "장비[%d] id=%s name=%s type=%s", i, device_list[i].id, device_list[i].name, device_list[i].type);
-    }
 }
 
 static void client_login_submitted(const char* username, const char* password) {
     message_t* login_msg = message_create_login(username, password);
     if (!login_msg) {
-        LOG_WARNING("Client", "로그인 메시지 생성 실패");
         ui_show_error_message("로그인 메시지 생성 실패");
         return;
     }
     
     if (network_send_message(client_session.ssl, login_msg) < 0) {
-        LOG_WARNING("Client", "로그인 요청 전송 실패");
         ui_show_error_message("로그인 요청 전송 실패");
         message_destroy(login_msg);
         return;

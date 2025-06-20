@@ -28,7 +28,7 @@ int ui_init(void) {
         utils_report_error(ERROR_UI_INIT_FAILED, "UI", "UI 매니저 초기화 실패");  // 에러 메시지 출력
         return -1;  // 에러 코드 반환
     }
-    LOG_INFO("UI", "UI 시스템 초기화 성공");  // 정보 로그 출력
+    // LOG_INFO("UI", "UI 시스템 초기화 성공");  // 정보 로그 출력
     return 0;  // 성공 코드 반환
 }
 
@@ -39,7 +39,7 @@ void ui_cleanup(void) {
     if (g_ui_manager) {  // 전역 UI 매니저가 존재하는 경우
         ui_cleanup_manager(g_ui_manager);  // UI 매니저 정리
         g_ui_manager = NULL;  // 포인터를 NULL로 설정
-        LOG_INFO("UI", "UI 시스템 정리 완료");  // 정보 로그 출력
+        // LOG_INFO("UI", "UI 시스템 정리 완료");  // 정보 로그 출력
     }
 }
 
