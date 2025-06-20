@@ -53,36 +53,6 @@ static device_status_t client_string_to_device_status(const char* status_str);
 static void client_process_and_store_device_list(const message_t* message);
 static void client_draw_message_win(const char* msg);
 
-// 한글/영문 혼용 문자열의 실제 표시 폭 계산
-static int get_display_width(const char* str) {
-    int width = 0;
-    while (*str) {
-        unsigned char c = (unsigned char)*str;
-        if (c < 0x80) {
-            width += 1; // ASCII
-            str++;
-        } else if ((c & 0xE0) == 0xC0) {
-            width += 2; // 2바이트(한글 등)
-            str += 2;
-        } else if ((c & 0xF0) == 0xE0) {
-            width += 2; // 3바이트(한글 등)
-            str += 3;
-        } else {
-            str++;
-        }
-    }
-    return width;
-}
-
-// 지정한 폭에 맞춰 문자열을 출력하고, 남는 공간은 공백으로 채움
-static void print_fixed_width(WINDOW* win, int y, int x, const char* str, int width) {
-    mvwprintw(win, y, x, "%s", str);
-    int disp = get_display_width(str);
-    for (int i = disp; i < width; ++i) {
-        mvwaddch(win, y, x + i, ' ');
-    }
-}
-
 // 전역 변수
 extern ui_manager_t* g_ui_manager;
 static client_session_t client_session;

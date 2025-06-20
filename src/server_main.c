@@ -6,12 +6,6 @@
 #include "../include/resource.h"
 #include "../include/reservation.h" 
 
-// 메시지 노드 구조체
-typedef struct MsgNode {
-    message_t* msg;
-    struct MsgNode* next;
-} MsgNode;
-
 // Client 구조체 정의
 typedef struct {
     int socket_fd;
@@ -21,8 +15,6 @@ typedef struct {
     session_state_t state;
     char username[MAX_USERNAME_LENGTH];
     time_t last_activity;
-    MsgNode* queues[11]; // 우선순위 0~10 (MAX_PRIORITY=10 가정)
-    MsgNode* tails[11];
 } Client;
 
 // 함수 프로토타입
@@ -59,53 +51,6 @@ static Client* client_list[MAX_CLIENTS];
 static int num_clients = 0;
 static pthread_mutex_t client_list_mutex;
 static int g_server_port = 0; // [추가] 서버 포트 저장을 위한 전역 변수
-
-#define MAX_PRIORITY 10
-
-// 메시지 삽입 (우선순위 큐)
-void enqueue_message(Client* client, message_t* m) {
-    int p = m->priority;
-    if (p < 0) p = 0;
-    if (p > MAX_PRIORITY) p = MAX_PRIORITY;
-    MsgNode* node = (MsgNode*)malloc(sizeof(MsgNode));
-    node->msg = m;
-    node->next = NULL;
-    if (!client->queues[p]) {
-        client->queues[p] = client->tails[p] = node;
-    } else {
-        client->tails[p]->next = node;
-        client->tails[p] = node;
-    }
-}
-
-// 메시지 꺼내기 (우선순위 높은 것부터)
-message_t* dequeue_message(Client* client) {
-    for (int p = MAX_PRIORITY; p >= 0; --p) {
-        if (client->queues[p]) {
-            MsgNode* node = client->queues[p];
-            message_t* m = node->msg;
-            client->queues[p] = node->next;
-            if (!client->queues[p]) client->tails[p] = NULL;
-            free(node);
-            return m;
-        }
-    }
-    return NULL;
-}
-
-// 큐 정리 (메모리 해제)
-void cleanup_client_queue(Client* client) {
-    for (int p = 0; p <= MAX_PRIORITY; ++p) {
-        MsgNode* node = client->queues[p];
-        while (node) {
-            MsgNode* next = node->next;
-            message_destroy(node->msg);
-            free(node);
-            node = next;
-        }
-        client->queues[p] = client->tails[p] = NULL;
-    }
-}
 
 int main(int argc, char* argv[]) {
     if (argc != 2) {
@@ -202,21 +147,14 @@ static void server_broadcast_status_update(void) {
 
 static void server_client_message_loop(Client* client) {
     while (running) {
-        // 1. 메시지 수신 후 큐에 삽입
         message_t* msg = message_receive(client->ssl);
         if (msg) {
-            enqueue_message(client, msg);
             client->last_activity = time(NULL);
+            server_handle_client_message(client, msg); // 큐를 거치지 않고 바로 처리
+            message_destroy(msg);
         } else {
             // LOG_INFO("Thread", "클라이언트(%s)가 연결을 종료했습니다.", client->ip);
             break;
-        }
-
-        // 2. 큐에 있는 모든 메시지를 우선순위 순서대로 처리
-        message_t* to_process;
-        while ((to_process = dequeue_message(client)) != NULL) {
-            server_handle_client_message(client, to_process);
-            message_destroy(to_process);
         }
     }
 }
@@ -243,7 +181,6 @@ static void server_remove_client_from_list(Client* client) {
 
 static void server_cleanup_client(Client* client) {
     if (!client) return;
-    cleanup_client_queue(client); // 메시지 큐 메모리 해제
     if (client->state == SESSION_LOGGED_IN) session_close(session_manager, client->username);
     if (client->ssl_handler) network_cleanup_ssl_handler(client->ssl_handler);
     if (client->socket_fd >= 0) close(client->socket_fd);
@@ -610,35 +547,6 @@ static void server_load_users_from_file(const char* filename) {
     
     fclose(fp);
     LOG_INFO("Auth", "사용자 정보 로드 완료: 총 %d명", user_count);
-}
-
-// [추가] 한글/영문 혼용 문자열의 실제 표시 폭 계산
-static int get_display_width(const char* str) {
-    int width = 0;
-    while (*str) {
-        unsigned char c = (unsigned char)*str;
-        if (c < 0x80) {
-            width += 1; // ASCII
-            str++;
-        } else if ((c & 0xE0) == 0xC0) {
-            width += 2; // 2바이트(한글 등)
-            str += 2;
-        } else if ((c & 0xF0) == 0xE0) {
-            width += 2; // 3바이트(한글 등)
-            str += 3;
-        } else {
-            str++;
-        }
-    }
-    return width;
-}
-// [추가] 지정한 폭에 맞춰 문자열을 출력하고, 남는 공간은 공백으로 채움
-static void print_fixed_width(WINDOW* win, int y, int x, const char* str, int width) {
-    mvwprintw(win, y, x, "%s", str);
-    int disp = get_display_width(str);
-    for (int i = disp; i < width; ++i) {
-        mvwaddch(win, y, x + i, ' ');
-    }
 }
 
 void server_draw_ui_for_current_state(void) {

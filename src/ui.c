@@ -14,6 +14,7 @@ ui_manager_t* g_ui_manager = NULL;  // 전역 UI 매니저 포인터
 
 /* --- 내부(private) 함수 프로토타입 --- */
 static void ui_set_error_message(ui_manager_t* manager, const char* message);  // 에러 메시지 설정 함수
+static void ui_display_message_on_window(WINDOW* win, int color_pair, const char* prefix, const char* message);  // 메시지를 윈도우에 표시하는 함수
 
 /* --- 공개(public) 함수 정의 --- */
 
@@ -201,11 +202,7 @@ void ui_cleanup_manager(ui_manager_t* manager) {
  */
 void ui_set_status_message(ui_manager_t* manager, const char* message) {
     if (!manager || !message) return;  // 유효성 검사
-    werase(manager->status_win);  // 상태 윈도우 내용 지우기
-    box(manager->status_win, 0, 0);  // 상태 윈도우 테두리 그리기
-    wattron(manager->status_win, COLOR_PAIR(4)); // 녹색 배경
-    mvwprintw(manager->status_win, 1, 2, "STATUS: %s", message);  // 상태 메시지 출력
-    wattroff(manager->status_win, COLOR_PAIR(4));  // 색상 해제
+    ui_display_message_on_window(manager->status_win, 4, "STATUS", message);
 }
 
 /**
@@ -215,11 +212,7 @@ void ui_set_status_message(ui_manager_t* manager, const char* message) {
  */
 void ui_set_error_message(ui_manager_t* manager, const char* message) {
     if (!manager || !message) return;  // 유효성 검사
-    werase(manager->status_win);  // 상태 윈도우 내용 지우기
-    box(manager->status_win, 0, 0);  // 상태 윈도우 테두리 그리기
-    wattron(manager->status_win, COLOR_PAIR(5)); // 빨간색 배경
-    mvwprintw(manager->status_win, 1, 2, "ERROR: %s", message);  // 에러 메시지 출력
-    wattroff(manager->status_win, COLOR_PAIR(5));  // 색상 해제
+    ui_display_message_on_window(manager->status_win, 3, "ERROR", message);
 }
 
 void ui_handle_resize(void) {
@@ -248,20 +241,52 @@ void ui_handle_resize(void) {
 
 void ui_show_status(const char* msg) {
     if (!g_ui_manager || !msg) return;
-    werase(g_ui_manager->status_win);
-    box(g_ui_manager->status_win, 0, 0);
-    wattron(g_ui_manager->status_win, COLOR_PAIR(4));
-    mvwprintw(g_ui_manager->status_win, 1, 2, "STATUS: %s", msg);
-    wattroff(g_ui_manager->status_win, COLOR_PAIR(4));
+    ui_display_message_on_window(g_ui_manager->status_win, 4, "STATUS", msg);
     wrefresh(g_ui_manager->status_win);
 }
 
 void ui_show_error(const char* msg) {
     if (!g_ui_manager || !msg) return;
-    werase(g_ui_manager->status_win);
-    box(g_ui_manager->status_win, 0, 0);
-    wattron(g_ui_manager->status_win, COLOR_PAIR(3));
-    mvwprintw(g_ui_manager->status_win, 1, 2, "ERROR: %s", msg);
-    wattroff(g_ui_manager->status_win, COLOR_PAIR(3));
+    ui_display_message_on_window(g_ui_manager->status_win, 3, "ERROR", msg);
     wrefresh(g_ui_manager->status_win);
+}
+
+// 내부 헬퍼 함수: 메시지를 윈도우에 표시
+static void ui_display_message_on_window(WINDOW* win, int color_pair, const char* prefix, const char* message) {
+    if (!win) return;
+    werase(win);
+    box(win, 0, 0);
+    wattron(win, COLOR_PAIR(color_pair));
+    mvwprintw(win, 1, 2, "%s: %s", prefix, message);
+    wattroff(win, COLOR_PAIR(color_pair));
+}
+
+// 한글/영문 혼용 문자열의 실제 표시 폭 계산
+int get_display_width(const char* str) {
+    int width = 0;
+    while (*str) {
+        unsigned char c = (unsigned char)*str;
+        if (c < 0x80) {
+            width += 1; // ASCII
+            str++;
+        } else if ((c & 0xE0) == 0xC0) {
+            width += 2; // 2바이트(한글 등)
+            str += 2;
+        } else if ((c & 0xF0) == 0xE0) {
+            width += 2; // 3바이트(한글 등)
+            str += 3;
+        } else {
+            str++;
+        }
+    }
+    return width;
+}
+
+// 지정한 폭에 맞춰 문자열을 출력하고, 남는 공간은 공백으로 채움
+void print_fixed_width(WINDOW* win, int y, int x, const char* str, int width) {
+    mvwprintw(win, y, x, "%s", str);
+    int disp = get_display_width(str);
+    for (int i = disp; i < width; ++i) {
+        mvwaddch(win, y, x + i, ' ');
+    }
 }

@@ -81,4 +81,7 @@ void ui_show_success_message(const char* message);
 void client_draw_ui_for_current_state(void);
 void server_draw_ui_for_current_state(void);
 
+int get_display_width(const char* str);
+void print_fixed_width(WINDOW* win, int y, int x, const char* str, int width);
+
 #endif /* UI_H */
