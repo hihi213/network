@@ -249,7 +249,7 @@ static void* client_thread_func(void* arg) {
 static int process_device_reservation(Client* client, const char* device_id, int duration_sec) {
     if (!resource_is_device_available(resource_manager, device_id)) {
         char error_msg[256];
-        Reservation* active_res = get_active_reservation_for_device(reservation_manager, resource_manager, device_id);
+        Reservation* active_res = reservation_get_active_for_device(reservation_manager, resource_manager, device_id);
         if (active_res) {
             snprintf(error_msg, sizeof(error_msg), "사용 불가: '%s'님이 사용 중입니다.", active_res->username);
         } else {
@@ -259,12 +259,12 @@ static int process_device_reservation(Client* client, const char* device_id, int
     }
     time_t start = time(NULL);
     time_t end = start + duration_sec;
-    uint32_t new_res_id = create_reservation(reservation_manager, device_id, client->username, start, end, "User Reservation");
+    uint32_t new_res_id = reservation_create(reservation_manager, device_id, client->username, start, end, "User Reservation");
     if (new_res_id == 0) {
         return send_error_response(client->ssl, "예약 생성에 실패했습니다 (시간 중복 등).");
     }
     if (!resource_update_device_status(resource_manager, device_id, DEVICE_RESERVED, new_res_id)) {
-        cancel_reservation(reservation_manager, new_res_id, "system");
+        reservation_cancel(reservation_manager, new_res_id, "system");
         return send_error_response(client->ssl, "서버 내부 오류: 예약 상태 동기화 실패");
     }
     broadcast_status_update();
@@ -372,7 +372,7 @@ static int handle_cancel_request(Client* client, const Message* message) {
     const char* device_id = message->args[0];
     
     // 예약 정보 확인
-    Reservation* res = get_active_reservation_for_device(reservation_manager, resource_manager, device_id);
+    Reservation* res = reservation_get_active_for_device(reservation_manager, resource_manager, device_id);
 
     // 본인의 예약이 맞는지 확인
     if (!res || strcmp(res->username, client->username) != 0) {
@@ -380,7 +380,7 @@ static int handle_cancel_request(Client* client, const Message* message) {
     }
 
     // 예약 취소 로직 호출
-    if (cancel_reservation(reservation_manager, res->id, client->username)) {
+    if (reservation_cancel(reservation_manager, res->id, client->username)) {
         // 장비 상태를 'available'로 변경
         resource_update_device_status(resource_manager, device_id, DEVICE_AVAILABLE, 0);
         
@@ -436,7 +436,7 @@ static int init_server(int port) {
     if (init_ui() < 0) return -1;
     
     resource_manager = resource_init_manager();
-    reservation_manager = init_reservation_manager(resource_manager, broadcast_status_update);
+    reservation_manager = reservation_init_manager(resource_manager, broadcast_status_update);
     session_manager = init_session_manager();
     load_users_from_file("users.txt"); // 사용자 정보 로드 추가
     
@@ -463,7 +463,7 @@ static void cleanup_server(void) {
     }
     
     if (reservation_manager) {
-        cleanup_reservation_manager(reservation_manager);
+        reservation_cleanup_manager(reservation_manager);
         reservation_manager = NULL;
     }
     

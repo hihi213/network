@@ -12,10 +12,10 @@ static pthread_t cleanup_thread;
 static bool cleanup_thread_running = false;
 static ReservationManager* global_manager = NULL;
 static ResourceManager* global_resource_manager = NULL;
-static void* cleanup_thread_function(void* arg);
-static void null_free_func(void* data) { (void)data; }
+static void* reservation_cleanup_thread_function(void* arg);
+static void reservation_null_free_func(void* data) { (void)data; }
 
-ReservationManager* init_reservation_manager(ResourceManager* res_manager, void (*callback)(void)) {
+ReservationManager* reservation_init_manager(ResourceManager* res_manager, void (*callback)(void)) {
     ReservationManager* manager = (ReservationManager*)malloc(sizeof(ReservationManager));
     if (!manager) {
         utils_report_error(ERROR_MEMORY_ALLOCATION_FAILED, "Reservation", "예약 관리자 메모리 할당 실패");
@@ -25,7 +25,7 @@ ReservationManager* init_reservation_manager(ResourceManager* res_manager, void 
     manager->reservation_count = 0;
     manager->next_reservation_id = 1;
     manager->broadcast_callback = callback;
-    manager->reservation_map = utils_hashtable_create(MAX_RESERVATIONS, null_free_func);
+    manager->reservation_map = utils_hashtable_create(MAX_RESERVATIONS, reservation_null_free_func);
     if (!manager->reservation_map) {
         utils_report_error(ERROR_HASHTABLE_CREATION_FAILED, "Reservation", "예약 해시 테이블 생성 실패");
         free(manager);
@@ -43,7 +43,7 @@ ReservationManager* init_reservation_manager(ResourceManager* res_manager, void 
     global_resource_manager = res_manager;
     cleanup_thread_running = true;
 
-    if (pthread_create(&cleanup_thread, NULL, cleanup_thread_function, NULL) != 0) {
+    if (pthread_create(&cleanup_thread, NULL, reservation_cleanup_thread_function, NULL) != 0) {
         utils_report_error(ERROR_INVALID_STATE, "Reservation", "만료 예약 정리 스레드 생성 실패");
         cleanup_thread_running = false;
         global_manager = NULL;
@@ -57,9 +57,9 @@ ReservationManager* init_reservation_manager(ResourceManager* res_manager, void 
     return manager;
 }
 
-Reservation* get_active_reservation_for_device(ReservationManager* resv_manager, ResourceManager* rsrc_manager, const char* device_id) {
+Reservation* reservation_get_active_for_device(ReservationManager* resv_manager, ResourceManager* rsrc_manager, const char* device_id) {
     if (!resv_manager || !rsrc_manager || !device_id) {
-        utils_report_error(ERROR_INVALID_PARAMETER, "Reservation", "get_active_reservation_for_device: 잘못된 파라미터");
+        utils_report_error(ERROR_INVALID_PARAMETER, "Reservation", "reservation_get_active_for_device: 잘못된 파라미터");
         return NULL;
     }
 
@@ -100,18 +100,18 @@ Reservation* get_active_reservation_for_device(ReservationManager* resv_manager,
     return NULL;
 }
 
-static void* cleanup_thread_function(void* arg) {
+static void* reservation_cleanup_thread_function(void* arg) {
     (void)arg;
     while (cleanup_thread_running) {
         if (global_manager && global_resource_manager) {
-            cleanup_expired_reservations(global_manager, global_resource_manager);
+            reservation_cleanup_expired(global_manager, global_resource_manager);
         }
         sleep(1); // 5초에서 1초로 수정
     }
     return NULL;
 }
 
-void cleanup_reservation_manager(ReservationManager* manager) {
+void reservation_cleanup_manager(ReservationManager* manager) {
     if (!manager) return;
 
     if (cleanup_thread_running) {
@@ -128,7 +128,7 @@ void cleanup_reservation_manager(ReservationManager* manager) {
     // LOG_INFO("Reservation", "예약 관리자 정리 완료");
 }
 
-uint32_t create_reservation(ReservationManager* manager, const char* device_id,
+uint32_t reservation_create(ReservationManager* manager, const char* device_id,
                             const char* username, time_t start_time,
                             time_t end_time, const char* reason)   {
     if (!manager || !device_id || !username || !reason) {
@@ -189,7 +189,7 @@ uint32_t create_reservation(ReservationManager* manager, const char* device_id,
     return reservation_id; 
 }
 
-bool cancel_reservation(ReservationManager* manager, uint32_t reservation_id,
+bool reservation_cancel(ReservationManager* manager, uint32_t reservation_id,
                        const char* username) {
     if (!manager || !username) {
         utils_report_error(ERROR_INVALID_PARAMETER, "Reservation", "잘못된 파라미터");
@@ -229,7 +229,7 @@ bool cancel_reservation(ReservationManager* manager, uint32_t reservation_id,
     return true;
 }
 
-void cleanup_expired_reservations(ReservationManager* manager, ResourceManager* res_manager) {
+void reservation_cleanup_expired(ReservationManager* manager, ResourceManager* res_manager) {
     if (!manager || !res_manager) return;
 
     time_t current_time = time(NULL);

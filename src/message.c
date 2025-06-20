@@ -45,7 +45,7 @@ bool message_fill_status_response_args(Message* msg, const Device* devices, int 
         char end_time_str[32] = "0";
         char username_str[MAX_USERNAME_LENGTH] = "";
         if (devices[i].status == DEVICE_RESERVED) {
-            Reservation* res = get_active_reservation_for_device(rvm, rm, devices[i].id);
+            Reservation* res = reservation_get_active_for_device(rvm, rm, devices[i].id);
             if (res) {
                 snprintf(end_time_str, sizeof(end_time_str), "%ld", res->end_time);
                 strncpy(username_str, res->username, sizeof(username_str) - 1);

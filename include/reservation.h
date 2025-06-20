@@ -37,13 +37,13 @@ typedef struct ReservationManager {
 struct ResourceManager;
 
 // 함수 프로토타입
-ReservationManager* init_reservation_manager(ResourceManager* res_manager, void (*callback)(void));
-void cleanup_reservation_manager(ReservationManager* manager);
-uint32_t create_reservation(ReservationManager* manager, const char* device_id,
+ReservationManager* reservation_init_manager(ResourceManager* res_manager, void (*callback)(void));
+void reservation_cleanup_manager(ReservationManager* manager);
+uint32_t reservation_create(ReservationManager* manager, const char* device_id,
                             const char* username, time_t start_time,
                             time_t end_time, const char* reason);
-bool cancel_reservation(ReservationManager* manager, uint32_t reservation_id,
+bool reservation_cancel(ReservationManager* manager, uint32_t reservation_id,
                        const char* username);
-void cleanup_expired_reservations(ReservationManager* manager, struct ResourceManager* res_manager);
-Reservation* get_active_reservation_for_device(ReservationManager* resv_manager, struct ResourceManager* rsrc_manager, const char* device_id);
+void reservation_cleanup_expired(ReservationManager* manager, struct ResourceManager* res_manager);
+Reservation* reservation_get_active_for_device(ReservationManager* resv_manager, struct ResourceManager* rsrc_manager, const char* device_id);
 #endif // RESERVATION_H

@@ -115,7 +115,7 @@ void update_server_devices(const Device* devices, int count, ResourceManager* re
             // 예약 정보 조회
             char reservation_info[32] = "-";
             if (device->status == DEVICE_RESERVED) {
-                Reservation* res = get_active_reservation_for_device(reservation_manager, resource_manager, device->id);
+                Reservation* res = reservation_get_active_for_device(reservation_manager, resource_manager, device->id);
                 if (res) {
                     time_t current_time = time(NULL);
                     long remaining_sec = (res->end_time > current_time) ? (res->end_time - current_time) : 0;
