@@ -439,15 +439,20 @@ static void handle_input_device_list(int ch) {
             if (menu_highlight < device_count - 1) menu_highlight++;
             if (menu_highlight >= scroll_offset + visible_items) scroll_offset = menu_highlight - visible_items + 1;
             break;
-        case 10:
-            if (device_list && menu_highlight < device_count) {
-                if (device_list[menu_highlight].status == DEVICE_AVAILABLE) {
-                    reservation_target_device_index = menu_highlight;
-                    memset(reservation_input_buffer, 0, sizeof(reservation_input_buffer));
-                    reservation_input_pos = 0;
-                    current_state = UI_STATE_INPUT_RESERVATION_TIME;
-                    flushinp();
-                }
+        case 9: // Tab 키
+            active_login_field = (active_login_field == LOGIN_FIELD_USERNAME) 
+                               ? LOGIN_FIELD_PASSWORD 
+                               : LOGIN_FIELD_USERNAME;
+            LOG_INFO("Client", "로그인 입력: Tab 키로 필드 전환 (현재 필드: %s)", 
+                    active_login_field == LOGIN_FIELD_USERNAME ? "아이디" : "비밀번호");
+            break;
+        case 10: // Enter 키
+            if (menu_highlight == 0) { // "로그인" 선택
+                current_state = UI_STATE_LOGIN_INPUT;
+                // ... (로그인 상태 변수 초기화) ...
+                flushinp(); // ncurses 입력 버퍼를 비워 씹힘 현상을 방지합니다.
+            } else { // "종료" 선택
+                running = false; 
             }
             break;
         case 'c':
