@@ -417,6 +417,13 @@ static void client_handle_input_logged_in_menu(int ch) {
             break;
         case 10: // Enter 키
             if (menu_highlight == 0) { // "장비 현황 조회 및 예약" 선택
+                message_t* msg = message_create(MSG_STATUS_REQUEST, NULL);
+                if (msg) {
+                    if (network_send_message(client_session.ssl, msg) < 0) {
+                        running = false;
+                    }
+                    message_destroy(msg);
+                }
             } else { // "로그아웃" 선택
                 message_t* logout_msg = message_create(MSG_LOGOUT, NULL);
                 if (logout_msg) {
