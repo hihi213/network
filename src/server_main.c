@@ -26,24 +26,25 @@ typedef struct {
 } Client;
 
 // 함수 프로토타입
-static int init_server(int port);
-static void cleanup_server(void);
-static void signal_handler(int signum);
-static void* client_thread_func(void* arg);
-static int handle_client_message(Client* client, const Message* message);
-static int handle_status_request(Client* client, const Message* message);
-static int handle_reserve_request(Client* client, const Message* message);
-static int handle_login_request(Client* client, const Message* message);
-static int handle_cancel_request(Client* client, const Message* message);
-static int send_error_response(SSL* ssl, const char* error_message);
-static int send_generic_response(Client* client, MessageType type, const char* data, int arg_count, ...);
-static void client_message_loop(Client* client);
-static void cleanup_client(Client* client);
-static void add_client_to_list(Client* client);
-static void remove_client_from_list(Client* client);
-static void broadcast_status_update(void);
-static bool is_user_authenticated(const char* username, const char* password); // 인증 함수 프로토타입 추가
-static void load_users_from_file(const char* filename); // 사용자 정보 로드 함수 프로토타입 추가
+static int server_init(int port);
+static void server_cleanup(void);
+static void server_signal_handler(int signum);
+static void* server_client_thread_func(void* arg);
+static int server_handle_client_message(Client* client, const Message* message);
+static int server_handle_status_request(Client* client, const Message* message);
+static int server_handle_reserve_request(Client* client, const Message* message);
+static int server_handle_login_request(Client* client, const Message* message);
+static int server_handle_cancel_request(Client* client, const Message* message);
+static int server_send_error_response(SSL* ssl, const char* error_message);
+static int server_send_generic_response(Client* client, MessageType type, const char* data, int arg_count, ...);
+static void server_client_message_loop(Client* client);
+static void server_cleanup_client(Client* client);
+static void server_add_client_to_list(Client* client);
+static void server_remove_client_from_list(Client* client);
+static void server_broadcast_status_update(void);
+static bool server_is_user_authenticated(const char* username, const char* password);
+static void server_load_users_from_file(const char* filename);
+static int server_process_device_reservation(Client* client, const char* device_id, int duration_sec);
 // 전역 변수
 static int server_sock;
 static bool running = true;
@@ -109,9 +110,9 @@ int main(int argc, char* argv[]) {
         utils_report_error(ERROR_INVALID_PARAMETER, "Server", "사용법: %s <포트>", argv[0]);
         return 1;
     }
-    if (init_server(atoi(argv[1])) != 0) {
+    if (server_init(atoi(argv[1])) != 0) {
         utils_report_error(ERROR_NETWORK_SOCKET_CREATION_FAILED, "Main", "서버 초기화 실패");
-        cleanup_server();
+        server_cleanup();
         return 1;
     }
     // LOG_INFO("Main", "서버가 클라이언트 연결을 기다립니다...");
@@ -156,18 +157,18 @@ int main(int argc, char* argv[]) {
             client->last_activity = time(NULL);
             
             pthread_t thread;
-            if (pthread_create(&thread, NULL, client_thread_func, client) != 0) {
+            if (pthread_create(&thread, NULL, server_client_thread_func, client) != 0) {
                 utils_report_error(ERROR_SESSION_CREATION_FAILED, "Main", "클라이언트 스레드 생성 실패");
-                cleanup_client(client);
+                server_cleanup_client(client);
             }
             pthread_detach(thread);
         }
     }
-    cleanup_server();
+    server_cleanup();
     return 0;
 }
 
-static void broadcast_status_update(void) {
+static void server_broadcast_status_update(void) {
     Device devices[MAX_DEVICES];
     int count = resource_get_device_list(resource_manager, devices, MAX_DEVICES);
     if (count < 0) return;
@@ -188,7 +189,7 @@ static void broadcast_status_update(void) {
     }
 }
 
-static void client_message_loop(Client* client) {
+static void server_client_message_loop(Client* client) {
     while (running) {
         // 1. 메시지 수신 후 큐에 삽입
         Message* msg = message_receive(client->ssl);
@@ -203,19 +204,19 @@ static void client_message_loop(Client* client) {
         // 2. 큐에 있는 모든 메시지를 우선순위 순서대로 처리
         Message* to_process;
         while ((to_process = dequeue_message(client)) != NULL) {
-            handle_client_message(client, to_process);
+            server_handle_client_message(client, to_process);
             message_destroy(to_process);
         }
     }
 }
 
-static void add_client_to_list(Client* client) {
+static void server_add_client_to_list(Client* client) {
     pthread_mutex_lock(&client_list_mutex);
     if (num_clients < MAX_CLIENTS) client_list[num_clients++] = client;
     pthread_mutex_unlock(&client_list_mutex);
 }
 
-static void remove_client_from_list(Client* client) {
+static void server_remove_client_from_list(Client* client) {
     pthread_mutex_lock(&client_list_mutex);
     for (int i = 0; i < num_clients; i++) {
         if (client_list[i] == client) {
@@ -227,7 +228,7 @@ static void remove_client_from_list(Client* client) {
     pthread_mutex_unlock(&client_list_mutex);
 }
 
-static void cleanup_client(Client* client) {
+static void server_cleanup_client(Client* client) {
     if (!client) return;
     cleanup_client_queue(client); // 메시지 큐 메모리 해제
     if (client->state == SESSION_LOGGED_IN) session_close(session_manager, client->username);
@@ -236,17 +237,17 @@ static void cleanup_client(Client* client) {
     free(client);
 }
 
-static void* client_thread_func(void* arg) {
+static void* server_client_thread_func(void* arg) {
     Client* client = (Client*)arg;
     // SSL 핸들러와 핸드셰이크는 이미 main에서 network_accept_client()로 처리됨
-    add_client_to_list(client);
-    client_message_loop(client);
-    remove_client_from_list(client);
-    cleanup_client(client);
+    server_add_client_to_list(client);
+    server_client_message_loop(client);
+    server_remove_client_from_list(client);
+    server_cleanup_client(client);
     return NULL;
 }
 
-static int process_device_reservation(Client* client, const char* device_id, int duration_sec) {
+static int server_process_device_reservation(Client* client, const char* device_id, int duration_sec) {
     if (!resource_is_device_available(resource_manager, device_id)) {
         char error_msg[256];
         Reservation* active_res = reservation_get_active_for_device(reservation_manager, resource_manager, device_id);
@@ -255,19 +256,19 @@ static int process_device_reservation(Client* client, const char* device_id, int
         } else {
             strncpy(error_msg, "현재 사용 불가 또는 점검 중인 장비입니다.", sizeof(error_msg)-1);
         }
-       return send_error_response(client->ssl, error_msg);
+       return server_send_error_response(client->ssl, error_msg);
     }
     time_t start = time(NULL);
     time_t end = start + duration_sec;
     uint32_t new_res_id = reservation_create(reservation_manager, device_id, client->username, start, end, "User Reservation");
     if (new_res_id == 0) {
-        return send_error_response(client->ssl, "예약 생성에 실패했습니다 (시간 중복 등).");
+        return server_send_error_response(client->ssl, "예약 생성에 실패했습니다 (시간 중복 등).");
     }
     if (!resource_update_device_status(resource_manager, device_id, DEVICE_RESERVED, new_res_id)) {
         reservation_cancel(reservation_manager, new_res_id, "system");
-        return send_error_response(client->ssl, "서버 내부 오류: 예약 상태 동기화 실패");
+        return server_send_error_response(client->ssl, "서버 내부 오류: 예약 상태 동기화 실패");
     }
-    broadcast_status_update();
+    server_broadcast_status_update();
     Message* response = message_create(MSG_RESERVE_RESPONSE, "success");
     if (response) {
         Device updated_device;
@@ -283,7 +284,7 @@ static int process_device_reservation(Client* client, const char* device_id, int
     }
     return 0;
 }
-static bool is_user_authenticated(const char* username, const char* password) {
+static bool server_is_user_authenticated(const char* username, const char* password) {
     if (!user_credentials) {
         LOG_WARNING("Auth", "사용자 정보 해시 테이블이 초기화되지 않음");
         return false;
@@ -300,10 +301,10 @@ static bool is_user_authenticated(const char* username, const char* password) {
     LOG_WARNING("Auth", "사용자 인증 실패: %s (사용자 없음 또는 비밀번호 불일치)", username);
     return false; // 사용자가 없거나 비밀번호 불일치
 }
-static int handle_login_request(Client* client, const Message* message) {
+static int server_handle_login_request(Client* client, const Message* message) {
     if (message->arg_count < 2) {
         LOG_WARNING("Auth", "로그인 요청 실패: 인수 부족 (필요: 2, 받음: %d)", message->arg_count);
-        return send_error_response(client->ssl, "로그인 정보가 부족합니다.");
+        return server_send_error_response(client->ssl, "로그인 정보가 부족합니다.");
     }
     const char* user = message->args[0];
     const char* pass = message->args[1];
@@ -311,9 +312,9 @@ static int handle_login_request(Client* client, const Message* message) {
     LOG_INFO("Auth", "로그인 시도: 사용자='%s', IP=%s", user, client->ip);
 
     // 1단계: 사용자 자격 증명 확인
-    if (!is_user_authenticated(user, pass)) {
+    if (!server_is_user_authenticated(user, pass)) {
         LOG_WARNING("Auth", "로그인 실패: 사용자 '%s'의 자격 증명이 올바르지 않습니다. (IP: %s)", user, client->ip);
-        return send_error_response(client->ssl, "아이디 또는 비밀번호가 틀립니다.");
+        return server_send_error_response(client->ssl, "아이디 또는 비밀번호가 틀립니다.");
     }
 
     LOG_INFO("Auth", "사용자 자격 증명 확인 성공: '%s'", user);
@@ -323,7 +324,7 @@ static int handle_login_request(Client* client, const Message* message) {
     if (!session) {
         // session_create는 사용자가 이미 존재할 경우 NULL을 반환합니다.
         LOG_WARNING("Auth", "로그인 실패: 사용자 '%s'는 이미 로그인되어 있습니다. (IP: %s)", user, client->ip);
-        return send_error_response(client->ssl, "이미 로그인된 사용자입니다.");
+        return server_send_error_response(client->ssl, "이미 로그인된 사용자입니다.");
     }
 
     // 3단계: 로그인 성공 처리
@@ -334,18 +335,18 @@ static int handle_login_request(Client* client, const Message* message) {
     LOG_INFO("Auth", "사용자 '%s'가 IP주소 %s 에서 로그인했습니다.", user, client->ip);
 
     // 4단계: 클라이언트에 성공 응답 전송
-    send_generic_response(client, MSG_LOGIN, "success", 1, user);
+    server_send_generic_response(client, MSG_LOGIN, "success", 1, user);
 
     // 5단계: 로그인 직후, 클라이언트가 다음 화면을 그릴 수 있도록 장비 현황 전송
-    handle_status_request(client, NULL); 
+    server_handle_status_request(client, NULL); 
 
     return 0;
 }
-static int handle_status_request(Client* client, const Message* message) {
+static int server_handle_status_request(Client* client, const Message* message) {
     (void)message; 
     Device devices[MAX_DEVICES];
     int count = resource_get_device_list(resource_manager, devices, MAX_DEVICES);
-    if (count < 0) return send_error_response(client->ssl, "서버에서 장비 목록을 가져오는 데 실패했습니다.");
+    if (count < 0) return server_send_error_response(client->ssl, "서버에서 장비 목록을 가져오는 데 실패했습니다.");
     LOG_INFO("Server", "장비 목록 요청 수신, 장비 개수: %d", count);
     Message* response = message_create_status_response(devices, count, resource_manager, reservation_manager);
     if (response) {
@@ -358,17 +359,17 @@ static int handle_status_request(Client* client, const Message* message) {
     return 0;
 }
 
-static int handle_reserve_request(Client* client, const Message* message) {
-    if (message->arg_count < 2) return send_error_response(client->ssl, "예약 요청 정보(장비 ID, 시간)가 부족합니다.");
+static int server_handle_reserve_request(Client* client, const Message* message) {
+    if (message->arg_count < 2) return server_send_error_response(client->ssl, "예약 요청 정보(장비 ID, 시간)가 부족합니다.");
     const char* device_id = message->args[0];
     int duration_sec = atoi(message->args[1]);
-    if (duration_sec <= 0) return send_error_response(client->ssl, "유효하지 않은 예약 시간입니다.");
-    process_device_reservation(client, device_id, duration_sec);
+    if (duration_sec <= 0) return server_send_error_response(client->ssl, "유효하지 않은 예약 시간입니다.");
+    server_process_device_reservation(client, device_id, duration_sec);
     return 0;
 }
-static int handle_cancel_request(Client* client, const Message* message) {
+static int server_handle_cancel_request(Client* client, const Message* message) {
     if (message->arg_count < 1) {
-        return send_error_response(client->ssl, "예약 취소 정보(장비 ID)가 부족합니다.");
+        return server_send_error_response(client->ssl, "예약 취소 정보(장비 ID)가 부족합니다.");
     }
 
     const char* device_id = message->args[0];
@@ -378,7 +379,7 @@ static int handle_cancel_request(Client* client, const Message* message) {
 
     // 본인의 예약이 맞는지 확인
     if (!res || strcmp(res->username, client->username) != 0) {
-        return send_error_response(client->ssl, "취소할 수 있는 예약이 아니거나 권한이 없습니다.");
+        return server_send_error_response(client->ssl, "취소할 수 있는 예약이 아니거나 권한이 없습니다.");
     }
 
     // 예약 취소 로직 호출
@@ -387,46 +388,46 @@ static int handle_cancel_request(Client* client, const Message* message) {
         resource_update_device_status(resource_manager, device_id, DEVICE_AVAILABLE, 0);
         
         // 모든 클라이언트에 상태 변경 전파
-        broadcast_status_update();
+        server_broadcast_status_update();
 
         // 요청한 클라이언트에 성공 응답 전송
-        send_generic_response(client, MSG_CANCEL_RESPONSE, "success", 0);
+        server_send_generic_response(client, MSG_CANCEL_RESPONSE, "success", 0);
     } else {
-        send_error_response(client->ssl, "알 수 없는 오류로 예약 취소에 실패했습니다.");
+        server_send_error_response(client->ssl, "알 수 없는 오류로 예약 취소에 실패했습니다.");
     }
 
     return 0;
 }
-static int handle_client_message(Client* client, const Message* message) {
+static int server_handle_client_message(Client* client, const Message* message) {
     if (!client || !message) return -1;
     // 로그인되지 않은 상태에서는 로그인 요청만 허용
     if (client->state != SESSION_LOGGED_IN && message->type != MSG_LOGIN) {
-        return send_error_response(client->ssl, "로그인이 필요한 서비스입니다.");
+        return server_send_error_response(client->ssl, "로그인이 필요한 서비스입니다.");
     }
     switch (message->type) {
         case MSG_LOGIN: 
-            return handle_login_request(client, message); // 리팩토링된 함수 호출
+            return server_handle_login_request(client, message); // 리팩토링된 함수 호출
         case MSG_STATUS_REQUEST: 
-            return handle_status_request(client, message);
+            return server_handle_status_request(client, message);
         case MSG_RESERVE_REQUEST: 
-            return handle_reserve_request(client, message);
+            return server_handle_reserve_request(client, message);
         case MSG_CANCEL_REQUEST: 
-            return handle_cancel_request(client, message);
+            return server_handle_cancel_request(client, message);
         case MSG_LOGOUT:
             LOG_INFO("Server", "클라이언트 로그아웃 요청 수신: %s", client->username);
             if (client->state == SESSION_LOGGED_IN) {
                 session_close(session_manager, client->username);
                 client->state = SESSION_DISCONNECTED;
                 memset(client->username, 0, sizeof(client->username));
-                send_generic_response(client, MSG_LOGOUT, "success", 0);
+                server_send_generic_response(client, MSG_LOGOUT, "success", 0);
             }
             break;
         default: 
-            return send_error_response(client->ssl, "알 수 없거나 처리할 수 없는 요청입니다.");
+            return server_send_error_response(client->ssl, "알 수 없거나 처리할 수 없는 요청입니다.");
     }
 }
 
-static void signal_handler(int signum) {
+static void server_signal_handler(int signum) {
     (void)signum;
     if (pipe(self_pipe) == -1) { 
         utils_report_error(ERROR_FILE_OPERATION_FAILED, "Server", "pipe 생성 실패"); 
@@ -435,21 +436,21 @@ static void signal_handler(int signum) {
     (void)write(self_pipe[1], "s", 1);
 }
 
-static int init_server(int port) {
+static int server_init(int port) {
     if (pipe(self_pipe) == -1) { 
         utils_report_error(ERROR_FILE_OPERATION_FAILED, "Server", "pipe 생성 실패"); 
         return -1; 
     }
-    signal(SIGINT, signal_handler);
-    signal(SIGTERM, signal_handler);
+    signal(SIGINT, server_signal_handler);
+    signal(SIGTERM, server_signal_handler);
     if (utils_init_logger("logs/server.log") < 0) return -1;
     if (network_init_ssl_manager(&ssl_manager, true, "certs/server.crt", "certs/server.key") < 0) return -1;
     if (ui_init() < 0) return -1;
     
     resource_manager = resource_init_manager();
-    reservation_manager = reservation_init_manager(resource_manager, broadcast_status_update);
+    reservation_manager = reservation_init_manager(resource_manager, server_broadcast_status_update);
     session_manager = session_init_manager();
-    load_users_from_file("users.txt"); // 사용자 정보 로드 추가
+    server_load_users_from_file("users.txt"); // 사용자 정보 로드 추가
     
     if (!resource_manager || !reservation_manager || !session_manager || !user_credentials) return -1;
     
@@ -459,7 +460,7 @@ static int init_server(int port) {
     return 0;
 }
 
-static void cleanup_server(void) {
+static void server_cleanup(void) {
     running = false;
     
     if (user_credentials) {
@@ -506,7 +507,7 @@ static void cleanup_server(void) {
  * @param ... 전달할 가변 인자 (const char* 타입)
  * @return 성공 시 0, 실패 시 -1
  */
-static int send_generic_response(Client* client, MessageType type, const char* data, int arg_count, ...) {
+static int server_send_generic_response(Client* client, MessageType type, const char* data, int arg_count, ...) {
     if (!client || !client->ssl) return -1;
 
     Message* response = message_create(type, data);
@@ -545,7 +546,7 @@ static int send_generic_response(Client* client, MessageType type, const char* d
  * @param error_message 보낼 에러 메시지
  * @return 성공 시 0, 실패 시 -1
  */
-static int send_error_response(SSL* ssl, const char* error_message) {
+static int server_send_error_response(SSL* ssl, const char* error_message) {
     if (!ssl || !error_message) return -1;
     Message* response = message_create_error(error_message);
     if (!response) return -1;
@@ -554,7 +555,7 @@ static int send_error_response(SSL* ssl, const char* error_message) {
     return ret;
 }
 
-static void load_users_from_file(const char* filename) {
+static void server_load_users_from_file(const char* filename) {
     user_credentials = utils_hashtable_create(MAX_CLIENTS, free); // 비밀번호 문자열을 free로 해제
     if (!user_credentials) {
         utils_report_error(ERROR_HASHTABLE_CREATION_FAILED, "Auth", "사용자 정보 해시 테이블 생성 실패");
