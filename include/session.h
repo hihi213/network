@@ -65,12 +65,12 @@ typedef struct {
 /* 함수 프로토타입 */
 
 // 서버용 세션 관리 함수
-SessionManager* init_session_manager(void);
-void cleanup_session_manager(SessionManager* manager);
-ServerSession* create_session(SessionManager* manager, const char* username, const char* client_ip, int client_port);
-int close_session(SessionManager* manager, const char* username);
+SessionManager* session_init_manager(void);
+void session_cleanup_manager(SessionManager* manager);
+ServerSession* session_create(SessionManager* manager, const char* username, const char* client_ip, int client_port);
+int session_close(SessionManager* manager, const char* username);
 
 // 클라이언트용 세션 정리 함수
-void cleanup_client_session(ClientSession* session);
+void session_cleanup_client(ClientSession* session);
 
 #endif // SESSION_H

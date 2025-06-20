@@ -9,7 +9,7 @@
 
 
 // [개선] ServerSession 구조체를 해제하기 위한 래퍼 함수
-static void free_session_wrapper(void* session) {
+static void session_free_wrapper(void* session) {
     free(session);  // 세션 포인터 메모리 해제
 }
 
@@ -17,7 +17,7 @@ static void free_session_wrapper(void* session) {
  * @brief 세션 매니저를 초기화합니다.
  * @return 성공 시 초기화된 SessionManager 포인터, 실패 시 NULL
  */
-SessionManager* init_session_manager(void) {
+SessionManager* session_init_manager(void) {
     SessionManager* manager = (SessionManager*)malloc(sizeof(SessionManager));  // 세션 매니저 메모리 할당
     if (!manager) {  // 메모리 할당 실패 시
         utils_report_error(ERROR_MEMORY_ALLOCATION_FAILED, "Session", "세션 매니저 메모리 할당 실패");  // 에러 로그 출력
@@ -25,7 +25,7 @@ SessionManager* init_session_manager(void) {
     }
 
     // [개선] 해시 테이블 초기화. 최대 세션 수(MAX_SESSIONS)를 크기로 지정.
-    manager->sessions = utils_hashtable_create(MAX_SESSIONS, free_session_wrapper);  // 해시 테이블 생성
+    manager->sessions = utils_hashtable_create(MAX_SESSIONS, session_free_wrapper);  // 해시 테이블 생성
     if (!manager->sessions) {  // 해시 테이블 생성 실패 시
         utils_report_error(ERROR_HASHTABLE_CREATION_FAILED, "Session", "세션 해시 테이블 생성 실패");  // 에러 로그 출력
         free(manager);  // 매니저 메모리 해제
@@ -51,7 +51,7 @@ SessionManager* init_session_manager(void) {
  * @brief 세션 매니저의 메모리를 정리합니다.
  * @param manager 정리할 SessionManager 포인터
  */
-void cleanup_session_manager(SessionManager* manager) {
+void session_cleanup_manager(SessionManager* manager) {
     if (!manager) return;  // 매니저가 NULL이면 함수 종료
     
     // [개선] 해시 테이블의 모든 자원을 해제
@@ -70,9 +70,9 @@ void cleanup_session_manager(SessionManager* manager) {
  * @param client_port 클라이언트 포트 번호
  * @return 생성된 ServerSession 포인터, 실패 시 NULL
  */
-ServerSession* create_session(SessionManager* manager, const char* username, const char* client_ip, int client_port) {
+ServerSession* session_create(SessionManager* manager, const char* username, const char* client_ip, int client_port) {
     if (!manager || !username || !client_ip) {  // 유효성 검사
-        utils_report_error(ERROR_INVALID_PARAMETER, "Session", "create_session: 잘못된 파라미터");
+        utils_report_error(ERROR_INVALID_PARAMETER, "Session", "session_create: 잘못된 파라미터");
         return NULL;  // NULL 반환
     }
 
@@ -131,9 +131,9 @@ ServerSession* create_session(SessionManager* manager, const char* username, con
  * @param username 종료할 세션의 사용자 이름
  * @return 성공 시 0, 실패 시 -1
  */
-int close_session(SessionManager* manager, const char* username) {
+int session_close(SessionManager* manager, const char* username) {
     if (!manager || !username) {  // 유효성 검사
-        utils_report_error(ERROR_INVALID_PARAMETER, "Session", "close_session: 잘못된 매개변수");
+        utils_report_error(ERROR_INVALID_PARAMETER, "Session", "session_close: 잘못된 매개변수");
         return -1;  // 에러 코드 반환
     }
 
@@ -157,7 +157,7 @@ int close_session(SessionManager* manager, const char* username) {
  * @brief 클라이언트 세션의 메모리를 정리합니다.
  * @param session 정리할 ClientSession 포인터
  */
-void cleanup_client_session(ClientSession* session) {
+void session_cleanup_client(ClientSession* session) {
     if (!session) return;  // 세션이 NULL이면 함수 종료
 
     // SSL 핸들러 정리

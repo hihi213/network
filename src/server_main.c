@@ -230,7 +230,7 @@ static void remove_client_from_list(Client* client) {
 static void cleanup_client(Client* client) {
     if (!client) return;
     cleanup_client_queue(client); // 메시지 큐 메모리 해제
-    if (client->state == SESSION_LOGGED_IN) close_session(session_manager, client->username);
+    if (client->state == SESSION_LOGGED_IN) session_close(session_manager, client->username);
     if (client->ssl_handler) network_cleanup_ssl_handler(client->ssl_handler);
     if (client->socket_fd >= 0) close(client->socket_fd);
     free(client);
@@ -319,11 +319,9 @@ static int handle_login_request(Client* client, const Message* message) {
     LOG_INFO("Auth", "사용자 자격 증명 확인 성공: '%s'", user);
 
     // 2단계: 세션 생성 (중복 로그인 방지)
-    // [버그 수정] 기존 코드에서는 create_session이 두 번 호출되었습니다.
-    // 이제 인증 후 한 번만 호출하여 반환값으로 중복 여부를 확인합니다.
-    ServerSession* session = create_session(session_manager, user, client->ip, 0);
+    ServerSession* session = session_create(session_manager, user, client->ip, 0);
     if (!session) {
-        // create_session은 사용자가 이미 존재할 경우 NULL을 반환합니다.
+        // session_create는 사용자가 이미 존재할 경우 NULL을 반환합니다.
         LOG_WARNING("Auth", "로그인 실패: 사용자 '%s'는 이미 로그인되어 있습니다. (IP: %s)", user, client->ip);
         return send_error_response(client->ssl, "이미 로그인된 사용자입니다.");
     }
@@ -437,7 +435,7 @@ static int init_server(int port) {
     
     resource_manager = resource_init_manager();
     reservation_manager = reservation_init_manager(resource_manager, broadcast_status_update);
-    session_manager = init_session_manager();
+    session_manager = session_init_manager();
     load_users_from_file("users.txt"); // 사용자 정보 로드 추가
     
     if (!resource_manager || !reservation_manager || !session_manager || !user_credentials) return -1;
@@ -458,7 +456,7 @@ static void cleanup_server(void) {
     }
     
     if (session_manager) {
-        cleanup_session_manager(session_manager);
+        session_cleanup_manager(session_manager);
         session_manager = NULL;
     }
     

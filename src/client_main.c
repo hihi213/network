@@ -657,7 +657,7 @@ static void signal_handler(int signum) { (void)signum; (void)write(self_pipe[1],
 
 static void cleanup_resources(void) {
     if (device_list) { free(device_list); device_list = NULL; }
-    cleanup_client_session(&client_session);
+    session_cleanup_client(&client_session);
     network_cleanup_ssl_manager(&ssl_manager);
     cleanup_ui();
     utils_cleanup_logger();
