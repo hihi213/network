@@ -53,6 +53,7 @@ Message* message_create_error(const char* error_msg);
 Message *message_create_reservation(const char *device_id, const char* duration_str);
 Message* message_receive(SSL* ssl);
 Message* message_create_login(const char* username, const char* password);
+Message* message_create_cancel(const char* device_id);
 /* DeviceStatus를 문자열로 변환하는 함수 */
 const char* message_get_device_status_string(DeviceStatus status);
 bool message_fill_status_response_args(Message* msg, const Device* devices, int count, ResourceManager* rm, ReservationManager* rvm) ;

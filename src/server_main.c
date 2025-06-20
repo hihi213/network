@@ -346,10 +346,14 @@ static int handle_status_request(Client* client, const Message* message) {
     Device devices[MAX_DEVICES];
     int count = resource_get_device_list(resource_manager, devices, MAX_DEVICES);
     if (count < 0) return send_error_response(client->ssl, "서버에서 장비 목록을 가져오는 데 실패했습니다.");
+    LOG_INFO("Server", "장비 목록 요청 수신, 장비 개수: %d", count);
     Message* response = message_create_status_response(devices, count, resource_manager, reservation_manager);
     if (response) {
         network_send_message(client->ssl, response);
+        LOG_INFO("Server", "MSG_STATUS_RESPONSE 전송 완료");
         message_destroy(response);
+    } else {
+        LOG_WARNING("Server", "MSG_STATUS_RESPONSE 생성 실패");
     }
     return 0;
 }
@@ -408,6 +412,15 @@ static int handle_client_message(Client* client, const Message* message) {
             return handle_reserve_request(client, message);
         case MSG_CANCEL_REQUEST: 
             return handle_cancel_request(client, message);
+        case MSG_LOGOUT:
+            LOG_INFO("Server", "클라이언트 로그아웃 요청 수신: %s", client->username);
+            if (client->state == SESSION_LOGGED_IN) {
+                session_close(session_manager, client->username);
+                client->state = SESSION_DISCONNECTED;
+                memset(client->username, 0, sizeof(client->username));
+                send_generic_response(client, MSG_LOGOUT, "success", 0);
+            }
+            break;
         default: 
             return send_error_response(client->ssl, "알 수 없거나 처리할 수 없는 요청입니다.");
     }

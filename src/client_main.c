@@ -33,25 +33,24 @@ typedef enum {
 } AppState;
 
 // 함수 프로토타입
-static void signal_handler(int signum);
-static void cleanup_resources(void);
-static int connect_to_server(const char* server_ip, int port);
-static void handle_server_message(const Message* message);
-static bool handle_login(const char* username, const char* password);
-static void on_login_submitted(const char* username, const char* password);
-static void draw_ui_for_current_state(void);
-static void draw_main_menu(void);
-static void draw_logged_in_menu(void);
-static void draw_device_list(void);
-static void draw_login_input_ui(void);
-static void handle_keyboard_input(int ch);
-static void handle_input_main_menu(int ch);
-static void handle_input_logged_in_menu(int ch);
-static void handle_input_device_list(int ch);
-static void handle_input_reservation_time(int ch);
-static void handle_input_login_input(int ch);
-static DeviceStatus string_to_device_status(const char* status_str);
-static void process_and_store_device_list(const Message* message);
+static void client_signal_handler(int signum);
+static void client_cleanup_resources(void);
+static int client_connect_to_server(const char* server_ip, int port);
+static void client_handle_server_message(const Message* message);
+static void client_login_submitted(const char* username, const char* password);
+static void client_draw_ui_for_current_state(void);
+static void client_draw_main_menu(void);
+static void client_draw_logged_in_menu(void);
+static void client_draw_device_list(void);
+static void client_draw_login_input_ui(void);
+static void client_handle_keyboard_input(int ch);
+static void client_handle_input_main_menu(int ch);
+static void client_handle_input_logged_in_menu(int ch);
+static void client_handle_input_device_list(int ch);
+static void client_handle_input_reservation_time(int ch);
+static void client_handle_input_login_input(int ch);
+static DeviceStatus client_string_to_device_status(const char* status_str);
+static void client_process_and_store_device_list(const Message* message);
 
 // 전역 변수
 extern UIManager* global_ui_manager;
@@ -86,12 +85,12 @@ int main(int argc, char* argv[]) {
         utils_report_error(ERROR_FILE_OPERATION_FAILED, "Client", "pipe 생성 실패"); 
         return 1; 
     }
-    signal(SIGINT, signal_handler); signal(SIGTERM, signal_handler);
-    if (ui_init() < 0 || network_init_ssl_manager(&ssl_manager, false, NULL, NULL) < 0) { cleanup_resources(); return 1; }
-    if (connect_to_server(argv[1], atoi(argv[2])) < 0) { cleanup_resources(); return 1; }
+    signal(SIGINT, client_signal_handler); signal(SIGTERM, client_signal_handler);
+    if (ui_init() < 0 || network_init_ssl_manager(&ssl_manager, false, NULL, NULL) < 0) { client_cleanup_resources(); return 1; }
+    if (client_connect_to_server(argv[1], atoi(argv[2])) < 0) { client_cleanup_resources(); return 1; }
 
     while (running) {
-        draw_ui_for_current_state();
+        client_draw_ui_for_current_state();
         
         struct pollfd fds[3];
         fds[0].fd = client_session.socket_fd;
@@ -106,7 +105,7 @@ int main(int argc, char* argv[]) {
 
         if (fds[2].revents & POLLIN) {
             int ch = wgetch(global_ui_manager->menu_win);
-            if(ch != ERR) handle_keyboard_input(ch);
+            if(ch != ERR) client_handle_keyboard_input(ch);
         }
 
         if (fds[1].revents & POLLIN) { running = false; }
@@ -114,7 +113,7 @@ int main(int argc, char* argv[]) {
         if (fds[0].revents & POLLIN) {
             Message* msg = message_receive(client_session.ssl);
             if (msg) {
-                handle_server_message(msg);
+                client_handle_server_message(msg);
                 message_destroy(msg);
                
             } else {
@@ -124,11 +123,11 @@ int main(int argc, char* argv[]) {
             }
         }
     }
-    cleanup_resources();
+    client_cleanup_resources();
     return 0;
 }
 
-static void draw_ui_for_current_state() {
+static void client_draw_ui_for_current_state() {
     pthread_mutex_lock(&global_ui_manager->mutex);
     werase(global_ui_manager->menu_win);
     curs_set(0); // 기본적으로 커서 숨김
@@ -136,25 +135,25 @@ static void draw_ui_for_current_state() {
     switch (current_state) {
         case APP_STATE_LOGIN: 
             LOG_INFO("Client", "UI 그리기: 로그인 화면");
-            draw_login_input_ui();
+            client_draw_login_input_ui();
             curs_set(1); // 로그인 화면에서 커서 보임
             break;
         case APP_STATE_MAIN_MENU: 
             LOG_INFO("Client", "UI 그리기: 메인 메뉴 화면");
-            draw_main_menu(); 
+            client_draw_main_menu(); 
             break;
         case APP_STATE_LOGGED_IN_MENU: 
             LOG_INFO("Client", "UI 그리기: 로그인된 메뉴 화면");
-            draw_logged_in_menu(); 
+            client_draw_logged_in_menu(); 
             break;
         case APP_STATE_DEVICE_LIST: 
             LOG_INFO("Client", "UI 그리기: 장비 목록 화면");
-            draw_device_list(); 
+            client_draw_device_list(); 
             break;
         case APP_STATE_RESERVATION_TIME:
             {
                 LOG_INFO("Client", "UI 그리기: 예약 시간 입력 화면");
-                draw_device_list();
+                client_draw_device_list();
                 mvwprintw(global_ui_manager->menu_win, LINES - 5, 2, "예약할 시간(초) 입력 (1~86400, ESC:취소): %s", reservation_input_buffer);
                 
                 int menu_win_height, menu_win_width;
@@ -178,7 +177,7 @@ static void draw_ui_for_current_state() {
     pthread_mutex_unlock(&global_ui_manager->mutex);
 }
 
-static void draw_login_input_ui() {
+static void client_draw_login_input_ui() {
     mvwprintw(global_ui_manager->menu_win, 0, 2, " 로그인 (Tab: 필드 전환, Enter: 로그인, ESC: 뒤로) ");
 
     // 아이디 필드 그리기
@@ -209,7 +208,7 @@ static void draw_login_input_ui() {
 }
 
 
-static void draw_main_menu() {
+static void client_draw_main_menu() {
     const char* items[] = { "로그인", "종료" };
     mvwprintw(global_ui_manager->menu_win, 0, 2, " 메인 메뉴 ");
     for (int i = 0; i < 2; i++) {
@@ -219,7 +218,7 @@ static void draw_main_menu() {
     }
 }
 
-static void draw_logged_in_menu() {
+static void client_draw_logged_in_menu() {
     const char* items[] = { "장비 현황 조회 및 예약", "로그아웃" };
     mvwprintw(global_ui_manager->menu_win, 0, 2, " 메인 메뉴 ");
     for (int i = 0; i < 2; i++) {
@@ -229,7 +228,7 @@ static void draw_logged_in_menu() {
     }
 }
 
-static void draw_device_list() {
+static void client_draw_device_list() {
     mvwprintw(global_ui_manager->menu_win, 0, 2, " 장비 목록 (↑↓: 이동, Enter: 예약/선택, C: 예약취소, ESC: 뒤로) ");
 
     if (!device_list || device_count == 0) {
@@ -283,12 +282,10 @@ static void draw_device_list() {
     if (device_count > 0 && menu_highlight < device_count) {
         char help_message[128] = {0};
         Device* highlighted_device = &device_list[menu_highlight];
-        
         if (highlighted_device->status == DEVICE_RESERVED && 
             strcmp(highlighted_device->reserved_by, client_session.username) == 0) {
             snprintf(help_message, sizeof(help_message), "도움말: 'C' 키를 눌러 직접 예약을 취소할 수 있습니다.");
-        } 
-        else {
+        } else {
             switch (highlighted_device->status) {
                 case DEVICE_AVAILABLE:
                     snprintf(help_message, sizeof(help_message), "도움말: 예약하려면 Enter 키를 누르세요.");
@@ -300,48 +297,66 @@ static void draw_device_list() {
                     snprintf(help_message, sizeof(help_message), "도움말: 점검 중인 장비는 예약할 수 없습니다.");
                     break;
                 default:
-                    break; 
+                    break;
             }
         }
         mvwprintw(global_ui_manager->menu_win, menu_win_height - 2, 2, "%-s", help_message);
     }
 }
 
-
-static void handle_keyboard_input(int ch) {
+static void client_handle_keyboard_input(int ch) {
     switch (current_state) {
-        case APP_STATE_LOGIN: handle_input_login_input(ch); break;
-        case APP_STATE_MAIN_MENU: handle_input_main_menu(ch); break;
-        case APP_STATE_LOGGED_IN_MENU: handle_input_logged_in_menu(ch); break;
-        case APP_STATE_DEVICE_LIST: handle_input_device_list(ch); break;
-        case APP_STATE_RESERVATION_TIME: handle_input_reservation_time(ch); break;
-        case APP_STATE_EXIT: break;
+        case APP_STATE_LOGIN:
+            client_handle_input_login_input(ch);
+            break;
+        case APP_STATE_MAIN_MENU:
+            client_handle_input_main_menu(ch);
+            break;
+        case APP_STATE_LOGGED_IN_MENU:
+            client_handle_input_logged_in_menu(ch);
+            break;
+        case APP_STATE_DEVICE_LIST:
+            client_handle_input_device_list(ch);
+            break;
+        case APP_STATE_RESERVATION_TIME:
+            client_handle_input_reservation_time(ch);
+            break;
+        default:
+            break;
     }
 }
 
-static void handle_input_main_menu(int ch) {
+static void client_handle_input_main_menu(int ch) {
     switch (ch) {
-        case KEY_UP: menu_highlight = (menu_highlight == 0) ? 1 : 0; break;
-        case KEY_DOWN: menu_highlight = (menu_highlight == 1) ? 0 : 1; break;
+        case KEY_UP:
+            menu_highlight = (menu_highlight == 0) ? 1 : 0;
+            break;
+        case KEY_DOWN:
+            menu_highlight = (menu_highlight == 1) ? 0 : 1;
+            break;
         case 10: // Enter 키
             if (menu_highlight == 0) { // "로그인" 선택
                 current_state = APP_STATE_LOGIN;
+                menu_highlight = 0;
                 active_login_field = LOGIN_FIELD_USERNAME;
                 memset(login_username_buffer, 0, sizeof(login_username_buffer));
-                login_username_pos = 0;
                 memset(login_password_buffer, 0, sizeof(login_password_buffer));
+                login_username_pos = 0;
                 login_password_pos = 0;
-                menu_highlight = 0;
                 flushinp(); // ncurses 입력 버퍼를 비워 씹힘 현상을 방지합니다.
             } else { // "종료" 선택
-                running = false; 
+                running = false;
             }
             break;
-        case 27: running = false; break;
+        case 27: // ESC
+            running = false;
+            break;
+        default:
+            break;
     }
 }
 
-static void handle_input_login_input(int ch) {
+static void client_handle_input_login_input(int ch) {
     char* current_buffer = NULL;
     int* current_pos = NULL;
     size_t buffer_size = 0;
@@ -357,23 +372,6 @@ static void handle_input_login_input(int ch) {
     }
 
     switch (ch) {
-        case 10: // Enter 키
-            if (active_login_field == LOGIN_FIELD_USERNAME) {
-                active_login_field = LOGIN_FIELD_PASSWORD; // 아이디 필드에서 Enter -> 비밀번호 필드로 이동
-                LOG_INFO("Client", "로그인 입력: 아이디 필드에서 비밀번호 필드로 이동");
-            } else {
-                // 비밀번호 필드에서 Enter -> 로그인 시도
-                if (login_username_pos > 0 && login_password_pos > 0) {
-                    LOG_INFO("Client", "로그인 시도: 사용자='%s'", login_username_buffer);
-                    ui_show_success_message("로그인 시도 중...");
-                    on_login_submitted(login_username_buffer, login_password_buffer);
-                } else {
-                    LOG_WARNING("Client", "로그인 시도 실패: 아이디 또는 비밀번호가 비어있음");
-                    ui_show_error_message("아이디와 비밀번호를 모두 입력하세요.");
-                }
-            }
-            break;
-
         case 9: // Tab 키
             active_login_field = (active_login_field == LOGIN_FIELD_USERNAME) 
                                ? LOGIN_FIELD_PASSWORD 
@@ -388,9 +386,26 @@ static void handle_input_login_input(int ch) {
             menu_highlight = 0;
             break;
 
+        case 10: // Enter 키
+            if (active_login_field == LOGIN_FIELD_USERNAME) {
+                active_login_field = LOGIN_FIELD_PASSWORD; // 아이디 필드에서 Enter -> 비밀번호 필드로 이동
+                LOG_INFO("Client", "로그인 입력: 아이디 필드에서 비밀번호 필드로 이동");
+            } else {
+                // 비밀번호 필드에서 Enter -> 로그인 시도
+                if (login_username_pos > 0 && login_password_pos > 0) {
+                    LOG_INFO("Client", "로그인 시도: 사용자='%s'", login_username_buffer);
+                    ui_show_success_message("로그인 시도 중...");
+                    client_login_submitted(login_username_buffer, login_password_buffer);
+                } else {
+                    LOG_WARNING("Client", "로그인 시도 실패: 아이디 또는 비밀번호가 비어있음");
+                    ui_show_error_message("아이디와 비밀번호를 모두 입력하세요.");
+                }
+            }
+            break;
+
+        case '\b':
         case KEY_BACKSPACE:
         case 127:
-        case '\b':
             if (*current_pos > 0) {
                 current_buffer[--(*current_pos)] = '\0';
             }
@@ -406,8 +421,7 @@ static void handle_input_login_input(int ch) {
     }
 }
 
-
-static void handle_input_logged_in_menu(int ch) {
+static void client_handle_input_logged_in_menu(int ch) {
     switch (ch) {
         case KEY_UP: 
             menu_highlight = (menu_highlight == 0) ? 1 : 0; 
@@ -416,34 +430,53 @@ static void handle_input_logged_in_menu(int ch) {
             menu_highlight = (menu_highlight == 1) ? 0 : 1; 
             break;
         case 10: // Enter 키
-            if (menu_highlight == 0) { // "장비 목록" 선택
+            if (menu_highlight == 0) { // "장비 현황 조회 및 예약" 선택
                 LOG_INFO("Client", "장비 목록 요청 전송");
                 Message* msg = message_create(MSG_STATUS_REQUEST, NULL);
                 if (msg) {
-                    if(network_send_message(client_session.ssl, msg) < 0) running = false;
+                    if (network_send_message(client_session.ssl, msg) < 0) {
+                        running = false;
+                    }
                     message_destroy(msg);
                 }
             } else { // "로그아웃" 선택
                 LOG_INFO("Client", "로그아웃 처리");
+                Message* logout_msg = message_create(MSG_LOGOUT, NULL);
+                if (logout_msg) {
+                    network_send_message(client_session.ssl, logout_msg);
+                    message_destroy(logout_msg);
+                }
                 client_session.state = SESSION_DISCONNECTED;
+                memset(client_session.username, 0, sizeof(client_session.username));
                 current_state = APP_STATE_MAIN_MENU;
                 menu_highlight = 0;
                 ui_show_success_message("로그아웃되었습니다.");
             }
             break;
-        case 27: // Escape 키
-            LOG_INFO("Client", "ESC 키로 메인 메뉴로 복귀");
+        case 27: // ESC 키로 메인 메뉴 복귀 (로그아웃과 동일하게 처리)
+            LOG_INFO("Client", "로그아웃 처리 (ESC)");
+            Message* logout_msg = message_create(MSG_LOGOUT, NULL);
+            if (logout_msg) {
+                network_send_message(client_session.ssl, logout_msg);
+                message_destroy(logout_msg);
+            }
+            client_session.state = SESSION_DISCONNECTED;
+            memset(client_session.username, 0, sizeof(client_session.username));
             current_state = APP_STATE_MAIN_MENU;
             menu_highlight = 0;
+            ui_show_success_message("로그아웃되었습니다.");
+            break;
+        default:
             break;
     }
 }
 
-static void handle_input_device_list(int ch) {
+static void client_handle_input_device_list(int ch) {
     int menu_win_height, menu_win_width;
     getmaxyx(global_ui_manager->menu_win, menu_win_height, menu_win_width);
     (void)menu_win_width;
     const int visible_items = menu_win_height - 5;
+
     switch (ch) {
         case KEY_UP:
             if (menu_highlight > 0) menu_highlight--;
@@ -451,13 +484,13 @@ static void handle_input_device_list(int ch) {
             break;
         case KEY_DOWN:
             if (menu_highlight < device_count - 1) menu_highlight++;
-            if (menu_highlight >= scroll_offset + visible_items) scroll_offset = menu_highlight - visible_items + 1;
+            if (menu_highlight >= scroll_offset + visible_items)
+                scroll_offset = menu_highlight - visible_items + 1;
             break;
         case 10: // Enter 키
             if (device_list && menu_highlight < device_count) {
                 Device* dev = &device_list[menu_highlight];
                 if (dev->status == DEVICE_AVAILABLE) {
-                    LOG_INFO("Client", "장비 예약 시작: %s", dev->id);
                     reservation_target_device_index = menu_highlight;
                     current_state = APP_STATE_RESERVATION_TIME;
                     reservation_input_pos = 0;
@@ -480,93 +513,121 @@ static void handle_input_device_list(int ch) {
                 Device* dev = &device_list[menu_highlight];
                 if (dev->status == DEVICE_RESERVED && strcmp(dev->reserved_by, client_session.username) == 0) {
                     ui_show_success_message("예약 취소 요청 중...");
-                    Message* msg = message_create(MSG_CANCEL_REQUEST, NULL);
+                    Message* msg = message_create_cancel(dev->id);
                     if (msg) {
-                        msg->args[0] = strdup(dev->id);
-                        msg->arg_count = 1;
-                        if(network_send_message(client_session.ssl, msg) < 0) running = false;
+                        if (network_send_message(client_session.ssl, msg) < 0) {
+                            running = false;
+                        }
                         message_destroy(msg);
                     }
                 }
             }
             break;
-        case 27: // Escape 키
+        case 27: // ESC
             current_state = APP_STATE_LOGGED_IN_MENU;
             menu_highlight = 0;
             break;
     }
 }
 
-static void handle_input_reservation_time(int ch) {
-    if ((ch >= '0' && ch <= '9') && (size_t)reservation_input_pos < sizeof(reservation_input_buffer) - 1) {
-        reservation_input_buffer[reservation_input_pos++] = ch;
-        reservation_input_buffer[reservation_input_pos] = '\0';
-    } else if ((ch == KEY_BACKSPACE || ch == 127 || ch == '\b') && reservation_input_pos > 0) {
-        reservation_input_buffer[--reservation_input_pos] = '\0';
-    } else if (ch == 27) {
-        current_state = APP_STATE_DEVICE_LIST;
-    } else if (ch == 10) {
-        long duration_sec = atol(reservation_input_buffer);
-        const long MAX_RESERVATION_SECONDS = 86400;
-
-        if (duration_sec > 0 && duration_sec <= MAX_RESERVATION_SECONDS) {
-            Message* msg = message_create_reservation(device_list[reservation_target_device_index].id, reservation_input_buffer);
-            if (msg) {
-                if(network_send_message(client_session.ssl, msg) < 0) running = false;
-                message_destroy(msg);
+static void client_handle_input_reservation_time(int ch) {
+    switch (ch) {
+        case '\n':
+        case '\r':
+            if (reservation_input_pos > 0) {
+                int reservation_time = atoi(reservation_input_buffer);
+                if (reservation_time >= 1 && reservation_time <= 86400) {
+                    if (reservation_target_device_index >= 0 && reservation_target_device_index < device_count) {
+                        Device* dev = &device_list[reservation_target_device_index];
+                        char time_str[32];
+                        snprintf(time_str, sizeof(time_str), "%d", reservation_time);
+                        Message* msg = message_create_reservation(dev->id, time_str);
+                        if (msg) {
+                            if (network_send_message(client_session.ssl, msg) < 0) {
+                                running = false;
+                            }
+                            message_destroy(msg);
+                        }
+                    }
+                    current_state = APP_STATE_DEVICE_LIST;
+                    reservation_target_device_index = -1;
+                } else {
+                    ui_show_error_message("유효하지 않은 시간입니다. (1~86400초)");
+                    memset(reservation_input_buffer, 0, sizeof(reservation_input_buffer));
+                    reservation_input_pos = 0;
+                }
             }
-        } else {
-            ui_show_error_message("유효하지 않은 시간입니다. (1~86400초)");
-            memset(reservation_input_buffer, 0, sizeof(reservation_input_buffer));
-            reservation_input_pos = 0;
-        }
+            break;
+        case 27: // ESC
+            current_state = APP_STATE_DEVICE_LIST;
+            reservation_target_device_index = -1;
+            break;
+        case KEY_BACKSPACE:
+        case 127:
+            if (reservation_input_pos > 0) {
+                reservation_input_buffer[--reservation_input_pos] = '\0';
+            }
+            break;
+        default:
+            if (isdigit(ch) && reservation_input_pos < (int)sizeof(reservation_input_buffer) - 1) {
+                reservation_input_buffer[reservation_input_pos++] = ch;
+                reservation_input_buffer[reservation_input_pos] = '\0';
+            }
+            break;
     }
 }
 
-static void handle_server_message(const Message* message) {
+static void client_handle_server_message(const Message* message) {
+    if (!message) return;
+    
+    LOG_INFO("Client", "서버로부터 메시지 수신: 타입=%d, 데이터=%s", message->type, strlen(message->data) > 0 ? message->data : "NULL");
+    
     switch (message->type) {
         case MSG_ERROR:
-        LOG_WARNING("Client", "서버로부터 에러 메시지 수신: %s", message->data);
-        ui_show_error_message(message->data);
-        // [수정] 로그인 시도 중에 발생한 에러라면, 다시 로그인 입력 화면으로 돌려보냄
-        if (current_state == APP_STATE_LOGGED_IN_MENU || current_state == APP_STATE_DEVICE_LIST) {
-            // 이 경우는 이미 로그인 된 사용자가 다른 오류를 받은 경우이므로,
-            // 상태를 유지하거나 다른 적절한 처리 가능
-            LOG_INFO("Client", "이미 로그인된 상태에서 에러 수신, 현재 상태 유지");
-        } else {
-            // 로그인 시도 중 에러(중복 로그인, 인증 실패 등)가 발생한 경우
-            // UI 상태를 다시 로그인 화면으로 명확하게 설정
-            LOG_INFO("Client", "로그인 실패로 인해 로그인 화면으로 복귀 (현재 상태: %d -> APP_STATE_LOGIN)", current_state);
-            current_state = APP_STATE_LOGIN;
-        }
-        break;
+            LOG_WARNING("Client", "서버로부터 에러 메시지 수신: %s", message->data);
+            ui_show_error_message(message->data);
+            // [수정] 로그인 시도 중에 발생한 에러라면, 다시 로그인 입력 화면으로 돌려보냄
+            if (current_state == APP_STATE_LOGGED_IN_MENU || current_state == APP_STATE_DEVICE_LIST) {
+                current_state = APP_STATE_LOGIN;
+                menu_highlight = 0;
+                active_login_field = LOGIN_FIELD_USERNAME;
+                memset(login_username_buffer, 0, sizeof(login_username_buffer));
+                memset(login_password_buffer, 0, sizeof(login_password_buffer));
+                login_username_pos = 0;
+                login_password_pos = 0;
+            }
+            break;
+        
         case MSG_LOGIN:
-            if (strcmp(message->data, "success") == 0 && message->arg_count > 0) {
-                LOG_INFO("Client", "로그인 성공: 사용자='%s'", message->args[0]);
-                client_session.state = SESSION_LOGGED_IN;
-                strncpy(client_session.username, message->args[0], MAX_USERNAME_LENGTH - 1);
+            if (strcmp(message->data, "success") == 0) {
+                LOG_INFO("Client", "로그인 성공 응답 수신");
+                // 로그인 성공 시 사용자 정보 설정
+                strncpy(client_session.username, login_username_buffer, MAX_USERNAME_LENGTH - 1);
                 client_session.username[MAX_USERNAME_LENGTH - 1] = '\0';
-                LOG_INFO("Client", "UI 상태 변경: 로그인 화면 -> 로그인된 메뉴 (APP_STATE_LOGIN -> APP_STATE_LOGGED_IN_MENU)");
+                client_session.state = SESSION_LOGGED_IN;
+                LOG_INFO("Client", "사용자 정보 설정 완료: %s", client_session.username);
                 current_state = APP_STATE_LOGGED_IN_MENU;
                 menu_highlight = 0;
                 ui_show_success_message("로그인 성공!");
             } else {
-                LOG_WARNING("Client", "로그인 실패: %s", message->data);
+                LOG_WARNING("Client", "로그인 실패 응답 수신: %s", message->data);
                 ui_show_error_message(message->data);
                 // 로그인 실패 시 로그인 화면 상태를 유지합니다.
                 LOG_INFO("Client", "로그인 실패로 인해 로그인 화면 상태 유지 (APP_STATE_LOGIN)");
-                current_state = APP_STATE_LOGIN;
             }
             break;
+            
         case MSG_STATUS_RESPONSE:
-        case MSG_STATUS_UPDATE:
-            LOG_INFO("Client", "장비 상태 응답 수신: 장비 수=%d개", message->arg_count / 6);
-            process_and_store_device_list(message);
-            LOG_INFO("Client", "UI 상태 변경: 로그인된 메뉴 -> 장비 목록 (APP_STATE_LOGGED_IN_MENU -> APP_STATE_DEVICE_LIST)");
-            current_state = APP_STATE_DEVICE_LIST;
-            menu_highlight = 0;
-            scroll_offset = 0;
+            LOG_INFO("Client", "MSG_STATUS_RESPONSE 수신, 데이터: %s", message->data);
+            client_process_and_store_device_list(message);
+            // 장비 목록을 받은 후 UI 상태 업데이트
+            if (current_state == APP_STATE_LOGGED_IN_MENU) {
+                current_state = APP_STATE_DEVICE_LIST;
+                menu_highlight = 0;
+                scroll_offset = 0;
+            }
             break;
+            
         case MSG_RESERVE_RESPONSE:
             if (strcmp(message->data, "success") == 0) {
                 LOG_INFO("Client", "예약 성공 응답 수신");
@@ -585,51 +646,66 @@ static void handle_server_message(const Message* message) {
                 ui_show_error_message(message->data);
             }
             break;
+        case MSG_STATUS_UPDATE:
+            LOG_INFO("Client", "장비 상태 업데이트 메시지 수신");
+            client_process_and_store_device_list(message);
+            current_state = APP_STATE_DEVICE_LIST;
+            menu_highlight = 0;
+            scroll_offset = 0;
+            break;
         default:
-            // LOG_WARNING("Client", "알 수 없는 메시지 타입: %d", message->type);
+            LOG_WARNING("Client", "알 수 없는 메시지 타입: %d", message->type);
             break;
     }
 }
 
-static void process_and_store_device_list(const Message* message) {
-    if (device_list) { free(device_list); device_list = NULL; }
-    device_count = message->arg_count / 6;
-    if (device_count <= 0) return;
-    device_list = (Device*)malloc(sizeof(Device) * device_count);
-    if (!device_list) { 
-        utils_report_error(ERROR_MEMORY_ALLOCATION_FAILED, "Client", "장비 목록 메모리 할당 실패"); 
-        device_count = 0; 
-        return; 
-    }
-    for (int i = 0; i < device_count; i++) {
-        int base_idx = i * 6;
-        strncpy(device_list[i].id, message->args[base_idx], MAX_ID_LENGTH - 1);
-        device_list[i].id[MAX_ID_LENGTH - 1] = '\0';
-        strncpy(device_list[i].name, message->args[base_idx + 1], MAX_DEVICE_NAME_LENGTH - 1);
-        device_list[i].name[MAX_DEVICE_NAME_LENGTH - 1] = '\0';
-        strncpy(device_list[i].type, message->args[base_idx + 2], MAX_DEVICE_TYPE_LENGTH - 1);
-        device_list[i].type[MAX_DEVICE_TYPE_LENGTH - 1] = '\0';
-        device_list[i].status = string_to_device_status(message->args[base_idx + 3]);
-        device_list[i].reservation_end_time = (time_t)atol(message->args[base_idx + 4]);
-        strncpy(device_list[i].reserved_by, message->args[base_idx + 5], MAX_USERNAME_LENGTH - 1);
-        device_list[i].reserved_by[MAX_USERNAME_LENGTH - 1] = '\0';
-    }
-}
-
-static bool handle_login(const char* username, const char* password) {
-    Message* msg = message_create_login(username, password);
-    if (!msg) { ui_show_error_message("메시지 생성 실패"); return false; }
-    if (network_send_message(client_session.ssl, msg) < 0) {
-        running = false;
-    }
-    message_destroy(msg);
-    return true;
-}
-
-static void on_login_submitted(const char* username, const char* password) {
-    LOG_INFO("Client", "로그인 제출 처리 시작: 사용자='%s'", username);
+static void client_process_and_store_device_list(const Message* message) {
+    if (!message) return;
     
-    // 1) 로그인 메시지 생성 및 전송
+    // 기존 장비 목록 해제
+    if (device_list) {
+        free(device_list);
+        device_list = NULL;
+    }
+    device_count = 0;
+    
+    // message->args 배열에서 장비 정보 파싱
+    int device_count_from_args = message->arg_count / 6;
+    if (device_count_from_args > 0) {
+        device_list = malloc(device_count_from_args * sizeof(Device));
+        if (!device_list) return;
+        
+        for (int i = 0; i < device_count_from_args; i++) {
+            int base_idx = i * 6;
+            if (base_idx + 5 >= message->arg_count) break;
+            
+            // args 배열에서 장비 정보 추출
+            strncpy(device_list[i].id, message->args[base_idx], sizeof(device_list[i].id) - 1);
+            device_list[i].id[sizeof(device_list[i].id) - 1] = '\0';
+            
+            strncpy(device_list[i].name, message->args[base_idx + 1], sizeof(device_list[i].name) - 1);
+            device_list[i].name[sizeof(device_list[i].name) - 1] = '\0';
+            
+            strncpy(device_list[i].type, message->args[base_idx + 2], sizeof(device_list[i].type) - 1);
+            device_list[i].type[sizeof(device_list[i].type) - 1] = '\0';
+            
+            device_list[i].status = client_string_to_device_status(message->args[base_idx + 3]);
+            
+            device_list[i].reservation_end_time = atol(message->args[base_idx + 4]);
+            
+            strncpy(device_list[i].reserved_by, message->args[base_idx + 5], sizeof(device_list[i].reserved_by) - 1);
+            device_list[i].reserved_by[sizeof(device_list[i].reserved_by) - 1] = '\0';
+        }
+        device_count = device_count_from_args;
+    }
+    
+    LOG_INFO("Client", "파싱된 장비 개수: %d", device_count);
+    for (int i = 0; i < device_count; i++) {
+        LOG_INFO("Client", "장비[%d] id=%s name=%s type=%s", i, device_list[i].id, device_list[i].name, device_list[i].type);
+    }
+}
+
+static void client_login_submitted(const char* username, const char* password) {
     Message* login_msg = message_create_login(username, password);
     if (!login_msg) {
         LOG_WARNING("Client", "로그인 메시지 생성 실패");
@@ -637,7 +713,6 @@ static void on_login_submitted(const char* username, const char* password) {
         return;
     }
     
-    // 2) 서버에 전송
     if (network_send_message(client_session.ssl, login_msg) < 0) {
         LOG_WARNING("Client", "로그인 요청 전송 실패");
         ui_show_error_message("로그인 요청 전송 실패");
@@ -645,18 +720,16 @@ static void on_login_submitted(const char* username, const char* password) {
         return;
     }
     
-    LOG_INFO("Client", "로그인 요청 전송 완료, 서버 응답 대기 중...");
     message_destroy(login_msg);
-    
-    // 3) 서버 응답은 handle_server_message에서 처리됨
-    // 로그인 성공 시: current_state = APP_STATE_LOGGED_IN_MENU
-    // 로그인 실패 시: current_state = APP_STATE_LOGIN (로그인 화면 유지)
 }
 
-static void signal_handler(int signum) { (void)signum; (void)write(self_pipe[1], "s", 1); }
+static void client_signal_handler(int signum) { (void)signum; (void)write(self_pipe[1], "s", 1); }
 
-static void cleanup_resources(void) {
-    if (device_list) { free(device_list); device_list = NULL; }
+static void client_cleanup_resources(void) {
+    if (device_list) {
+        free(device_list);
+        device_list = NULL;
+    }
     session_cleanup_client(&client_session);
     network_cleanup_ssl_manager(&ssl_manager);
     ui_cleanup();
@@ -665,33 +738,58 @@ static void cleanup_resources(void) {
     close(self_pipe[1]);
 }
 
-static int connect_to_server(const char* server_ip, int port) {
-    int fd = network_init_client_socket(server_ip, port);
-    if (fd < 0) return -1;
+static int client_connect_to_server(const char* server_ip, int port) {
+    client_session.socket_fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (client_session.socket_fd < 0) {
+        utils_report_error(ERROR_NETWORK_SOCKET_CREATION_FAILED, "Client", "소켓 생성 실패");
+        return -1;
+    }
     
-    SSLHandler* h = network_perform_ssl_handshake(fd, &ssl_manager);
-    if (!h) return -1;
+    struct sockaddr_in server_addr;
+    memset(&server_addr, 0, sizeof(server_addr));
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(port);
     
-    client_session.ssl = h->ssl;
-    client_session.socket_fd = fd;
+    if (inet_pton(AF_INET, server_ip, &server_addr.sin_addr) <= 0) {
+        utils_report_error(ERROR_NETWORK_IP_CONVERSION_FAILED, "Client", "서버 IP 주소 변환 실패");
+        close(client_session.socket_fd);
+        return -1;
+    }
+    
+    if (connect(client_session.socket_fd, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
+        utils_report_error(ERROR_NETWORK_CONNECT_FAILED, "Client", "서버 연결 실패");
+        close(client_session.socket_fd);
+        return -1;
+    }
+    
+    SSLHandler* ssl_handler = network_perform_ssl_handshake(client_session.socket_fd, &ssl_manager);
+    if (!ssl_handler) {
+        utils_report_error(ERROR_NETWORK_SSL_HANDSHAKE_FAILED, "Client", "SSL 연결 실패");
+        close(client_session.socket_fd);
+        return -1;
+    }
+    
+    client_session.ssl = ssl_handler->ssl;
     client_session.state = SESSION_CONNECTING;
 
     ui_show_success_message("서버에 연결되었습니다. 로그인 정보를 기다립니다...");
     // 연결 확인을 위한 ping 메시지 전송
     Message* msg = message_create(MSG_PING, NULL);
-    if(msg) {
-        if(network_send_message(client_session.ssl, msg) < 0) {
-            message_destroy(msg);
-            return -1;
-        }
+    if (msg) {
+        int ret = network_send_message(client_session.ssl, msg);
         message_destroy(msg);
+        if (ret < 0) return -1;
     }
     
     return 0;
 }
 
-static DeviceStatus string_to_device_status(const char* status_str) {
+static DeviceStatus client_string_to_device_status(const char* status_str) {
+    if (!status_str) return DEVICE_MAINTENANCE;
+    
+    if (strcmp(status_str, "available") == 0) return DEVICE_AVAILABLE;
     if (strcmp(status_str, "reserved") == 0) return DEVICE_RESERVED;
     if (strcmp(status_str, "maintenance") == 0) return DEVICE_MAINTENANCE;
-    return DEVICE_AVAILABLE;
+    
+    return DEVICE_MAINTENANCE;
 }

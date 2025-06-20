@@ -88,6 +88,18 @@ Message* message_create_error(const char* error_message) {
     return message_create(MSG_ERROR, error_message);
 }
 
+Message* message_create_cancel(const char* device_id) {
+    Message* msg = message_create(MSG_CANCEL_REQUEST, NULL);
+    if (!msg) return NULL;
+    msg->args[0] = strdup(device_id);
+    if (!msg->args[0]) {
+        message_destroy(msg);
+        return NULL;
+    }
+    msg->arg_count = 1;
+    return msg;
+}
+
 const char *message_get_type_string(MessageType type) {
     switch (type) {
         case MSG_LOGIN: return "LOGIN";
