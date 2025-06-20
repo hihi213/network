@@ -37,14 +37,58 @@ static void reservation_conflict_check_callback(const char* key, void* value, vo
     }
 }
 
-// [추가] 만료 예약 정리를 위한 콜백 함수
-static void reservation_cleanup_callback(const char* key, void* value, void* user_data) {
+// [추가] 만료된 예약을 찾아서 장비 상태를 업데이트하는 콜백 함수
+static void reservation_expired_cleanup_callback(const char* key, void* value, void* user_data) {
     (void)key; // 미사용 매개변수
     reservation_t* reservation = (reservation_t*)value;
     time_t current_time = *(time_t*)user_data;
     
     if (reservation->status == RESERVATION_APPROVED && reservation->end_time < current_time) {
+        // 만료된 예약 발견 - 장비 상태를 available로 변경
+        resource_update_device_status(global_resource_manager, reservation->device_id, DEVICE_AVAILABLE, 0);
+        
+        // 예약을 완료 상태로 변경
         reservation->status = RESERVATION_COMPLETED;
+        
+        LOG_INFO("Reservation", "만료된 예약 발견: 장비ID=%s, 예약ID=%u, 사용자=%s", 
+                 reservation->device_id, reservation->id, reservation->username);
+    }
+}
+
+// [추가] 완료된 예약을 해시 테이블에서 제거하는 콜백 함수
+static void reservation_remove_completed_callback(const char* key, void* value, void* user_data) {
+    reservation_t* reservation = (reservation_t*)value;
+    reservation_manager_t* manager = (reservation_manager_t*)user_data;
+    
+    if (reservation->status == RESERVATION_COMPLETED) {
+        // 예약 삭제
+        utils_hashtable_delete(manager->reservation_map, key);
+        manager->reservation_count--;
+        
+        LOG_INFO("Reservation", "완료된 예약 삭제: 예약ID=%u", reservation->id);
+    }
+}
+
+struct cleanup_ctx {
+    time_t now;
+    char (*keys)[16];
+    int* count;
+    reservation_manager_t* manager;
+    resource_manager_t* res_manager;
+};
+
+static void collect_expired_callback(const char* key, void* value, void* user_data) {
+    struct cleanup_ctx* ctx = (struct cleanup_ctx*)user_data;
+    reservation_t* reservation = (reservation_t*)value;
+    if (reservation->status == RESERVATION_APPROVED && reservation->end_time < ctx->now) {
+        // 장비 상태 available로 변경
+        resource_update_device_status(ctx->res_manager, reservation->device_id, DEVICE_AVAILABLE, 0);
+        reservation->status = RESERVATION_COMPLETED;
+        if (*(ctx->count) < MAX_RESERVATIONS) {
+            strncpy(ctx->keys[*(ctx->count)], key, 15);
+            ctx->keys[*(ctx->count)][15] = '\0';
+            (*(ctx->count))++;
+        }
     }
 }
 
@@ -277,27 +321,24 @@ void reservation_cleanup_expired(reservation_manager_t* manager, resource_manage
     if (!manager || !res_manager) return;
 
     time_t current_time = time(NULL);
-    char expired_device_ids[MAX_RESERVATIONS][MAX_DEVICE_ID_LEN];
-    int expired_count = 0;
+    char to_delete_keys[MAX_RESERVATIONS][16];
+    int delete_count = 0;
 
     pthread_mutex_lock(&manager->mutex);
-    
-    // [개선] 해시 테이블 순회를 통한 만료 예약 처리
-    utils_hashtable_traverse(manager->reservation_map, reservation_cleanup_callback, &current_time);
-    
-    // 만료된 예약을 찾아서 장비 상태 업데이트
-    // (이 부분은 해시 테이블 순회 중에 직접 처리하는 것이 더 효율적이지만,
-    //  현재 구조를 유지하기 위해 별도 처리)
-    
+
+    // 1차 순회: 만료된 예약의 키(문자열)만 수집
+    struct cleanup_ctx ctx = { current_time, to_delete_keys, &delete_count, manager, res_manager };
+    utils_hashtable_traverse(manager->reservation_map, collect_expired_callback, &ctx);
+
+    // 2차 루프: 수집된 키만 삭제
+    for (int i = 0; i < delete_count; ++i) {
+        utils_hashtable_delete(manager->reservation_map, to_delete_keys[i]);
+        manager->reservation_count--;
+    }
+
     pthread_mutex_unlock(&manager->mutex);
 
-    if (expired_count > 0) {
-        for (int i = 0; i < expired_count; i++) {
-            resource_update_device_status(res_manager, expired_device_ids[i], DEVICE_AVAILABLE, 0);
-        }
-        if (manager->broadcast_callback) {
-            manager->broadcast_callback();
-        }
-        // LOG_INFO("Reservation", "만료된 예약 정리 완료: 총 %d개 정리됨", expired_count);
+    if (delete_count > 0 && manager->broadcast_callback) {
+        manager->broadcast_callback();
     }
 }

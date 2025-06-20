@@ -45,6 +45,7 @@ static void server_broadcast_status_update(void);
 static bool server_is_user_authenticated(const char* username, const char* password);
 static void server_load_users_from_file(const char* filename);
 static int server_process_device_reservation(Client* client, const char* device_id, int duration_sec);
+static void server_trigger_ui_refresh(void);
 // 전역 변수
 static int server_sock;
 static bool running = true;
@@ -124,20 +125,24 @@ int main(int argc, char* argv[]) {
         fds[0].events = POLLIN;
         fds[1].fd = self_pipe[0];
         fds[1].events = POLLIN;
-        int ret = poll(fds, 2, 1000);
+        int ret = poll(fds, 2, 1000); // 1초마다 주기적 갱신 (남은시간 업데이트용)
         if (ret < 0) {
             if (errno == EINTR) continue;
             utils_report_error(ERROR_NETWORK_SOCKET_OPTION_FAILED, "Main", "Poll 에러: %s", strerror(errno));
             break;
         }
-        if (ret == 0) {
-            server_draw_ui_for_current_state();
-            continue;
-        }
+        
         if (fds[1].revents & POLLIN) {
-            running = false;
-            continue;
+            char buf[1];
+            // 파이프로부터 데이터를 읽어 어떤 이벤트인지 확인
+            read(self_pipe[0], buf, 1);
+            if (buf[0] == 's') { // 's' for shutdown
+                running = false;
+                continue;
+            }
+            // 'u' 또는 다른 신호는 UI 갱신으로 간주
         }
+        
         if (fds[0].revents & POLLIN) {
             Client* client = (Client*)malloc(sizeof(Client));
             if (!client) { continue; }
@@ -161,6 +166,11 @@ int main(int argc, char* argv[]) {
             }
             pthread_detach(thread);
         }
+        
+        // 루프의 마지막에서 항상 UI를 그린다.
+        // 이렇게 하면 클라이언트 접속, 시그널 등 모든 이벤트 처리 후
+        // 최신 상태로 화면이 그려진다.
+        server_draw_ui_for_current_state();
     }
     server_cleanup();
     return 0;
@@ -184,6 +194,9 @@ static void server_broadcast_status_update(void) {
         }
         pthread_mutex_unlock(&client_list_mutex);
         message_destroy(response);
+        
+        // UI 즉시 갱신 신호 보내기
+        server_trigger_ui_refresh();
     }
 }
 
@@ -212,6 +225,7 @@ static void server_add_client_to_list(Client* client) {
     pthread_mutex_lock(&client_list_mutex);
     if (num_clients < MAX_CLIENTS) client_list[num_clients++] = client;
     pthread_mutex_unlock(&client_list_mutex);
+    server_trigger_ui_refresh();
 }
 
 static void server_remove_client_from_list(Client* client) {
@@ -224,6 +238,7 @@ static void server_remove_client_from_list(Client* client) {
         }
     }
     pthread_mutex_unlock(&client_list_mutex);
+    server_trigger_ui_refresh();
 }
 
 static void server_cleanup_client(Client* client) {
@@ -700,4 +715,11 @@ void server_draw_ui_for_current_state(void) {
     wrefresh(g_ui_manager->message_win);
 
     pthread_mutex_unlock(&g_ui_manager->mutex);
+}
+
+// [추가] UI 갱신 트리거 함수
+static void server_trigger_ui_refresh(void) {
+    // 파이프에 간단한 데이터를 써서 poll()을 깨운다.
+    // 에러 처리는 간단하게 처리하거나 무시할 수 있다.
+    (void)write(self_pipe[1], "u", 1); // 'u' for update
 }
