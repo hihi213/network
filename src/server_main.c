@@ -144,8 +144,8 @@ int main(int argc, char* argv[]) {
             if (!client) { continue; }
             memset(client, 0, sizeof(Client));
             
-            // accept_client 함수를 사용하여 클라이언트 연결 처리
-            client->ssl_handler = accept_client(server_sock, &ssl_manager, client->ip);
+            // network_accept_client 함수를 사용하여 클라이언트 연결 처리
+            client->ssl_handler = network_accept_client(server_sock, &ssl_manager, client->ip);
             if (!client->ssl_handler) {
                 free(client);
                 continue;
@@ -180,7 +180,7 @@ static void broadcast_status_update(void) {
     pthread_mutex_lock(&client_list_mutex);
     for (int i = 0; i < num_clients; i++) {
         if (client_list[i] && client_list[i]->state == SESSION_LOGGED_IN) {
-            send_message(client_list[i]->ssl, response);
+            network_send_message(client_list[i]->ssl, response);
         }
     }
     pthread_mutex_unlock(&client_list_mutex);
@@ -230,14 +230,14 @@ static void cleanup_client(Client* client) {
     if (!client) return;
     cleanup_client_queue(client); // 메시지 큐 메모리 해제
     if (client->state == SESSION_LOGGED_IN) close_session(session_manager, client->username);
-    if (client->ssl_handler) cleanup_ssl_handler(client->ssl_handler);
+    if (client->ssl_handler) network_cleanup_ssl_handler(client->ssl_handler);
     if (client->socket_fd >= 0) close(client->socket_fd);
     free(client);
 }
 
 static void* client_thread_func(void* arg) {
     Client* client = (Client*)arg;
-    // SSL 핸들러와 핸드셰이크는 이미 main에서 accept_client()로 처리됨
+    // SSL 핸들러와 핸드셰이크는 이미 main에서 network_accept_client()로 처리됨
     add_client_to_list(client);
     client_message_loop(client);
     remove_client_from_list(client);
@@ -275,7 +275,7 @@ Message* response = create_message(MSG_RESERVE_RESPONSE, "success");
             memcpy(&updated_device, devices_ptr, sizeof(Device));
             fill_status_response_args(response, &updated_device, 1, resource_manager, reservation_manager);
         }
-        send_message(client->ssl, response);
+        network_send_message(client->ssl, response);
         destroy_message(response);
     }
     return 0;
@@ -347,7 +347,7 @@ static int handle_status_request(Client* client, const Message* message) {
     if (count < 0) return send_error_response(client->ssl, "서버에서 장비 목록을 가져오는 데 실패했습니다.");
     Message* response = create_status_response_message(devices, count, resource_manager, reservation_manager);
     if (!response) return send_error_response(client->ssl, "응답 메시지를 생성하는 데 실패했습니다.");
-    send_message(client->ssl, response);
+    network_send_message(client->ssl, response);
     destroy_message(response);
     return 0;
 }
@@ -428,7 +428,7 @@ static int init_server(int port) {
     signal(SIGINT, signal_handler);
     signal(SIGTERM, signal_handler);
     if (utils_init_logger("logs/server.log") < 0) return -1;
-    if (init_ssl_manager(&ssl_manager, true, "certs/server.crt", "certs/server.key") < 0) return -1;
+    if (network_init_ssl_manager(&ssl_manager, true, "certs/server.crt", "certs/server.key") < 0) return -1;
     if (init_ui() < 0) return -1;
     
     resource_manager = init_resource_manager();
@@ -438,7 +438,7 @@ static int init_server(int port) {
     
     if (!resource_manager || !reservation_manager || !session_manager || !user_credentials) return -1;
     
-    server_sock = init_server_socket(port);
+    server_sock = network_init_server_socket(port);
     if (server_sock < 0) return -1;
     
     return 0;
@@ -469,7 +469,7 @@ static void cleanup_server(void) {
     }
     
     cleanup_ui();
-    cleanup_ssl_manager(&ssl_manager);
+    network_cleanup_ssl_manager(&ssl_manager);
     utils_cleanup_logger();
     
     if (server_sock >= 0) {
@@ -518,7 +518,7 @@ static int send_generic_response(Client* client, MessageType type, const char* d
     va_end(args);
     response->arg_count = arg_count;
 
-    int ret = send_message(client->ssl, response);
+    int ret = network_send_message(client->ssl, response);
     destroy_message(response);
 
     return ret;
@@ -534,7 +534,7 @@ static int send_error_response(SSL* ssl, const char* error_message) {
     if (!ssl || !error_message) return -1;
     Message* response = create_error_message(error_message);
     if (!response) return -1;
-    int ret = send_message(ssl, response);
+    int ret = network_send_message(ssl, response);
     destroy_message(response);
     return ret;
 }

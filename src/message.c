@@ -121,12 +121,12 @@ void destroy_message(Message *msg) {
 static bool read_message_arguments(SSL* ssl, Message* msg, uint32_t arg_count) {
     for (uint32_t i = 0; i < arg_count; i++) {
         uint32_t arg_len_net;
-        if (net_recv(ssl, &arg_len_net, sizeof(arg_len_net)) != sizeof(arg_len_net)) return false;
+        if (network_recv(ssl, &arg_len_net, sizeof(arg_len_net)) != sizeof(arg_len_net)) return false;
         uint32_t arg_len = ntohl(arg_len_net);
         if (arg_len >= MAX_ARG_LENGTH) return false;
         msg->args[i] = (char*)malloc(arg_len + 1);
         if (!msg->args[i]) return false;
-        if (net_recv(ssl, msg->args[i], arg_len) != (ssize_t)arg_len) {
+        if (network_recv(ssl, msg->args[i], arg_len) != (ssize_t)arg_len) {
             free(msg->args[i]);
             msg->args[i] = NULL;
             return false;
@@ -139,11 +139,11 @@ static bool read_message_arguments(SSL* ssl, Message* msg, uint32_t arg_count) {
 
 static bool read_message_data(SSL* ssl, Message* msg) {
     uint32_t data_len_net;
-    if (net_recv(ssl, &data_len_net, sizeof(data_len_net)) != sizeof(data_len_net)) return false;
+    if (network_recv(ssl, &data_len_net, sizeof(data_len_net)) != sizeof(data_len_net)) return false;
     uint32_t data_len = ntohl(data_len_net);
     if (data_len > 0) {
         if (data_len >= MAX_MESSAGE_LENGTH) return false;
-        if (net_recv(ssl, msg->data, data_len) != (ssize_t)data_len) return false;
+        if (network_recv(ssl, msg->data, data_len) != (ssize_t)data_len) return false;
         msg->data[data_len] = '\0';
     }
     return true;
@@ -151,8 +151,8 @@ static bool read_message_data(SSL* ssl, Message* msg) {
 
 Message* receive_message(SSL* ssl) {
     uint32_t type_net, arg_count_net;
-    if (net_recv(ssl, &type_net, sizeof(type_net)) != sizeof(type_net)) return NULL;
-    if (net_recv(ssl, &arg_count_net, sizeof(arg_count_net)) != sizeof(arg_count_net)) return NULL;
+    if (network_recv(ssl, &type_net, sizeof(type_net)) != sizeof(type_net)) return NULL;
+    if (network_recv(ssl, &arg_count_net, sizeof(arg_count_net)) != sizeof(arg_count_net)) return NULL;
     MessageType type = ntohl(type_net);
     uint32_t arg_count = ntohl(arg_count_net);
     Message* message = create_message(type, NULL);

@@ -87,7 +87,7 @@ int main(int argc, char* argv[]) {
         return 1; 
     }
     signal(SIGINT, signal_handler); signal(SIGTERM, signal_handler);
-    if (init_ui() < 0 || init_ssl_manager(&ssl_manager, false, NULL, NULL) < 0) { cleanup_resources(); return 1; }
+    if (init_ui() < 0 || network_init_ssl_manager(&ssl_manager, false, NULL, NULL) < 0) { cleanup_resources(); return 1; }
     if (connect_to_server(argv[1], atoi(argv[2])) < 0) { cleanup_resources(); return 1; }
 
     while (running) {
@@ -420,7 +420,7 @@ static void handle_input_logged_in_menu(int ch) {
                 LOG_INFO("Client", "장비 목록 요청 전송");
                 Message* msg = create_message(MSG_STATUS_REQUEST, NULL);
                 if (msg) {
-                    if(send_message(client_session.ssl, msg) < 0) running = false;
+                    if(network_send_message(client_session.ssl, msg) < 0) running = false;
                     destroy_message(msg);
                 }
             } else { // "로그아웃" 선택
@@ -484,7 +484,7 @@ static void handle_input_device_list(int ch) {
                     if (msg) {
                         msg->args[0] = strdup(dev->id);
                         msg->arg_count = 1;
-                        if(send_message(client_session.ssl, msg) < 0) running = false;
+                        if(network_send_message(client_session.ssl, msg) < 0) running = false;
                         destroy_message(msg);
                     }
                 }
@@ -512,7 +512,7 @@ static void handle_input_reservation_time(int ch) {
         if (duration_sec > 0 && duration_sec <= MAX_RESERVATION_SECONDS) {
             Message* msg = create_reservation_message(device_list[reservation_target_device_index].id, reservation_input_buffer);
             if (msg) {
-                if(send_message(client_session.ssl, msg) < 0) running = false;
+                if(network_send_message(client_session.ssl, msg) < 0) running = false;
                  destroy_message(msg);
             }
         } else {
@@ -619,7 +619,7 @@ static void process_and_store_device_list(const Message* message) {
 static bool handle_login(const char* username, const char* password) {
     Message* msg = create_login_message(username, password);
     if (!msg) { show_error_message("메시지 생성 실패"); return false; }
-    if (send_message(client_session.ssl, msg) < 0) {
+    if (network_send_message(client_session.ssl, msg) < 0) {
         running = false;
     }
     destroy_message(msg);
@@ -638,7 +638,7 @@ static void on_login_submitted(const char* username, const char* password) {
     }
     
     // 2) 서버에 전송
-    if (send_message(client_session.ssl, login_msg) < 0) {
+    if (network_send_message(client_session.ssl, login_msg) < 0) {
         LOG_WARNING("Client", "로그인 요청 전송 실패");
         show_error_message("로그인 요청 전송 실패");
         destroy_message(login_msg);
@@ -658,7 +658,7 @@ static void signal_handler(int signum) { (void)signum; (void)write(self_pipe[1],
 static void cleanup_resources(void) {
     if (device_list) { free(device_list); device_list = NULL; }
     cleanup_client_session(&client_session);
-    cleanup_ssl_manager(&ssl_manager);
+    network_cleanup_ssl_manager(&ssl_manager);
     cleanup_ui();
     utils_cleanup_logger();
     close(self_pipe[0]);
@@ -666,10 +666,10 @@ static void cleanup_resources(void) {
 }
 
 static int connect_to_server(const char* server_ip, int port) {
-    int fd = init_client_socket(server_ip, port);
+    int fd = network_init_client_socket(server_ip, port);
     if (fd < 0) return -1;
     
-    SSLHandler* h = perform_ssl_handshake(fd, &ssl_manager);
+    SSLHandler* h = network_perform_ssl_handshake(fd, &ssl_manager);
     if (!h) return -1;
     
     client_session.ssl = h->ssl;
@@ -679,7 +679,7 @@ static int connect_to_server(const char* server_ip, int port) {
     show_success_message("서버에 연결되었습니다. 로그인 정보를 기다립니다...");
     Message* msg = create_message(MSG_LOGIN, "success");
     if(msg) {
-        if(send_message(client_session.ssl, msg) < 0) {
+        if(network_send_message(client_session.ssl, msg) < 0) {
             destroy_message(msg);
             return -1;
         }

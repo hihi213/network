@@ -162,7 +162,7 @@ void cleanup_client_session(ClientSession* session) {
 
     // SSL 핸들러 정리
     if (session->ssl_handler) {  // SSL 핸들러가 존재하는 경우
-        cleanup_ssl_handler(session->ssl_handler);  // SSL 핸들러 정리
+        network_cleanup_ssl_handler(session->ssl_handler);  // SSL 핸들러 정리
         session->ssl_handler = NULL;  // 포인터를 NULL로 설정
     }
     
