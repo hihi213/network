@@ -442,6 +442,7 @@ bool utils_hashtable_insert(hash_table_t* table, const char* key, void* value) {
     new_node->value = value;  // 값 설정
     new_node->next = table->buckets[index];  // 기존 첫 번째 노드를 다음으로 설정
     table->buckets[index] = new_node;  // 새 노드를 첫 번째로 설정
+    table->count++; // <--- 이 라인을 추가하세요.
 
     // LOG_INFO("HashTable", "새 노드 삽입 성공: 키=%s, 인덱스=%u", key, index);
     return true;  // true 반환
@@ -501,6 +502,7 @@ bool utils_hashtable_delete(hash_table_t* table, const char* key) {
             }
             free(node->key);  // 키 메모리 해제
             free(node);  // 노드 메모리 해제
+            table->count--; // <--- 이 라인을 추가하세요.
 
             // LOG_INFO("HashTable", "노드 삭제 성공: 키=%s", key);
             return true;  // true 반환
