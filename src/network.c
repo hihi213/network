@@ -73,7 +73,7 @@ int send_message(SSL* ssl, const Message* message) {
         if (net_send(ssl, message->data, data_len) != (ssize_t)data_len) return -1;
     }
 
-    LOG_INFO("Network", "메시지 전송 완료: 타입=%s", get_message_type_string(message->type));
+    // LOG_INFO("Network", "메시지 전송 완료: 타입=%s", get_message_type_string(message->type));
     return 0;
 }
 
@@ -361,7 +361,7 @@ int set_socket_options(int socket_fd, bool is_server) {
         #endif
     }
 
-    LOG_INFO("Network", "소켓 옵션 설정 완료: fd=%d, is_server=%d", socket_fd, is_server);
+    // LOG_INFO("Network", "소켓 옵션 설정 완료: fd=%d, is_server=%d", socket_fd, is_server);
     return 0;
 }
 
@@ -398,7 +398,7 @@ SSLHandler* accept_client(int server_fd, SSLManager* ssl_manager, char* client_i
         error_report(ERROR_NETWORK_IP_CONVERSION_FAILED, "Network", "클라이언트 IP 주소 변환 실패");
         CLEANUP_AND_RET(close(client_fd), NULL);
     }
-    LOG_INFO("Network", "클라이언트 연결 수락: IP=%s, 소켓=%d", client_ip, client_fd);
+    // LOG_INFO("Network", "클라이언트 연결 수락: IP=%s, 소켓=%d", client_ip, client_fd);
     SSLHandler* ssl_handler = create_ssl_handler(ssl_manager, client_fd);
     if (!ssl_handler) {
         error_report(ERROR_NETWORK_SSL_INIT_FAILED, "Network", "SSL 핸들러 생성 실패: IP=%s", client_ip);
@@ -409,7 +409,7 @@ SSLHandler* accept_client(int server_fd, SSLManager* ssl_manager, char* client_i
         cleanup_ssl_handler(ssl_handler);
         CLEANUP_AND_RET(close(client_fd), NULL);
     }
-    LOG_INFO("Network", "클라이언트 SSL 연결 성공: IP=%s", client_ip);
+    // LOG_INFO("Network", "클라이언트 SSL 연결 성공: IP=%s", client_ip);
     return ssl_handler;
 }
 
@@ -421,7 +421,7 @@ SSLHandler* accept_client(int server_fd, SSLManager* ssl_manager, char* client_i
  */
 SSLHandler* perform_ssl_handshake(int client_fd, SSLManager* mgr) {
     CHECK_PARAM_RET_PTR(mgr, ERROR_INVALID_PARAMETER, "Network", "perform_ssl_handshake: SSL 매니저가 NULL입니다");
-    LOG_INFO("Network", "SSL 핸드셰이크 시작: fd=%d", client_fd);
+    // LOG_INFO("Network", "SSL 핸드셰이크 시작: fd=%d", client_fd);
     SSLHandler* handler = create_ssl_handler(mgr, client_fd);
     if (!handler) {
         error_report(ERROR_NETWORK_SSL_INIT_FAILED, "Network", "SSL 핸들러 생성 실패: fd=%d", client_fd);
@@ -434,6 +434,6 @@ SSLHandler* perform_ssl_handshake(int client_fd, SSLManager* mgr) {
         close(client_fd);
         return NULL;
     }
-    LOG_INFO("Network", "SSL 핸드셰이크 성공: fd=%d", client_fd);
+    // LOG_INFO("Network", "SSL 핸드셰이크 성공: fd=%d", client_fd);
     return handler;
 }

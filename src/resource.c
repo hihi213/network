@@ -45,7 +45,7 @@ ResourceManager* init_resource_manager(void) {
     add_device(manager, "DEV004", "Camera", "Canon EOS R5");  // 카메라 장치 추가
     add_device(manager, "DEV005", "Microphone", "Blue Yeti");  // 마이크 장치 추가
 
-    LOG_INFO("Resource", "리소스 매니저 초기화 성공");  // 정보 로그 출력
+    // LOG_INFO("Resource", "리소스 매니저 초기화 성공");  // 정보 로그 출력
     return manager;  // 초기화된 매니저 반환
 }
 
@@ -76,14 +76,14 @@ bool add_device(ResourceManager* manager, const char* id, const char* type, cons
         return false;  // 에러 코드 반환
     }
 
-    LOG_INFO("Resource", "장비 추가 시작: ID=%s, 타입=%s, 이름=%s", id, type, name);
+    // LOG_INFO("Resource", "장비 추가 시작: ID=%s, 타입=%s, 이름=%s", id, type, name);
 
     pthread_mutex_lock(&manager->mutex);  // 뮤텍스 잠금
 
     // [개선] 해시 테이블에서 기존 장비 확인
     Device* existing_device = (Device*)ht_get(manager->devices, id);
     if (existing_device) {  // 기존 장비가 존재하는 경우
-        LOG_INFO("Resource", "기존 장비 발견, 교체: ID=%s", id);
+        // LOG_INFO("Resource", "기존 장비 발견, 교체: ID=%s", id);
         ht_delete(manager->devices, id);  // 기존 장비 삭제
     }
 
@@ -114,7 +114,7 @@ bool add_device(ResourceManager* manager, const char* id, const char* type, cons
         return false;  // 에러 코드 반환
     }
 
-    LOG_INFO("Resource", "장비 추가 성공: ID=%s", id);  // 정보 로그 출력
+    // LOG_INFO("Resource", "장비 추가 성공: ID=%s", id);  // 정보 로그 출력
     pthread_mutex_unlock(&manager->mutex);  // 뮤텍스 해제
     return true;  // 성공 코드 반환
 }
@@ -131,7 +131,7 @@ bool remove_device(ResourceManager* manager, const char* id) {
         return false;  // 에러 코드 반환
     }
     
-    LOG_INFO("Resource", "장비 제거 시작: ID=%s", id);
+    // LOG_INFO("Resource", "장비 제거 시작: ID=%s", id);
 
     pthread_mutex_lock(&manager->mutex);  // 뮤텍스 잠금
     
@@ -151,7 +151,7 @@ bool remove_device(ResourceManager* manager, const char* id) {
     
     // [개선] 해시 테이블에서 장비 삭제
     if (ht_delete(manager->devices, id)) {  // 해시 테이블에서 장비 삭제 성공 시
-        LOG_INFO("Resource", "장비 제거 성공: ID=%s", id);  // 정보 로그 출력
+        // LOG_INFO("Resource", "장비 제거 성공: ID=%s", id);  // 정보 로그 출력
         pthread_mutex_unlock(&manager->mutex);  // 뮤텍스 해제
         return true;  // 성공 코드 반환
     } else {  // 장비 삭제 실패 시
@@ -176,7 +176,7 @@ bool update_device_status(ResourceManager* manager, const char* device_id, Devic
     
     Device* device_to_update = (Device*)ht_get(manager->devices, device_id);  // 해시 테이블에서 장치 조회
     if (device_to_update == NULL) {  // 장치를 찾을 수 없는 경우
-        LOG_WARNING("Resource", "상태를 업데이트할 장비를 찾지 못함: ID=%s", device_id);  // 경고 로그 출력
+        // LOG_WARNING("Resource", "상태를 업데이트할 장비를 찾지 못함: ID=%s", device_id);  // 경고 로그 출력
         pthread_mutex_unlock(&manager->mutex);  // 뮤텍스 해제
         return false;  // false 반환
     }
@@ -191,7 +191,7 @@ bool update_device_status(ResourceManager* manager, const char* device_id, Devic
         device_to_update->active_reservation_id = active_res_id;  // 활성 예약 ID 설정
     }
 
-    LOG_INFO("Resource", "장비 상태 업데이트 성공: ID=%s, 새 상태=%d, 예약ID=%u", device_id, new_status, active_res_id);  // 성공 로그 출력
+    // LOG_INFO("Resource", "장비 상태 업데이트 성공: ID=%s, 새 상태=%d, 예약ID=%u", device_id, new_status, active_res_id);  // 성공 로그 출력
 
     pthread_mutex_unlock(&manager->mutex);  // 뮤텍스 해제
     return true;  // true 반환
@@ -213,15 +213,15 @@ static void copy_device_callback(const char* key, void* value, void* user_data) 
         Device* source_device = (Device*)value;  // 소스 장치 포인터
         Device* dest_device = &data->devices[data->current_count];  // 대상 장치 포인터
         
-        LOG_INFO("Resource", "장비 복사 중: %d번째, ID=%s, 이름=%s, 타입=%s, 상태=%s", 
-                 data->current_count, source_device->id, source_device->name, 
-                 source_device->type, get_device_status_string(source_device->status));
+        // LOG_INFO("Resource", "장비 복사 중: %d번째, ID=%s, 이름=%s, 타입=%s, 상태=%s", 
+        //          data->current_count, source_device->id, source_device->name, 
+        //          source_device->type, get_device_status_string(source_device->status));
         
         memcpy(dest_device, source_device, sizeof(Device));  // 장치 정보 복사
         data->current_count++;  // 현재 개수 증가
     } else {
-        LOG_WARNING("Resource", "최대 장비 수 초과로 복사 중단: 현재=%d, 최대=%d", 
-                   data->current_count, data->max_devices);
+        // LOG_WARNING("Resource", "최대 장비 수 초과로 복사 중단: 현재=%d, 최대=%d", 
+        //             data->current_count, data->max_devices);
     }
 }
 
@@ -238,7 +238,7 @@ int get_device_list(ResourceManager* manager, Device* devices, int max_devices) 
         return -1;  // 유효성 검사
     }
     
-    LOG_INFO("Resource", "장비 목록 조회 시작: 최대장비수=%d", max_devices);
+    // LOG_INFO("Resource", "장비 목록 조회 시작: 최대장비수=%d", max_devices);
     
     pthread_mutex_lock(&manager->mutex);  // 뮤텍스 잠금
     
@@ -247,7 +247,7 @@ int get_device_list(ResourceManager* manager, Device* devices, int max_devices) 
     ht_traverse(manager->devices, copy_device_callback, &data);  // 해시 테이블 순회
     int count = data.current_count;  // 조회된 장치 개수
 
-    LOG_INFO("Resource", "해시 테이블 순회 완료: 조회된 장비수=%d", count);
+    // LOG_INFO("Resource", "해시 테이블 순회 완료: 조회된 장비수=%d", count);
 
     pthread_mutex_unlock(&manager->mutex);  // 뮤텍스 해제
     return count;  // 장치 개수 반환

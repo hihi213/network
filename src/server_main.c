@@ -43,6 +43,7 @@ static void add_client_to_list(Client* client);
 static void remove_client_from_list(Client* client);
 static void broadcast_status_update(void);
 static bool is_user_authenticated(const char* username, const char* password); // 인증 함수 프로토타입 추가
+static void load_users_from_file(const char* filename); // 사용자 정보 로드 함수 프로토타입 추가
 // 전역 변수
 static int server_sock;
 static bool running = true;
@@ -51,6 +52,7 @@ static SSLManager ssl_manager;
 static ResourceManager* resource_manager = NULL;
 static ReservationManager* reservation_manager = NULL;
 static SessionManager* session_manager = NULL;
+static HashTable* user_credentials = NULL; // 사용자 정보 해시 테이블 추가
 static Client* client_list[MAX_CLIENTS];
 static int num_clients = 0;
 static pthread_mutex_t client_list_mutex;
@@ -112,7 +114,7 @@ int main(int argc, char* argv[]) {
         cleanup_server();
         return 1;
     }
-    LOG_INFO("Main", "서버가 클라이언트 연결을 기다립니다...");
+    // LOG_INFO("Main", "서버가 클라이언트 연결을 기다립니다...");
     while (running) {
         struct pollfd fds[2];
         fds[0].fd = server_sock;
@@ -193,7 +195,7 @@ static void client_message_loop(Client* client) {
             enqueue_message(client, msg);
             client->last_activity = time(NULL);
         } else {
-            LOG_INFO("Thread", "클라이언트(%s)가 연결을 종료했습니다.", client->ip);
+            // LOG_INFO("Thread", "클라이언트(%s)가 연결을 종료했습니다.", client->ip);
             break;
         }
 
@@ -279,28 +281,39 @@ Message* response = create_message(MSG_RESERVE_RESPONSE, "success");
     return 0;
 }
 static bool is_user_authenticated(const char* username, const char* password) {
-    // TODO: 프로덕션 환경에서는 사용자 정보를 파일이나 데이터베이스에서 로드하고,
-    // Argon2, bcrypt 등의 안전한 해시 함수로 비밀번호를 비교해야 합니다.
-    if (strcmp(username, "test") == 0 && strcmp(password, "1234") == 0) {
-        return true;
+    if (!user_credentials) {
+        LOG_WARNING("Auth", "사용자 정보 해시 테이블이 초기화되지 않음");
+        return false;
     }
-    if (strcmp(username, "admin") == 0 && strcmp(password, "admin") == 0) {
-        return true;
+
+    // 해시 테이블에서 사용자 이름으로 저장된 비밀번호를 조회
+    char* stored_password = (char*)ht_get(user_credentials, username);
+
+    if (stored_password && strcmp(stored_password, password) == 0) {
+        LOG_INFO("Auth", "사용자 인증 성공: %s", username);
+        return true; // 비밀번호 일치
     }
-    return false;
+    
+    LOG_WARNING("Auth", "사용자 인증 실패: %s (사용자 없음 또는 비밀번호 불일치)", username);
+    return false; // 사용자가 없거나 비밀번호 불일치
 }
 static int handle_login_request(Client* client, const Message* message) {
     if (message->arg_count < 2) {
+        LOG_WARNING("Auth", "로그인 요청 실패: 인수 부족 (필요: 2, 받음: %d)", message->arg_count);
         return send_error_response(client->ssl, "로그인 정보가 부족합니다.");
     }
     const char* user = message->args[0];
     const char* pass = message->args[1];
 
+    LOG_INFO("Auth", "로그인 시도: 사용자='%s', IP=%s", user, client->ip);
+
     // 1단계: 사용자 자격 증명 확인
     if (!is_user_authenticated(user, pass)) {
-        LOG_WARNING("Auth", "로그인 실패: 사용자 '%s'의 자격 증명이 올바르지 않습니다.", user);
+        LOG_WARNING("Auth", "로그인 실패: 사용자 '%s'의 자격 증명이 올바르지 않습니다. (IP: %s)", user, client->ip);
         return send_error_response(client->ssl, "아이디 또는 비밀번호가 틀립니다.");
     }
+
+    LOG_INFO("Auth", "사용자 자격 증명 확인 성공: '%s'", user);
 
     // 2단계: 세션 생성 (중복 로그인 방지)
     // [버그 수정] 기존 코드에서는 create_session이 두 번 호출되었습니다.
@@ -308,7 +321,7 @@ static int handle_login_request(Client* client, const Message* message) {
     ServerSession* session = create_session(session_manager, user, client->ip, 0);
     if (!session) {
         // create_session은 사용자가 이미 존재할 경우 NULL을 반환합니다.
-        LOG_WARNING("Auth", "로그인 실패: 사용자 '%s'는 이미 로그인되어 있습니다.", user);
+        LOG_WARNING("Auth", "로그인 실패: 사용자 '%s'는 이미 로그인되어 있습니다. (IP: %s)", user, client->ip);
         return send_error_response(client->ssl, "이미 로그인된 사용자입니다.");
     }
 
@@ -415,28 +428,55 @@ static int init_server(int port) {
     signal(SIGINT, signal_handler);
     signal(SIGTERM, signal_handler);
     if (init_logger("logs/server.log") < 0) return -1;
-    if (init_ui() < 0) return -1;
     if (init_ssl_manager(&ssl_manager, true, "certs/server.crt", "certs/server.key") < 0) return -1;
-    if (pthread_mutex_init(&client_list_mutex, NULL) != 0) return -1;
+    if (init_ui() < 0) return -1;
+    
     resource_manager = init_resource_manager();
     reservation_manager = init_reservation_manager(resource_manager, broadcast_status_update);
     session_manager = init_session_manager();
-    if (!resource_manager || !reservation_manager || !session_manager) return -1;
+    load_users_from_file("users.txt"); // 사용자 정보 로드 추가
+    
+    if (!resource_manager || !reservation_manager || !session_manager || !user_credentials) return -1;
+    
     server_sock = init_server_socket(port);
     if (server_sock < 0) return -1;
+    
     return 0;
 }
 
 static void cleanup_server(void) {
     running = false;
-    if (session_manager) cleanup_session_manager(session_manager);
-    if (reservation_manager) cleanup_reservation_manager(reservation_manager);
-    if (resource_manager) cleanup_resource_manager(resource_manager);
-    if (server_sock >= 0) close(server_sock);
-    cleanup_ssl_manager(&ssl_manager);
+    
+    if (user_credentials) {
+        ht_destroy(user_credentials);
+        user_credentials = NULL;
+        LOG_INFO("Auth", "사용자 정보 해시 테이블 정리 완료");
+    }
+    
+    if (session_manager) {
+        cleanup_session_manager(session_manager);
+        session_manager = NULL;
+    }
+    
+    if (reservation_manager) {
+        cleanup_reservation_manager(reservation_manager);
+        reservation_manager = NULL;
+    }
+    
+    if (resource_manager) {
+        cleanup_resource_manager(resource_manager);
+        resource_manager = NULL;
+    }
+    
     cleanup_ui();
+    cleanup_ssl_manager(&ssl_manager);
     cleanup_logger();
-    pthread_mutex_destroy(&client_list_mutex);
+    
+    if (server_sock >= 0) {
+        close(server_sock);
+        server_sock = -1;
+    }
+    
     close(self_pipe[0]);
     close(self_pipe[1]);
 }
@@ -456,8 +496,7 @@ static int send_generic_response(Client* client, MessageType type, const char* d
 
     Message* response = create_message(type, data);
     if (!response) {
-        // 이 경우, 클라이언트에 에러 메시지조차 보내기 어려울 수 있음. 서버 로그만 남김.
-        LOG_ERROR("Response", "응답 메시지 생성 실패 (type: %d)", type);
+        // LOG_ERROR("Response", "응답 메시지 생성 실패 (type: %d)", type);
         return -1;
     }
 
@@ -468,8 +507,7 @@ static int send_generic_response(Client* client, MessageType type, const char* d
         if (arg) {
             response->args[i] = strdup(arg);
             if (!response->args[i]) {
-                LOG_ERROR("Response", "응답 인자 메모리 복사 실패");
-                // 할당 실패 시, 현재까지 할당된 것들만 정리하고 종료
+                // LOG_ERROR("Response", "응답 인자 메모리 복사 실패");
                 response->arg_count = i; 
                 destroy_message(response);
                 va_end(args);
@@ -499,4 +537,40 @@ static int send_error_response(SSL* ssl, const char* error_message) {
     int ret = send_message(ssl, response);
     destroy_message(response);
     return ret;
+}
+
+static void load_users_from_file(const char* filename) {
+    user_credentials = ht_create(MAX_CLIENTS, free); // 비밀번호 문자열을 free로 해제
+    if (!user_credentials) {
+        error_report(ERROR_HASHTABLE_CREATION_FAILED, "Auth", "사용자 정보 해시 테이블 생성 실패");
+        return;
+    }
+
+    FILE* fp = fopen(filename, "r");
+    if (!fp) {
+        error_report(ERROR_FILE_OPERATION_FAILED, "Auth", "'%s' 파일을 열 수 없습니다.", filename);
+        return;
+    }
+
+    char line[256];
+    char username[MAX_USERNAME_LENGTH];
+    char password[128];
+    int user_count = 0;
+
+    while (fgets(line, sizeof(line), fp)) {
+        // 개행 문자 제거
+        line[strcspn(line, "\n")] = 0;
+        
+        if (sscanf(line, "%[^:]:%s", username, password) == 2) {
+            if (ht_insert(user_credentials, username, strdup(password))) {
+                LOG_INFO("Auth", "사용자 로드: %s", username);
+                user_count++;
+            } else {
+                LOG_WARNING("Auth", "사용자 로드 실패: %s", username);
+            }
+        }
+    }
+    
+    fclose(fp);
+    LOG_INFO("Auth", "사용자 정보 로드 완료: 총 %d명", user_count);
 }

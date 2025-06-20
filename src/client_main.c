@@ -133,15 +133,26 @@ static void draw_ui_for_current_state() {
     curs_set(0); // 기본적으로 커서 숨김
 
     switch (current_state) {
-        case UI_STATE_MAIN_MENU: draw_main_menu(); break;
-        case UI_STATE_LOGIN_INPUT: 
-            draw_login_input_ui(); 
+        case UI_STATE_MAIN_MENU: 
+            LOG_INFO("Client", "UI 그리기: 메인 메뉴 화면");
+            draw_main_menu(); 
+            break;
+        case UI_STATE_LOGIN_INPUT:
+            LOG_INFO("Client", "UI 그리기: 로그인 입력 화면");
+            draw_login_input_ui();
             curs_set(1); // 로그인 화면에서 커서 보임
             break;
-        case UI_STATE_LOGGED_IN_MENU: draw_logged_in_menu(); break;
-        case UI_STATE_DEVICE_LIST: draw_device_list(); break;
+        case UI_STATE_LOGGED_IN_MENU: 
+            LOG_INFO("Client", "UI 그리기: 로그인된 메뉴 화면");
+            draw_logged_in_menu(); 
+            break;
+        case UI_STATE_DEVICE_LIST: 
+            LOG_INFO("Client", "UI 그리기: 장비 목록 화면");
+            draw_device_list(); 
+            break;
         case UI_STATE_INPUT_RESERVATION_TIME:
             {
+                LOG_INFO("Client", "UI 그리기: 예약 시간 입력 화면");
                 draw_device_list();
                 mvwprintw(global_ui_manager->menu_win, LINES - 5, 2, "예약할 시간(초) 입력 (1~86400, ESC:취소): %s", reservation_input_buffer);
                 
@@ -154,7 +165,12 @@ static void draw_ui_for_current_state() {
                 curs_set(1); // 예약 시간 입력 시 커서 보임
             }
             break;
-        case UI_STATE_QUITTING: break;
+        case UI_STATE_QUITTING: 
+            LOG_INFO("Client", "UI 그리기: 종료 상태");
+            break;
+        default:
+            LOG_WARNING("Client", "알 수 없는 UI 상태: %d", current_state);
+            break;
     }
     box(global_ui_manager->menu_win, 0, 0);
     wrefresh(global_ui_manager->menu_win);
@@ -343,12 +359,15 @@ static void handle_input_login_input(int ch) {
         case 10: // Enter 키
             if (active_login_field == LOGIN_FIELD_USERNAME) {
                 active_login_field = LOGIN_FIELD_PASSWORD; // 아이디 필드에서 Enter -> 비밀번호 필드로 이동
+                LOG_INFO("Client", "로그인 입력: 아이디 필드에서 비밀번호 필드로 이동");
             } else {
                 // 비밀번호 필드에서 Enter -> 로그인 시도
                 if (login_username_pos > 0 && login_password_pos > 0) {
+                    LOG_INFO("Client", "로그인 시도: 사용자='%s'", login_username_buffer);
                     show_success_message("로그인 시도 중...");
                     handle_login(login_username_buffer, login_password_buffer);
                 } else {
+                    LOG_WARNING("Client", "로그인 시도 실패: 아이디 또는 비밀번호가 비어있음");
                     show_error_message("아이디와 비밀번호를 모두 입력하세요.");
                 }
             }
@@ -358,9 +377,12 @@ static void handle_input_login_input(int ch) {
             active_login_field = (active_login_field == LOGIN_FIELD_USERNAME) 
                                ? LOGIN_FIELD_PASSWORD 
                                : LOGIN_FIELD_USERNAME;
+            LOG_INFO("Client", "로그인 입력: Tab 키로 필드 전환 (현재 필드: %s)", 
+                    active_login_field == LOGIN_FIELD_USERNAME ? "아이디" : "비밀번호");
             break;
 
         case 27: // Escape 키
+            LOG_INFO("Client", "로그인 입력: ESC 키로 메인 메뉴로 복귀");
             current_state = UI_STATE_MAIN_MENU;
             menu_highlight = 0;
             break;
@@ -385,21 +407,18 @@ static void handle_input_login_input(int ch) {
 
 
 static void handle_input_logged_in_menu(int ch) {
-    switch (ch) {
-        case KEY_UP: menu_highlight = (menu_highlight == 0) ? 1 : 0; break;
-        case KEY_DOWN: menu_highlight = (menu_highlight == 1) ? 0 : 1; break;
-        case 10:
-            if (menu_highlight == 0) {
-                Message* msg = create_message(MSG_STATUS_REQUEST, NULL);
-                if (msg) {
-                    if (send_message(client_session.ssl, msg) < 0) running = false;
-                     destroy_message(msg);
-                }
+ switch (ch) {
+        case 10: // Enter 키
+            if (active_login_field == LOGIN_FIELD_USERNAME) {
+                active_login_field = LOGIN_FIELD_PASSWORD;
             } else {
-                client_session.state = SESSION_DISCONNECTED;
-                current_state = UI_STATE_MAIN_MENU;
-                menu_highlight = 0;
-                show_success_message("로그아웃되었습니다.");
+                if (login_username_pos > 0 && login_password_pos > 0) {
+                    show_success_message("로그인 시도 중..."); // 사용자에게 피드백
+                    // handle_login만 호출하고 즉시 상태를 변경하지 않음
+                    handle_login(login_username_buffer, login_password_buffer);
+                } else {
+                    show_error_message("아이디와 비밀번호를 모두 입력하세요.");
+                }
             }
             break;
         case 27: break;
@@ -483,70 +502,67 @@ static void handle_input_reservation_time(int ch) {
 static void handle_server_message(const Message* message) {
     switch (message->type) {
         case MSG_ERROR:
+        LOG_WARNING("Client", "서버로부터 에러 메시지 수신: %s", message->data);
         show_error_message(message->data);
         // [수정] 로그인 시도 중에 발생한 에러라면, 다시 로그인 입력 화면으로 돌려보냄
         if (current_state == UI_STATE_LOGGED_IN_MENU || current_state == UI_STATE_DEVICE_LIST) {
             // 이 경우는 이미 로그인 된 사용자가 다른 오류를 받은 경우이므로,
             // 상태를 유지하거나 다른 적절한 처리 가능
+            LOG_INFO("Client", "이미 로그인된 상태에서 에러 수신, 현재 상태 유지");
         } else {
             // 로그인 시도 중 에러(중복 로그인, 인증 실패 등)가 발생한 경우
             // UI 상태를 다시 로그인 화면으로 명확하게 설정
+            LOG_INFO("Client", "로그인 실패로 인해 로그인 화면으로 복귀 (현재 상태: %d -> UI_STATE_LOGIN_INPUT)", current_state);
             current_state = UI_STATE_LOGIN_INPUT;
         }
         break;
         case MSG_LOGIN:
             if (strcmp(message->data, "success") == 0 && message->arg_count > 0) {
+                LOG_INFO("Client", "로그인 성공: 사용자='%s'", message->args[0]);
                 client_session.state = SESSION_LOGGED_IN;
                 strncpy(client_session.username, message->args[0], MAX_USERNAME_LENGTH - 1);
                 client_session.username[MAX_USERNAME_LENGTH - 1] = '\0';
+                LOG_INFO("Client", "UI 상태 변경: 로그인 화면 -> 로그인된 메뉴 (UI_STATE_LOGIN_INPUT -> UI_STATE_LOGGED_IN_MENU)");
                 current_state = UI_STATE_LOGGED_IN_MENU;
                 menu_highlight = 0;
                 show_success_message("로그인 성공!");
             } else {
+                LOG_WARNING("Client", "로그인 실패: %s", message->data);
                 show_error_message(message->data);
                 // 로그인 실패 시 로그인 화면 상태를 유지합니다.
+                LOG_INFO("Client", "로그인 실패로 인해 로그인 화면 상태 유지 (UI_STATE_LOGIN_INPUT)");
                 current_state = UI_STATE_LOGIN_INPUT;
             }
             break;
         case MSG_STATUS_RESPONSE:
         case MSG_STATUS_UPDATE:
+            LOG_INFO("Client", "장비 상태 응답 수신: 장비 수=%d개", message->arg_count / 6);
             process_and_store_device_list(message);
+            LOG_INFO("Client", "UI 상태 변경: 로그인된 메뉴 -> 장비 목록 (UI_STATE_LOGGED_IN_MENU -> UI_STATE_DEVICE_LIST)");
             current_state = UI_STATE_DEVICE_LIST;
             menu_highlight = 0;
             scroll_offset = 0;
             break;
-        case MSG_CANCEL_RESPONSE:
-            if (strcmp(message->data, "success") == 0) {
-                show_success_message("예약이 성공적으로 취소되었습니다.");
-            } else {
-                show_error_message(message->data);
-            }
-            break;
         case MSG_RESERVE_RESPONSE:
             if (strcmp(message->data, "success") == 0) {
-                show_success_message("예약 성공! 목록을 갱신합니다...");
-                
-               if (message->arg_count >= 6) {
-                    const char* updated_id = message->args[0];
-                    for (int i = 0; i < device_count; i++) {
-                        if (strcmp(device_list[i].id, updated_id) == 0) {
-                            device_list[i].status = string_to_device_status(message->args[3]);
-                            device_list[i].reservation_end_time = (time_t)atol(message->args[4]);
-                            strncpy(device_list[i].reserved_by, message->args[5], MAX_USERNAME_LENGTH - 1);
-                            device_list[i].reserved_by[MAX_USERNAME_LENGTH - 1] = '\0';
-                            break;
-                        }
-                    }
-                }
-                current_state = UI_STATE_DEVICE_LIST;
+                LOG_INFO("Client", "예약 성공 응답 수신");
+                show_success_message("예약이 성공적으로 완료되었습니다.");
             } else {
+                LOG_WARNING("Client", "예약 실패 응답 수신: %s", message->data);
                 show_error_message(message->data);
-                current_state = UI_STATE_DEVICE_LIST;
             }
             break;
-
+        case MSG_CANCEL_RESPONSE:
+            if (strcmp(message->data, "success") == 0) {
+                LOG_INFO("Client", "예약 취소 성공 응답 수신");
+                show_success_message("예약이 성공적으로 취소되었습니다.");
+            } else {
+                LOG_WARNING("Client", "예약 취소 실패 응답 수신: %s", message->data);
+                show_error_message(message->data);
+            }
+            break;
         default:
-            error_report(ERROR_MESSAGE_INVALID_TYPE, "Message", "알 수 없는 메시지 타입: %d", message->type);
+            // LOG_WARNING("Client", "알 수 없는 메시지 타입: %d", message->type);
             break;
     }
 }

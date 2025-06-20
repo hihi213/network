@@ -182,7 +182,7 @@ void print_performance_stats(PerformanceStats* stats) {
         return;  // 함수 종료
     }
 
-    LOG_INFO("Performance", "성능 통계 출력");  // 정보 로그 출력
+    // LOG_INFO("Performance", "성능 통계 출력");  // 정보 로그 출력
     printf("=== 성능 통계 ===\n");  // 제목 출력
     printf("총 요청 수: %llu\n", stats->total_requests);  // 총 요청 수 출력
     printf("성공한 요청 수: %llu\n", stats->successful_requests);  // 성공한 요청 수 출력
@@ -228,7 +228,7 @@ int init_logger(const char* filename) {
     }
 
     pthread_mutex_init(&log_mutex, NULL);  // 로그 뮤텍스 초기화
-    LOG_INFO("System", "로거 초기화 완료. 로그 파일: %s", filename);  // 초기화 완료 로그
+    // LOG_INFO("System", "로거 초기화 완료. 로그 파일: %s", filename);  // 초기화 완료 로그
     return 0;  // 성공 코드 반환
 }
 
@@ -237,7 +237,7 @@ int init_logger(const char* filename) {
  */
 void cleanup_logger(void) {
     if (log_file != NULL) {  // 로그 파일이 열려있는 경우
-        LOG_INFO("System", "로거 정리 중...");  // 정리 시작 로그
+        // LOG_INFO("System", "로거 정리 중...");  // 정리 시작 로그
         fclose(log_file);  // 로그 파일 닫기
         log_file = NULL;  // 포인터를 NULL로 설정
     }
@@ -405,22 +405,22 @@ bool ht_insert(HashTable* table, const char* key, void* value) {
         return false;  // 유효성 검사
     }
 
-    LOG_INFO("HashTable", "해시 테이블 삽입 시작: 키=%s", key);
+    // LOG_INFO("HashTable", "해시 테이블 삽입 시작: 키=%s", key);
 
     uint32_t index = hash_function(key, table->size);  // 해시 인덱스 계산
-    LOG_INFO("HashTable", "해시 인덱스 계산: 키=%s, 인덱스=%u", key, index);
+    // LOG_INFO("HashTable", "해시 인덱스 계산: 키=%s, 인덱스=%u", key, index);
     
     HashNode* node = table->buckets[index];  // 해당 버킷의 첫 번째 노드
     
     // 기존 키가 있는지 확인
     while (node) {  // 노드가 존재하는 동안 반복
         if (strcmp(node->key, key) == 0) {  // 키가 일치하는 경우
-            LOG_INFO("HashTable", "기존 키 발견, 값 교체: 키=%s", key);
+            // LOG_INFO("HashTable", "기존 키 발견, 값 교체: 키=%s", key);
             if (table->free_value) {  // 값 해제 함수가 존재하는 경우
                 table->free_value(node->value);  // 기존 값 메모리 해제
             }
             node->value = value;  // 새 값으로 교체
-            LOG_INFO("HashTable", "새 노드 삽입 성공: 키=%s, 인덱스=%u", key, index);
+            // LOG_INFO("HashTable", "새 노드 삽입 성공: 키=%s, 인덱스=%u", key, index);
             return true;  // true 반환
         }
         node = node->next;  // 다음 노드로 이동
@@ -444,7 +444,7 @@ bool ht_insert(HashTable* table, const char* key, void* value) {
     new_node->next = table->buckets[index];  // 기존 첫 번째 노드를 다음으로 설정
     table->buckets[index] = new_node;  // 새 노드를 첫 번째로 설정
 
-    LOG_INFO("HashTable", "새 노드 삽입 성공: 키=%s, 인덱스=%u", key, index);
+    // LOG_INFO("HashTable", "새 노드 삽입 성공: 키=%s, 인덱스=%u", key, index);
     return true;  // true 반환
 }
 
@@ -479,17 +479,17 @@ bool ht_delete(HashTable* table, const char* key) {
         return false;  // 유효성 검사
     }
 
-    LOG_INFO("HashTable", "해시 테이블 삭제 시작: 키=%s", key);
+    // LOG_INFO("HashTable", "해시 테이블 삭제 시작: 키=%s", key);
 
     uint32_t index = hash_function(key, table->size);  // 해시 인덱스 계산
-    LOG_INFO("HashTable", "해시 인덱스 계산: 키=%s, 인덱스=%u", key, index);
+    // LOG_INFO("HashTable", "해시 인덱스 계산: 키=%s, 인덱스=%u", key, index);
     
     HashNode* node = table->buckets[index];  // 해당 버킷의 첫 번째 노드
     HashNode* prev = NULL;  // 이전 노드 포인터
 
     while (node) {  // 노드가 존재하는 동안 반복
         if (strcmp(node->key, key) == 0) {  // 키가 일치하는 경우
-            LOG_INFO("HashTable", "삭제할 노드 발견: 키=%s", key);
+            // LOG_INFO("HashTable", "삭제할 노드 발견: 키=%s", key);
             
             if (prev) {  // 이전 노드가 존재하는 경우
                 prev->next = node->next;  // 이전 노드의 다음을 현재 노드의 다음으로 설정
@@ -503,14 +503,14 @@ bool ht_delete(HashTable* table, const char* key) {
             }
             free(node);  // 노드 메모리 해제
 
-            LOG_INFO("HashTable", "노드 삭제 성공: 키=%s", key);
+            // LOG_INFO("HashTable", "노드 삭제 성공: 키=%s", key);
             return true;  // true 반환
         }
         prev = node;  // 이전 노드를 현재 노드로 설정
         node = node->next;  // 다음 노드로 이동
     }
 
-    LOG_WARNING("HashTable", "삭제할 키를 찾을 수 없음: 키=%s", key);
+    // LOG_WARNING("HashTable", "삭제할 키를 찾을 수 없음: 키=%s", key);
     return false;  // false 반환
 }
 
@@ -526,7 +526,7 @@ void ht_traverse(HashTable* table, void (*callback)(const char* key, void* value
         return;  // 유효성 검사
     }
 
-    LOG_INFO("HashTable", "해시 테이블 순회 시작: 크기=%u", table->size);
+    // LOG_INFO("HashTable", "해시 테이블 순회 시작: 크기=%u", table->size);
 
     for (uint32_t i = 0; i < table->size; i++) {  // 모든 버킷에 대해 반복
         HashNode* node = table->buckets[i];  // 현재 버킷의 첫 번째 노드
@@ -539,9 +539,9 @@ void ht_traverse(HashTable* table, void (*callback)(const char* key, void* value
         }
         
         if (bucket_count > 0) {
-            LOG_INFO("HashTable", "버킷 %u 처리 완료: %d개 노드", i, bucket_count);
+            // LOG_INFO("HashTable", "버킷 %u 처리 완료: %d개 노드", i, bucket_count);
         }
     }
 
-    LOG_INFO("HashTable", "해시 테이블 순회 완료");
+    // LOG_INFO("HashTable", "해시 테이블 순회 완료");
 }

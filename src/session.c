@@ -43,7 +43,7 @@ SessionManager* init_session_manager(void) {
     // 랜덤 시드 초기화 (토큰 생성용)
     srand(time(NULL));  // 현재 시간으로 랜덤 시드 설정
 
-    LOG_INFO("Session", "세션 매니저 초기화 성공");  // 정보 로그 출력
+    // LOG_INFO("Session", "세션 매니저 초기화 성공");  // 정보 로그 출력
     return manager;  // 초기화된 매니저 반환
 }
 
@@ -75,7 +75,7 @@ ServerSession* create_session(SessionManager* manager, const char* username, con
     }
 
      pthread_mutex_lock(&manager->mutex);
-    LOG_INFO("Session", "세션 생성 시작: 사용자=%s, IP=%s, 포트=%d", username, client_ip, client_port);
+    // LOG_INFO("Session", "세션 생성 시작: 사용자=%s, IP=%s, 포트=%d", username, client_ip, client_port);
 
     // [개선] 기존 세션이 존재하는지 확인
     if (ht_get(manager->sessions, username)) {
@@ -107,8 +107,8 @@ ServerSession* create_session(SessionManager* manager, const char* username, con
     // 고유한 세션 토큰 생성 (사용자명_타임스탬프 형식)
     snprintf(new_session->token, MAX_TOKEN_LENGTH, "%s_%ld", username, new_session->created_at);  // 세션 토큰 생성
 
-    LOG_INFO("Session", "세션 정보 설정 완료: 사용자=%s, 토큰=%s, 생성시간=%ld", 
-             username, new_session->token, new_session->created_at);
+    // LOG_INFO("Session", "세션 정보 설정 완료: 사용자=%s, 토큰=%s, 생성시간=%ld",
+    //          username, new_session->token, new_session->created_at);
 
     // [개선] 해시 테이블에 세션 삽입
     if (!ht_insert(manager->sessions, username, new_session)) {  // 해시 테이블 삽입 실패 시
@@ -118,7 +118,7 @@ ServerSession* create_session(SessionManager* manager, const char* username, con
         return NULL;  // NULL 반환
     }
 
-    LOG_INFO("Session", "세션 생성 성공: %s", username);  // 정보 로그 출력
+    // LOG_INFO("Session", "세션 생성 성공: %s", username);  // 정보 로그 출력
     pthread_mutex_unlock(&manager->mutex);  // 뮤텍스 해제
     return new_session;  // 생성된 세션 반환
 }
@@ -135,17 +135,17 @@ int close_session(SessionManager* manager, const char* username) {
         return -1;  // 에러 코드 반환
     }
 
-    LOG_INFO("Session", "세션 종료 시작: 사용자=%s", username);
+    // LOG_INFO("Session", "세션 종료 시작: 사용자=%s", username);
 
     pthread_mutex_lock(&manager->mutex);  // 뮤텍스 잠금
     
     // [개선] 해시 테이블에서 바로 삭제. 성공하면 0, 없으면 -1 반환.
     if (ht_delete(manager->sessions, username)) {  // 해시 테이블에서 세션 삭제 성공 시
-        LOG_INFO("Session", "세션 종료 성공: %s", username);  // 정보 로그 출력
+        // LOG_INFO("Session", "세션 종료 성공: %s", username);  // 정보 로그 출력
         pthread_mutex_unlock(&manager->mutex);  // 뮤텍스 해제
         return 0;  // 성공 코드 반환
     } else {  // 세션을 찾을 수 없는 경우
-        LOG_WARNING("Session", "세션을 찾을 수 없음: %s", username);  // 경고 로그 출력
+        // LOG_WARNING("Session", "세션을 찾을 수 없음: %s", username);  // 경고 로그 출력
         pthread_mutex_unlock(&manager->mutex);  // 뮤텍스 해제
         return -1;  // 에러 코드 반환
     }

@@ -53,7 +53,7 @@ ReservationManager* init_reservation_manager(ResourceManager* res_manager, void 
         return NULL;
     }
 
-    LOG_INFO("Reservation", "예약 관리자 초기화 성공");
+    // LOG_INFO("Reservation", "예약 관리자 초기화 성공");
     return manager;
 }
 
@@ -63,19 +63,19 @@ Reservation* get_active_reservation_for_device(ReservationManager* resv_manager,
         return NULL;
     }
 
-    LOG_INFO("Reservation", "장비 활성 예약 조회 시작: 장비ID=%s", device_id);
+    // LOG_INFO("Reservation", "장비 활성 예약 조회 시작: 장비ID=%s", device_id);
 
     Device* device = (Device*)ht_get(rsrc_manager->devices, device_id);
     if (!device) {
-        LOG_WARNING("Reservation", "장비를 찾을 수 없음: ID=%s", device_id);
+        // LOG_WARNING("Reservation", "장비를 찾을 수 없음: ID=%s", device_id);
         return NULL;
     }
 
-    LOG_INFO("Reservation", "장비 정보 조회: ID=%s, 상태=%s, 활성예약ID=%u", 
-             device_id, get_device_status_string(device->status), device->active_reservation_id);
+    // LOG_INFO("Reservation", "장비 정보 조회: ID=%s, 상태=%s, 활성예약ID=%u", 
+    //          device_id, get_device_status_string(device->status), device->active_reservation_id);
 
     if (device->active_reservation_id == 0) {
-        LOG_INFO("Reservation", "장비에 활성 예약이 없음: ID=%s", device_id);
+        // LOG_INFO("Reservation", "장비에 활성 예약이 없음: ID=%s", device_id);
         return NULL;
     }
 
@@ -87,14 +87,14 @@ Reservation* get_active_reservation_for_device(ReservationManager* resv_manager,
     pthread_mutex_unlock(&resv_manager->mutex);
 
     if (reservation && reservation->status == RESERVATION_APPROVED) {
-        LOG_INFO("Reservation", "활성 예약 발견: 장비ID=%s, 예약ID=%u, 사용자=%s, 종료시간=%ld", 
-                 device_id, reservation->id, reservation->username, reservation->end_time);
+        // LOG_INFO("Reservation", "활성 예약 발견: 장비ID=%s, 예약ID=%u, 사용자=%s, 종료시간=%ld", 
+        //          device_id, reservation->id, reservation->username, reservation->end_time);
         return reservation;
     } else if (reservation) {
-        LOG_WARNING("Reservation", "예약은 존재하지만 승인되지 않음: 장비ID=%s, 예약ID=%u, 상태=%d", 
-                   device_id, reservation->id, reservation->status);
+        // LOG_WARNING("Reservation", "예약은 존재하지만 승인되지 않음: 장비ID=%s, 예약ID=%u, 상태=%d", 
+        //             device_id, reservation->id, reservation->status);
     } else {
-        LOG_WARNING("Reservation", "예약을 찾을 수 없음: 장비ID=%s, 예약ID=%u", device_id, device->active_reservation_id);
+        // LOG_WARNING("Reservation", "예약을 찾을 수 없음: 장비ID=%s, 예약ID=%u", device_id, device->active_reservation_id);
     }
 
     return NULL;
@@ -123,7 +123,7 @@ void cleanup_reservation_manager(ReservationManager* manager) {
     ht_destroy(manager->reservation_map);
     pthread_mutex_destroy(&manager->mutex);
     free(manager);
-    LOG_INFO("Reservation", "예약 관리자 정리 완료");
+    // LOG_INFO("Reservation", "예약 관리자 정리 완료");
 }
 
 uint32_t create_reservation(ReservationManager* manager, const char* device_id,
@@ -134,7 +134,7 @@ uint32_t create_reservation(ReservationManager* manager, const char* device_id,
         return 0;
     }
 
-    LOG_INFO("Reservation", "예약 생성 시작: 장치=%s, 사용자=%s", device_id, username);
+    // LOG_INFO("Reservation", "예약 생성 시작: 장치=%s, 사용자=%s", device_id, username);
     pthread_mutex_lock(&manager->mutex);
 
     if (manager->reservation_count >= MAX_RESERVATIONS) {
@@ -184,7 +184,7 @@ uint32_t create_reservation(ReservationManager* manager, const char* device_id,
     manager->reservation_count++;
 
     pthread_mutex_unlock(&manager->mutex);
-    LOG_INFO("Reservation", "예약 생성 성공: ID=%u", reservation_id);
+    // LOG_INFO("Reservation", "예약 생성 성공: ID=%u", reservation_id);
     return reservation_id; 
 }
 
@@ -195,7 +195,7 @@ bool cancel_reservation(ReservationManager* manager, uint32_t reservation_id,
         return false;
     }
 
-    LOG_INFO("Reservation", "예약 취소 시작: ID=%u, 사용자=%s", reservation_id, username);
+    // LOG_INFO("Reservation", "예약 취소 시작: ID=%u, 사용자=%s", reservation_id, username);
     pthread_mutex_lock(&manager->mutex);
 
     char id_str[16];
@@ -223,7 +223,7 @@ bool cancel_reservation(ReservationManager* manager, uint32_t reservation_id,
     reservation->status = RESERVATION_CANCELLED;
     ht_delete(manager->reservation_map, id_str);
 
-    LOG_INFO("Reservation", "예약 취소 성공: ID=%u", reservation_id);
+    // LOG_INFO("Reservation", "예약 취소 성공: ID=%u", reservation_id);
     pthread_mutex_unlock(&manager->mutex);
     return true;
 }
@@ -249,7 +249,7 @@ void cleanup_expired_reservations(ReservationManager* manager, ResourceManager* 
             snprintf(id_str, sizeof(id_str), "%u", r->id);
             ht_delete(manager->reservation_map, id_str);
             
-            LOG_INFO("Reservation", "예약 만료 감지: 장비 ID=%s", r->device_id);
+            // LOG_INFO("Reservation", "예약 만료 감지: 장비 ID=%s", r->device_id);
         }
     }
     pthread_mutex_unlock(&manager->mutex);
@@ -261,6 +261,6 @@ void cleanup_expired_reservations(ReservationManager* manager, ResourceManager* 
         if (manager->broadcast_callback) {
             manager->broadcast_callback();
         }
-        LOG_INFO("Reservation", "만료된 예약 정리 완료: 총 %d개 정리됨", expired_count);
+        // LOG_INFO("Reservation", "만료된 예약 정리 완료: 총 %d개 정리됨", expired_count);
     }
 }

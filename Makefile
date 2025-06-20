@@ -28,7 +28,7 @@ SERVER_TARGET = bin/server
 CLIENT_TARGET = bin/client
 
 # 기본 타겟
-all: directories $(SERVER_TARGET) $(CLIENT_TARGET)
+all: directories $(SERVER_TARGET) $(CLIENT_TARGET) install_users
 
 # 디렉토리 생성
 directories:
@@ -45,6 +45,10 @@ $(CLIENT_TARGET): $(COMMON_OBJS) $(CLIENT_OBJS)
 # 오브젝트 파일 생성
 obj/%.o: src/%.c
 	$(CC) $(CFLAGS) -c $< -o $@
+
+# users.txt 복사
+install_users:
+	cp -f users.txt bin/users.txt
 
 # 정리
 clean:

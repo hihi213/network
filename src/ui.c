@@ -88,7 +88,7 @@ void update_server_devices(const Device* devices, int count, ResourceManager* re
         return;
     }
 
-    LOG_INFO("UI", "서버 장비 목록 업데이트 시작: 장비수=%d", count);
+    // LOG_INFO("UI", "서버 장비 목록 업데이트 시작: 장비수=%d", count);
 
     pthread_mutex_lock(&global_ui_manager->mutex);
     
@@ -100,9 +100,9 @@ void update_server_devices(const Device* devices, int count, ResourceManager* re
     
     if (count <= 0) {
         mvwprintw(global_ui_manager->menu_win, 2, 2, "등록된 장비가 없습니다.");
-        LOG_WARNING("UI", "등록된 장비가 없음");
+        // LOG_WARNING("UI", "등록된 장비가 없음");
     } else {
-        LOG_INFO("UI", "장비 목록 표시 시작: %d개 장비", count);
+        // LOG_INFO("UI", "장비 목록 표시 시작: %d개 장비", count);
         
         // 헤더 표시
         mvwprintw(global_ui_manager->menu_win, 1, 2, "%-10s | %-25s | %-15s | %-20s | %-15s", 
@@ -120,10 +120,10 @@ void update_server_devices(const Device* devices, int count, ResourceManager* re
                     time_t current_time = time(NULL);
                     long remaining_sec = (res->end_time > current_time) ? (res->end_time - current_time) : 0;
                     snprintf(reservation_info, sizeof(reservation_info), "%s (%lds)", res->username, remaining_sec);
-                    LOG_INFO("UI", "장비 %s 예약 정보: 사용자=%s, 남은시간=%ld초", 
-                            device->id, res->username, remaining_sec);
+                    // LOG_INFO("UI", "장비 %s 예약 정보: 사용자=%s, 남은시간=%ld초",
+                    //          device->id, res->username, remaining_sec);
                 } else {
-                    LOG_WARNING("UI", "장비 %s가 예약 상태이지만 예약 정보를 찾을 수 없음", device->id);
+                    // LOG_WARNING("UI", "장비 %s가 예약 상태이지만 예약 정보를 찾을 수 없음", device->id);
                 }
             }
             
@@ -134,11 +134,11 @@ void update_server_devices(const Device* devices, int count, ResourceManager* re
             mvwprintw(global_ui_manager->menu_win, i + 2, 2, "%-10s | %-25s | %-15s | %-20s | %-15s",
                       device->id, device->name, device->type, status_str, reservation_info);
             
-            LOG_INFO("UI", "장비 %d 표시: ID=%s, 이름=%s, 타입=%s, 상태=%s, 예약정보=%s", 
-                     i, device->id, device->name, device->type, status_str, reservation_info);
+            // LOG_INFO("UI", "장비 %d 표시: ID=%s, 이름=%s, 타입=%s, 상태=%s, 예약정보=%s",
+            //          i, device->id, device->name, device->type, status_str, reservation_info);
         }
         
-        LOG_INFO("UI", "장비 목록 표시 완료: %d개 장비", count);
+        // LOG_INFO("UI", "장비 목록 표시 완료: %d개 장비", count);
     }
     
     // 윈도우 테두리 그리기
@@ -149,7 +149,7 @@ void update_server_devices(const Device* devices, int count, ResourceManager* re
     
     pthread_mutex_unlock(&global_ui_manager->mutex);
     
-    LOG_INFO("UI", "서버 장비 목록 업데이트 완료");
+    // LOG_INFO("UI", "서버 장비 목록 업데이트 완료");
 }
 
 /**
