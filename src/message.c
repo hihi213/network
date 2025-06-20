@@ -39,8 +39,8 @@ bool message_fill_status_response_args(message_t* msg, const device_t* devices, 
     if (!msg || !devices || !rm || !rvm) return false;
     msg->arg_count = 0;
     for (int i = 0; i < count; i++) {
-        int base_idx = i * 6;
-        if (base_idx + 5 >= MAX_ARGS) break;
+        int base_idx = i * DEVICE_INFO_ARG_COUNT;
+        if (base_idx + (DEVICE_INFO_ARG_COUNT - 1) >= MAX_ARGS) break;
         const char* status_str = message_get_device_status_string(devices[i].status);
         char end_time_str[32] = "0";
         char username_str[MAX_USERNAME_LENGTH] = "";
@@ -61,7 +61,7 @@ bool message_fill_status_response_args(message_t* msg, const device_t* devices, 
         if (!msg->args[base_idx] || !msg->args[base_idx+1] || !msg->args[base_idx+2] || !msg->args[base_idx+3] || !msg->args[base_idx+4] || !msg->args[base_idx+5]) {
             return false;
         }
-        msg->arg_count += 6;
+        msg->arg_count += DEVICE_INFO_ARG_COUNT;
     }
     return true;
 }

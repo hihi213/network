@@ -4,6 +4,10 @@
 #include "utils.h"
 #include "resource.h"
 
+// [추가] 상수 정의
+#define DEVICE_INFO_ARG_COUNT 6  // 장비 정보를 위한 인자 개수
+#define MAX_RESERVATIONS 1000    // 최대 예약 개수
+
 // [수정] ReservationStatus 열거형 정의 추가
 typedef enum reservation_status {
     RESERVATION_APPROVED,
@@ -23,10 +27,9 @@ typedef struct reservation {
     time_t created_at;
 } reservation_t;
 
-// ReservationManager 구조체 정의
+// ReservationManager 구조체 정의 (배열 제거, 해시 테이블만 사용)
 typedef struct reservation_manager {
-    reservation_t reservations[MAX_RESERVATIONS]; // 실제 데이터 저장소
-    hash_table_t* reservation_map; // 예약 ID를 키로 빠른 조회를 위한 해시 테이블 (포인터 저장)
+    hash_table_t* reservation_map; // 예약 ID를 키로 빠른 조회를 위한 해시 테이블
     int reservation_count;
     uint32_t next_reservation_id;
     pthread_mutex_t mutex;

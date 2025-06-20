@@ -419,7 +419,7 @@ static int server_handle_client_message(Client* client, const message_t* message
                 memset(client->username, 0, sizeof(client->username));
                 server_send_generic_response(client, MSG_LOGOUT, "success", 0);
             }
-            break;
+            return 0;
         default: 
             return server_send_error_response(client->ssl, "알 수 없거나 처리할 수 없는 요청입니다.");
     }

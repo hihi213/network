@@ -163,31 +163,30 @@ void client_draw_ui_for_current_state(void) {
     werase(g_ui_manager->menu_win);
     curs_set(0);
     switch (current_state) {
-        case APP_STATE_LOGIN:
+        case APP_STATE_LOGIN: 
             client_draw_login_input_ui();
             curs_set(1);
             break;
-        case APP_STATE_MAIN_MENU:
+        case APP_STATE_MAIN_MENU: 
             client_draw_main_menu();
             break;
-        case APP_STATE_LOGGED_IN_MENU:
+        case APP_STATE_LOGGED_IN_MENU: 
             client_draw_logged_in_menu();
             break;
-        case APP_STATE_DEVICE_LIST:
+        case APP_STATE_DEVICE_LIST: 
             client_draw_device_list();
             break;
         case APP_STATE_RESERVATION_TIME:
             client_draw_device_list();
-            int menu_win_height, menu_win_width;
-            getmaxyx(g_ui_manager->menu_win, menu_win_height, menu_win_width);
+                int menu_win_height = getmaxy(g_ui_manager->menu_win);
             client_draw_message_win("[숫자] 시간 입력  [Enter] 예약  [ESC] 취소");
             mvwprintw(g_ui_manager->menu_win, LINES - 5, 2, "예약할 시간(초) 입력 (1~86400, ESC:취소): %s", reservation_input_buffer);
-            char help_msg[128];
-            snprintf(help_msg, sizeof(help_msg), "도움말: 1 ~ 86400 사이의 예약 시간(초)을 입력하고 Enter를 누르세요.");
+                char help_msg[128];
+                snprintf(help_msg, sizeof(help_msg), "도움말: 1 ~ 86400 사이의 예약 시간(초)을 입력하고 Enter를 누르세요.");
             mvwprintw(g_ui_manager->menu_win, menu_win_height - 2, 2, "%-s", help_msg);
             curs_set(1);
             break;
-        case APP_STATE_EXIT:
+        case APP_STATE_EXIT: 
             break;
         default:
             break;
@@ -198,8 +197,6 @@ void client_draw_ui_for_current_state(void) {
 }
 
 static void client_draw_login_input_ui() {
-    int menu_win_height, menu_win_width;
-    getmaxyx(g_ui_manager->menu_win, menu_win_height, menu_win_width);
     // 안내 메시지 message_win에 출력
     client_draw_message_win("[Tab] 필드 전환  [Enter] 로그인  [ESC] 메인 메뉴");
 
@@ -232,8 +229,6 @@ static void client_draw_login_input_ui() {
 
 
 static void client_draw_main_menu() {
-    int menu_win_height, menu_win_width;
-    getmaxyx(g_ui_manager->menu_win, menu_win_height, menu_win_width);
     // 안내 메시지 message_win에 출력
     client_draw_message_win("[↑↓] 이동  [Enter] 선택  [ESC] 종료");
     const char* items[] = { "로그인", "종료" };
@@ -245,8 +240,6 @@ static void client_draw_main_menu() {
 }
 
 static void client_draw_logged_in_menu() {
-    int menu_win_height, menu_win_width;
-    getmaxyx(g_ui_manager->menu_win, menu_win_height, menu_win_width);
     // 안내 메시지 message_win에 출력
     client_draw_message_win("[↑↓] 이동  [Enter] 선택  [ESC] 로그아웃");
     const char* items[] = { "장비 현황 조회 및 예약", "로그아웃" };
@@ -258,8 +251,7 @@ static void client_draw_logged_in_menu() {
 }
 
 static void client_draw_device_list() {
-    int menu_win_height, menu_win_width;
-    getmaxyx(g_ui_manager->menu_win, menu_win_height, menu_win_width);
+    int menu_win_height = getmaxy(g_ui_manager->menu_win);
     client_draw_message_win("[↑↓] 이동  [Enter] 예약/선택  [C] 예약취소  [ESC] 뒤로");
 
     if (!device_list || device_count == 0) {
@@ -327,7 +319,7 @@ static void client_draw_device_list() {
                     snprintf(help_message, sizeof(help_message), "도움말: 점검 중인 장비는 예약할 수 없습니다.");
                     break;
                 default:
-                    break;
+                    break; 
             }
         }
         mvwprintw(g_ui_manager->menu_win, menu_win_height - 2, 2, "%-s", help_message);
@@ -375,7 +367,7 @@ static void client_handle_input_main_menu(int ch) {
                 login_password_pos = 0;
                 flushinp(); // ncurses 입력 버퍼를 비워 씹힘 현상을 방지합니다.
             } else { // "종료" 선택
-                running = false;
+                running = false; 
             }
             break;
         case 27: // ESC
@@ -484,6 +476,7 @@ static void client_handle_input_logged_in_menu(int ch) {
             }
             break;
         case 27: // ESC 키로 메인 메뉴 복귀 (로그아웃과 동일하게 처리)
+        {
             message_t* logout_msg = message_create(MSG_LOGOUT, NULL);
             if (logout_msg) {
                 network_send_message(client_session.ssl, logout_msg);
@@ -494,16 +487,15 @@ static void client_handle_input_logged_in_menu(int ch) {
             current_state = APP_STATE_MAIN_MENU;
             menu_highlight = 0;
             ui_show_success_message("로그아웃되었습니다.");
-            break;
+        }
+        break;
         default:
             break;
     }
 }
 
 static void client_handle_input_device_list(int ch) {
-    int menu_win_height, menu_win_width;
-    getmaxyx(g_ui_manager->menu_win, menu_win_height, menu_win_width);
-    (void)menu_win_width;
+    int menu_win_height = getmaxy(g_ui_manager->menu_win);
     const int visible_items = menu_win_height - 5;
 
     switch (ch) {
@@ -571,21 +563,21 @@ static void client_handle_input_reservation_time(int ch) {
                         char time_str[32];
                         snprintf(time_str, sizeof(time_str), "%d", reservation_time);
                         message_t* msg = message_create_reservation(dev->id, time_str);
-                        if (msg) {
+            if (msg) {
                             if (network_send_message(client_session.ssl, msg) < 0) {
                                 running = false;
                             }
                             message_destroy(msg);
-                        }
+            }
                     }
                     current_state = APP_STATE_DEVICE_LIST;
                     reservation_target_device_index = -1;
-                } else {
+        } else {
                     ui_show_error_message("유효하지 않은 시간입니다. (1~86400초)");
-                    memset(reservation_input_buffer, 0, sizeof(reservation_input_buffer));
-                    reservation_input_pos = 0;
-                }
-            }
+            memset(reservation_input_buffer, 0, sizeof(reservation_input_buffer));
+            reservation_input_pos = 0;
+        }
+    }
             break;
         case 27: // ESC
             current_state = APP_STATE_DEVICE_LIST;
@@ -611,7 +603,7 @@ static void client_handle_server_message(const message_t* message) {
     
     switch (message->type) {
         case MSG_ERROR:
-            LOG_WARNING("Client", "서버로부터 에러 메시지 수신: %s", message->data);
+        LOG_WARNING("Client", "서버로부터 에러 메시지 수신: %s", message->data);
             if (strcmp(message->data, "이미 로그인된 사용자입니다.") == 0) {
                 LOG_INFO("Client", "이미 로그인된 사용자로 로그인 시도: UI 에러 메시지 표시 및 입력 필드 초기화");
             }
@@ -620,15 +612,15 @@ static void client_handle_server_message(const message_t* message) {
             napms(1200); // 1.2초간 메시지 노출
             // 로그인 관련 에러라면 항상 로그인 화면 상태/입력 초기화
             if (current_state == APP_STATE_LOGGED_IN_MENU || current_state == APP_STATE_DEVICE_LIST || current_state == APP_STATE_LOGIN) {
-                current_state = APP_STATE_LOGIN;
+            current_state = APP_STATE_LOGIN;
                 menu_highlight = 0;
                 active_login_field = LOGIN_FIELD_USERNAME;
                 memset(login_username_buffer, 0, sizeof(login_username_buffer));
                 memset(login_password_buffer, 0, sizeof(login_password_buffer));
                 login_username_pos = 0;
                 login_password_pos = 0;
-            }
-            break;
+        }
+        break;
         
         case MSG_LOGIN:
             if (strcmp(message->data, "success") == 0) {
@@ -686,14 +678,14 @@ static void client_process_and_store_device_list(const message_t* message) {
     device_count = 0;
     
     // message->args 배열에서 장비 정보 파싱
-    int device_count_from_args = message->arg_count / 6;
+    int device_count_from_args = message->arg_count / DEVICE_INFO_ARG_COUNT;
     if (device_count_from_args > 0) {
         device_list = malloc(device_count_from_args * sizeof(device_t));
         if (!device_list) return;
         
         for (int i = 0; i < device_count_from_args; i++) {
-            int base_idx = i * 6;
-            if (base_idx + 5 >= message->arg_count) break;
+            int base_idx = i * DEVICE_INFO_ARG_COUNT;
+            if (base_idx + (DEVICE_INFO_ARG_COUNT - 1) >= message->arg_count) break;
             
             // args 배열에서 장비 정보 추출
             strncpy(device_list[i].id, message->args[base_idx], sizeof(device_list[i].id) - 1);

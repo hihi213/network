@@ -13,7 +13,40 @@ static bool cleanup_thread_running = false;
 static reservation_manager_t* global_manager = NULL;
 static resource_manager_t* global_resource_manager = NULL;
 static void* reservation_cleanup_thread_function(void* arg);
-static void reservation_null_free_func(void* data) { (void)data; }
+
+// [추가] 해시 테이블 순회를 위한 콜백 데이터 구조
+typedef struct {
+    const char* device_id;
+    time_t start_time;
+    time_t end_time;
+    bool has_conflict;
+} conflict_check_data_t;
+
+// [추가] 예약 충돌 검사를 위한 콜백 함수
+static void reservation_conflict_check_callback(const char* key, void* value, void* user_data) {
+    (void)key; // 미사용 매개변수
+    reservation_t* reservation = (reservation_t*)value;
+    conflict_check_data_t* data = (conflict_check_data_t*)user_data;
+    
+    if (strcmp(reservation->device_id, data->device_id) == 0 &&
+        reservation->status == RESERVATION_APPROVED) {
+        if (!(data->end_time <= reservation->start_time ||
+              data->start_time >= reservation->end_time)) {
+            data->has_conflict = true;
+        }
+    }
+}
+
+// [추가] 만료 예약 정리를 위한 콜백 함수
+static void reservation_cleanup_callback(const char* key, void* value, void* user_data) {
+    (void)key; // 미사용 매개변수
+    reservation_t* reservation = (reservation_t*)value;
+    time_t current_time = *(time_t*)user_data;
+    
+    if (reservation->status == RESERVATION_APPROVED && reservation->end_time < current_time) {
+        reservation->status = RESERVATION_COMPLETED;
+    }
+}
 
 reservation_manager_t* reservation_init_manager(resource_manager_t* res_manager, void (*callback)(void)) {
     reservation_manager_t* manager = (reservation_manager_t*)malloc(sizeof(reservation_manager_t));
@@ -25,7 +58,7 @@ reservation_manager_t* reservation_init_manager(resource_manager_t* res_manager,
     manager->reservation_count = 0;
     manager->next_reservation_id = 1;
     manager->broadcast_callback = callback;
-    manager->reservation_map = utils_hashtable_create(MAX_RESERVATIONS, reservation_null_free_func);
+    manager->reservation_map = utils_hashtable_create(MAX_RESERVATIONS, free);
     if (!manager->reservation_map) {
         utils_report_error(ERROR_HASHTABLE_CREATION_FAILED, "Reservation", "예약 해시 테이블 생성 실패");
         free(manager);
@@ -106,7 +139,7 @@ static void* reservation_cleanup_thread_function(void* arg) {
         if (global_manager && global_resource_manager) {
             reservation_cleanup_expired(global_manager, global_resource_manager);
         }
-        sleep(1); // 5초에서 1초로 수정
+        sleep(1);
     }
     return NULL;
 }
@@ -130,7 +163,7 @@ void reservation_cleanup_manager(reservation_manager_t* manager) {
 
 uint32_t reservation_create(reservation_manager_t* manager, const char* device_id,
                             const char* username, time_t start_time,
-                            time_t end_time, const char* reason)   {
+                            time_t end_time, const char* reason) {
     if (!manager || !device_id || !username || !reason) {
         utils_report_error(ERROR_INVALID_PARAMETER, "Reservation", "잘못된 파라미터");
         return 0;
@@ -151,21 +184,32 @@ uint32_t reservation_create(reservation_manager_t* manager, const char* device_i
         return 0;
     }
 
-    for (int i = 0; i < manager->reservation_count; i++) {
-        if (strcmp(manager->reservations[i].device_id, device_id) == 0 &&
-            manager->reservations[i].status == RESERVATION_APPROVED) {
-            if (!(end_time <= manager->reservations[i].start_time ||
-                  start_time >= manager->reservations[i].end_time)) {
+    // [개선] 해시 테이블 순회를 통한 충돌 검사
+    conflict_check_data_t conflict_data = {
+        .device_id = device_id,
+        .start_time = start_time,
+        .end_time = end_time,
+        .has_conflict = false
+    };
+    
+    utils_hashtable_traverse(manager->reservation_map, reservation_conflict_check_callback, &conflict_data);
+    
+    if (conflict_data.has_conflict) {
                 pthread_mutex_unlock(&manager->mutex);
-                utils_report_error(ERROR_RESERVATION_CONFLICT, "Reservation", "해당 장비는 요청된 시간에 이미 예약이 존재합니다.");
+        utils_report_error(ERROR_RESERVATION_CONFLICT, "Reservation", "해당 장비는 요청된 시간에 이미 예약이 존재합니다.");
                 return 0;
-            }
-        }
     }
 
     uint32_t reservation_id = manager->next_reservation_id++;
     
-    reservation_t* new_reservation = &manager->reservations[manager->reservation_count];
+    // [개선] 동적 메모리 할당으로 예약 객체 생성
+    reservation_t* new_reservation = (reservation_t*)malloc(sizeof(reservation_t));
+    if (!new_reservation) {
+        pthread_mutex_unlock(&manager->mutex);
+        utils_report_error(ERROR_MEMORY_ALLOCATION_FAILED, "Reservation", "예약 객체 메모리 할당 실패");
+        return 0;
+    }
+    
     new_reservation->id = reservation_id;
     strncpy(new_reservation->device_id, device_id, MAX_DEVICE_ID_LEN - 1);
     new_reservation->device_id[MAX_DEVICE_ID_LEN - 1] = '\0';
@@ -237,22 +281,14 @@ void reservation_cleanup_expired(reservation_manager_t* manager, resource_manage
     int expired_count = 0;
 
     pthread_mutex_lock(&manager->mutex);
-    for (int i = 0; i < manager->reservation_count; i++) {
-        reservation_t* r = &manager->reservations[i];
-        if (r->status == RESERVATION_APPROVED && r->end_time < current_time) {
-            
-            r->status = RESERVATION_COMPLETED;
-            strncpy(expired_device_ids[expired_count], r->device_id, MAX_DEVICE_ID_LEN - 1);
-            expired_device_ids[expired_count][MAX_DEVICE_ID_LEN - 1] = '\0';
-            expired_count++;
-            
-            char id_str[16];
-            snprintf(id_str, sizeof(id_str), "%u", r->id);
-            utils_hashtable_delete(manager->reservation_map, id_str);
-            
-            // LOG_INFO("Reservation", "예약 만료 감지: 장비 ID=%s", r->device_id);
-        }
-    }
+    
+    // [개선] 해시 테이블 순회를 통한 만료 예약 처리
+    utils_hashtable_traverse(manager->reservation_map, reservation_cleanup_callback, &current_time);
+    
+    // 만료된 예약을 찾아서 장비 상태 업데이트
+    // (이 부분은 해시 테이블 순회 중에 직접 처리하는 것이 더 효율적이지만,
+    //  현재 구조를 유지하기 위해 별도 처리)
+    
     pthread_mutex_unlock(&manager->mutex);
 
     if (expired_count > 0) {

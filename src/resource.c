@@ -204,6 +204,7 @@ typedef struct {
 } TraverseData;
 
 static void resource_copy_device_callback(const char* key, void* value, void* user_data) {
+    (void)key; // 미사용 매개변수 경고 해결
     TraverseData* data = (TraverseData*)user_data;
     if (data->current_count >= data->max_devices) return;
     device_t* source_device = (device_t*)value;  // 소스 장치 포인터
