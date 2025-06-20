@@ -130,9 +130,9 @@ int main(int argc, char* argv[]) {
         if (ret == 0) {
             Device devices[MAX_DEVICES];
             int count = resource_get_device_list(resource_manager, devices, MAX_DEVICES);
-            if (count >= 0)  update_server_devices(devices, count, resource_manager, reservation_manager);
-            update_server_status(session_manager->sessions->count, atoi(argv[1]));
-            refresh_all_windows();
+            if (count >= 0)  ui_update_server_devices(devices, count, resource_manager, reservation_manager);
+            ui_update_server_status(session_manager->sessions->count, atoi(argv[1]));
+            ui_refresh_all_windows();
             continue;
         }
         if (fds[1].revents & POLLIN) {
@@ -431,7 +431,7 @@ static int init_server(int port) {
     signal(SIGTERM, signal_handler);
     if (utils_init_logger("logs/server.log") < 0) return -1;
     if (network_init_ssl_manager(&ssl_manager, true, "certs/server.crt", "certs/server.key") < 0) return -1;
-    if (init_ui() < 0) return -1;
+    if (ui_init() < 0) return -1;
     
     resource_manager = resource_init_manager();
     reservation_manager = reservation_init_manager(resource_manager, broadcast_status_update);
@@ -470,7 +470,7 @@ static void cleanup_server(void) {
         resource_manager = NULL;
     }
     
-    cleanup_ui();
+    ui_cleanup();
     network_cleanup_ssl_manager(&ssl_manager);
     utils_cleanup_logger();
     

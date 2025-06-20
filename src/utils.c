@@ -126,7 +126,7 @@ void utils_report_error(ErrorCode error_code, const char* module, const char* ad
         if (global_ui_manager) {
             char ui_msg[600];
             snprintf(ui_msg, sizeof(ui_msg), "[%s] %s: %s", module, error_msg, formatted_message);
-            show_error_message(ui_msg);
+            ui_show_error_message(ui_msg);
         } else {
             fprintf(stderr, "[%s] %s: %s\n", module, error_msg, formatted_message);
         }
@@ -135,7 +135,7 @@ void utils_report_error(ErrorCode error_code, const char* module, const char* ad
         if (global_ui_manager) {
             char ui_msg[600];
             snprintf(ui_msg, sizeof(ui_msg), "[%s] %s", module, error_msg);
-            show_error_message(ui_msg);
+            ui_show_error_message(ui_msg);
         } else {
             fprintf(stderr, "[%s] %s\n", module, error_msg);
         }

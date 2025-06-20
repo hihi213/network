@@ -87,7 +87,7 @@ int main(int argc, char* argv[]) {
         return 1; 
     }
     signal(SIGINT, signal_handler); signal(SIGTERM, signal_handler);
-    if (init_ui() < 0 || network_init_ssl_manager(&ssl_manager, false, NULL, NULL) < 0) { cleanup_resources(); return 1; }
+    if (ui_init() < 0 || network_init_ssl_manager(&ssl_manager, false, NULL, NULL) < 0) { cleanup_resources(); return 1; }
     if (connect_to_server(argv[1], atoi(argv[2])) < 0) { cleanup_resources(); return 1; }
 
     while (running) {
@@ -118,7 +118,7 @@ int main(int argc, char* argv[]) {
                 message_destroy(msg);
                
             } else {
-               show_error_message("서버와의 연결이 끊어졌습니다. 종료합니다.");
+               ui_show_error_message("서버와의 연결이 끊어졌습니다. 종료합니다.");
                 sleep(2); // 메시지를 볼 수 있도록 잠시 대기
                 running = false;
             }
@@ -365,11 +365,11 @@ static void handle_input_login_input(int ch) {
                 // 비밀번호 필드에서 Enter -> 로그인 시도
                 if (login_username_pos > 0 && login_password_pos > 0) {
                     LOG_INFO("Client", "로그인 시도: 사용자='%s'", login_username_buffer);
-                    show_success_message("로그인 시도 중...");
+                    ui_show_success_message("로그인 시도 중...");
                     on_login_submitted(login_username_buffer, login_password_buffer);
                 } else {
                     LOG_WARNING("Client", "로그인 시도 실패: 아이디 또는 비밀번호가 비어있음");
-                    show_error_message("아이디와 비밀번호를 모두 입력하세요.");
+                    ui_show_error_message("아이디와 비밀번호를 모두 입력하세요.");
                 }
             }
             break;
@@ -428,7 +428,7 @@ static void handle_input_logged_in_menu(int ch) {
                 client_session.state = SESSION_DISCONNECTED;
                 current_state = APP_STATE_MAIN_MENU;
                 menu_highlight = 0;
-                show_success_message("로그아웃되었습니다.");
+                ui_show_success_message("로그아웃되었습니다.");
             }
             break;
         case 27: // Escape 키
@@ -462,15 +462,15 @@ static void handle_input_device_list(int ch) {
                     current_state = APP_STATE_RESERVATION_TIME;
                     reservation_input_pos = 0;
                     memset(reservation_input_buffer, 0, sizeof(reservation_input_buffer));
-                    show_success_message("예약 시간을 입력하세요 (초 단위)");
+                    ui_show_success_message("예약 시간을 입력하세요 (초 단위)");
                 } else if (dev->status == DEVICE_RESERVED) {
                     if (strcmp(dev->reserved_by, client_session.username) == 0) {
-                        show_success_message("이미 예약한 장비입니다.");
+                        ui_show_success_message("이미 예약한 장비입니다.");
                     } else {
-                        show_error_message("다른 사용자가 예약한 장비입니다.");
+                        ui_show_error_message("다른 사용자가 예약한 장비입니다.");
                     }
                 } else {
-                    show_error_message("점검 중인 장비입니다.");
+                    ui_show_error_message("점검 중인 장비입니다.");
                 }
             }
             break;
@@ -479,7 +479,7 @@ static void handle_input_device_list(int ch) {
             if (device_list && menu_highlight < device_count) {
                 Device* dev = &device_list[menu_highlight];
                 if (dev->status == DEVICE_RESERVED && strcmp(dev->reserved_by, client_session.username) == 0) {
-                    show_success_message("예약 취소 요청 중...");
+                    ui_show_success_message("예약 취소 요청 중...");
                     Message* msg = message_create(MSG_CANCEL_REQUEST, NULL);
                     if (msg) {
                         msg->args[0] = strdup(dev->id);
@@ -516,7 +516,7 @@ static void handle_input_reservation_time(int ch) {
                 message_destroy(msg);
             }
         } else {
-            show_error_message("유효하지 않은 시간입니다. (1~86400초)");
+            ui_show_error_message("유효하지 않은 시간입니다. (1~86400초)");
             memset(reservation_input_buffer, 0, sizeof(reservation_input_buffer));
             reservation_input_pos = 0;
         }
@@ -527,7 +527,7 @@ static void handle_server_message(const Message* message) {
     switch (message->type) {
         case MSG_ERROR:
         LOG_WARNING("Client", "서버로부터 에러 메시지 수신: %s", message->data);
-        show_error_message(message->data);
+        ui_show_error_message(message->data);
         // [수정] 로그인 시도 중에 발생한 에러라면, 다시 로그인 입력 화면으로 돌려보냄
         if (current_state == APP_STATE_LOGGED_IN_MENU || current_state == APP_STATE_DEVICE_LIST) {
             // 이 경우는 이미 로그인 된 사용자가 다른 오류를 받은 경우이므로,
@@ -549,10 +549,10 @@ static void handle_server_message(const Message* message) {
                 LOG_INFO("Client", "UI 상태 변경: 로그인 화면 -> 로그인된 메뉴 (APP_STATE_LOGIN -> APP_STATE_LOGGED_IN_MENU)");
                 current_state = APP_STATE_LOGGED_IN_MENU;
                 menu_highlight = 0;
-                show_success_message("로그인 성공!");
+                ui_show_success_message("로그인 성공!");
             } else {
                 LOG_WARNING("Client", "로그인 실패: %s", message->data);
-                show_error_message(message->data);
+                ui_show_error_message(message->data);
                 // 로그인 실패 시 로그인 화면 상태를 유지합니다.
                 LOG_INFO("Client", "로그인 실패로 인해 로그인 화면 상태 유지 (APP_STATE_LOGIN)");
                 current_state = APP_STATE_LOGIN;
@@ -570,19 +570,19 @@ static void handle_server_message(const Message* message) {
         case MSG_RESERVE_RESPONSE:
             if (strcmp(message->data, "success") == 0) {
                 LOG_INFO("Client", "예약 성공 응답 수신");
-                show_success_message("예약이 성공적으로 완료되었습니다.");
+                ui_show_success_message("예약이 성공적으로 완료되었습니다.");
             } else {
                 LOG_WARNING("Client", "예약 실패 응답 수신: %s", message->data);
-                show_error_message(message->data);
+                ui_show_error_message(message->data);
             }
             break;
         case MSG_CANCEL_RESPONSE:
             if (strcmp(message->data, "success") == 0) {
                 LOG_INFO("Client", "예약 취소 성공 응답 수신");
-                show_success_message("예약이 성공적으로 취소되었습니다.");
+                ui_show_success_message("예약이 성공적으로 취소되었습니다.");
             } else {
                 LOG_WARNING("Client", "예약 취소 실패 응답 수신: %s", message->data);
-                show_error_message(message->data);
+                ui_show_error_message(message->data);
             }
             break;
         default:
@@ -618,7 +618,7 @@ static void process_and_store_device_list(const Message* message) {
 
 static bool handle_login(const char* username, const char* password) {
     Message* msg = message_create_login(username, password);
-    if (!msg) { show_error_message("메시지 생성 실패"); return false; }
+    if (!msg) { ui_show_error_message("메시지 생성 실패"); return false; }
     if (network_send_message(client_session.ssl, msg) < 0) {
         running = false;
     }
@@ -633,14 +633,14 @@ static void on_login_submitted(const char* username, const char* password) {
     Message* login_msg = message_create_login(username, password);
     if (!login_msg) {
         LOG_WARNING("Client", "로그인 메시지 생성 실패");
-        show_error_message("로그인 메시지 생성 실패");
+        ui_show_error_message("로그인 메시지 생성 실패");
         return;
     }
     
     // 2) 서버에 전송
     if (network_send_message(client_session.ssl, login_msg) < 0) {
         LOG_WARNING("Client", "로그인 요청 전송 실패");
-        show_error_message("로그인 요청 전송 실패");
+        ui_show_error_message("로그인 요청 전송 실패");
         message_destroy(login_msg);
         return;
     }
@@ -659,7 +659,7 @@ static void cleanup_resources(void) {
     if (device_list) { free(device_list); device_list = NULL; }
     session_cleanup_client(&client_session);
     network_cleanup_ssl_manager(&ssl_manager);
-    cleanup_ui();
+    ui_cleanup();
     utils_cleanup_logger();
     close(self_pipe[0]);
     close(self_pipe[1]);
@@ -676,7 +676,7 @@ static int connect_to_server(const char* server_ip, int port) {
     client_session.socket_fd = fd;
     client_session.state = SESSION_CONNECTING;
 
-    show_success_message("서버에 연결되었습니다. 로그인 정보를 기다립니다...");
+    ui_show_success_message("서버에 연결되었습니다. 로그인 정보를 기다립니다...");
     // 연결 확인을 위한 ping 메시지 전송
     Message* msg = message_create(MSG_PING, NULL);
     if(msg) {

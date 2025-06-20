@@ -13,7 +13,7 @@
 UIManager* global_ui_manager = NULL;  // 전역 UI 매니저 포인터
 
 /* --- 내부(private) 함수 프로토타입 --- */
-static void set_error_message(UIManager* manager, const char* message);  // 에러 메시지 설정 함수
+static void ui_set_error_message(UIManager* manager, const char* message);  // 에러 메시지 설정 함수
 
 /* --- 공개(public) 함수 정의 --- */
 
@@ -21,9 +21,9 @@ static void set_error_message(UIManager* manager, const char* message);  // 에�
  * @brief UI 시스템을 초기화합니다.
  * @return 성공 시 0, 실패 시 -1
  */
-int init_ui(void) {
+int ui_init(void) {
     setlocale(LC_ALL, ""); // 로케일 설정 (한글 지원)
-    global_ui_manager = init_ui_manager();  // UI 매니저 초기화
+    global_ui_manager = ui_init_manager();  // UI 매니저 초기화
     if (!global_ui_manager) {  // UI 매니저 초기화 실패 시
         utils_report_error(ERROR_UI_INIT_FAILED, "UI", "UI 매니저 초기화 실패");  // 에러 메시지 출력
         return -1;  // 에러 코드 반환
@@ -35,9 +35,9 @@ int init_ui(void) {
 /**
  * @brief UI 시스템의 메모리를 정리합니다.
  */
-void cleanup_ui(void) {
+void ui_cleanup(void) {
     if (global_ui_manager) {  // 전역 UI 매니저가 존재하는 경우
-        cleanup_ui_manager(global_ui_manager);  // UI 매니저 정리
+        ui_cleanup_manager(global_ui_manager);  // UI 매니저 정리
         global_ui_manager = NULL;  // 포인터를 NULL로 설정
         LOG_INFO("UI", "UI 시스템 정리 완료");  // 정보 로그 출력
     }
@@ -47,20 +47,20 @@ void cleanup_ui(void) {
  * @brief 에러 메시지를 화면에 표시합니다.
  * @param message 표시할 에러 메시지
  */
-void show_error_message(const char* message) {
+void ui_show_error_message(const char* message) {
     if (!global_ui_manager || !message) return;  // 유효성 검사
-    set_error_message(global_ui_manager, message);  // 에러 메시지 설정
-    refresh_all_windows();  // 모든 윈도우 새로고침
+    ui_set_error_message(global_ui_manager, message);  // 에러 메시지 설정
+    ui_refresh_all_windows();  // 모든 윈도우 새로고침
 }
 
 /**
  * @brief 성공 메시지를 화면에 표시합니다.
  * @param message 표시할 성공 메시지
  */
-void show_success_message(const char* message) {
+void ui_show_success_message(const char* message) {
     if (!global_ui_manager || !message) return;  // 유효성 검사
-    set_status_message(global_ui_manager, message);  // 상태 메시지 설정
-    refresh_all_windows();  // 모든 윈도우 새로고침
+    ui_set_status_message(global_ui_manager, message);  // 상태 메시지 설정
+    ui_refresh_all_windows();  // 모든 윈도우 새로고침
 }
 
 /**
@@ -68,11 +68,11 @@ void show_success_message(const char* message) {
  * @param session_count 활성 세션 수
  * @param port 서버 포트 번호
  */
-void update_server_status(int session_count, int port) {
+void ui_update_server_status(int session_count, int port) {
     if (!global_ui_manager) return;  // UI 매니저가 NULL이면 함수 종료
     char status_msg[MAX_MESSAGE_LENGTH];  // 상태 메시지 버퍼
     snprintf(status_msg, sizeof(status_msg), "Server Running on Port: %d | Active Sessions: %d", port, session_count);  // 상태 메시지 생성
-    set_status_message(global_ui_manager, status_msg);  // 상태 메시지 설정
+    ui_set_status_message(global_ui_manager, status_msg);  // 상태 메시지 설정
 }
 
 /**
@@ -82,9 +82,9 @@ void update_server_status(int session_count, int port) {
  * @param resource_manager 리소스 매니저 (예약 정보 조회용)
  * @param reservation_manager 예약 매니저 (예약 정보 조회용)
  */
-void update_server_devices(const Device* devices, int count, ResourceManager* resource_manager, ReservationManager* reservation_manager){
+void ui_update_server_devices(const Device* devices, int count, ResourceManager* resource_manager, ReservationManager* reservation_manager){
     if (!global_ui_manager) {
-        utils_report_error(ERROR_UI_INIT_FAILED, "UI", "update_server_devices: UI 매니저가 초기화되지 않음");
+        utils_report_error(ERROR_UI_INIT_FAILED, "UI", "ui_update_server_devices: UI 매니저가 초기화되지 않음");
         return;
     }
 
@@ -155,7 +155,7 @@ void update_server_devices(const Device* devices, int count, ResourceManager* re
 /**
  * @brief 모든 윈도우를 새로고침합니다.
  */
-void refresh_all_windows(void) {
+void ui_refresh_all_windows(void) {
     if (!global_ui_manager) return;  // UI 매니저가 NULL이면 함수 종료
     pthread_mutex_lock(&global_ui_manager->mutex);  // UI 매니저 뮤텍스 잠금
     if (global_ui_manager->main_win) wnoutrefresh(global_ui_manager->main_win);  // 메인 윈도우 새로고침
@@ -169,7 +169,7 @@ void refresh_all_windows(void) {
  * @brief UI 매니저를 초기화합니다.
  * @return 성공 시 초기화된 UIManager 포인터, 실패 시 NULL
  */
-UIManager* init_ui_manager(void) {
+UIManager* ui_init_manager(void) {
     UIManager* manager = (UIManager*)malloc(sizeof(UIManager));
     if (!manager) {
         utils_report_error(ERROR_MEMORY_ALLOCATION_FAILED, "UI", "UI 매니저 메모리 할당 실패");
@@ -245,7 +245,7 @@ UIManager* init_ui_manager(void) {
  * @brief UI 매니저의 메모리를 정리합니다.
  * @param manager 정리할 UIManager 포인터
  */
-void cleanup_ui_manager(UIManager* manager) {
+void ui_cleanup_manager(UIManager* manager) {
     if (!manager) return;  // 매니저가 NULL이면 함수 종료
     pthread_mutex_lock(&manager->mutex);  // 뮤텍스 잠금
     if (manager->status_win) delwin(manager->status_win);  // 상태 윈도우 삭제
@@ -261,7 +261,7 @@ void cleanup_ui_manager(UIManager* manager) {
  * @param manager UI 매니저 포인터
  * @param message 표시할 상태 메시지
  */
-void set_status_message(UIManager* manager, const char* message) {
+void ui_set_status_message(UIManager* manager, const char* message) {
     if (!manager || !message) return;  // 유효성 검사
     werase(manager->status_win);  // 상태 윈도우 내용 지우기
     box(manager->status_win, 0, 0);  // 상태 윈도우 테두리 그리기
@@ -275,7 +275,7 @@ void set_status_message(UIManager* manager, const char* message) {
  * @param manager UI 매니저 포인터
  * @param message 표시할 에러 메시지
  */
-void set_error_message(UIManager* manager, const char* message) {
+void ui_set_error_message(UIManager* manager, const char* message) {
     if (!manager || !message) return;  // 유효성 검사
     werase(manager->status_win);  // 상태 윈도우 내용 지우기
     box(manager->status_win, 0, 0);  // 상태 윈도우 테두리 그리기

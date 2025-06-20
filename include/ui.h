@@ -59,19 +59,19 @@ typedef struct {
 extern UIManager* global_ui_manager;
 
 /* UI 초기화 및 정리 함수 */
-int init_ui(void);
-void cleanup_ui(void);
-void refresh_all_windows(void);
+int ui_init(void);
+void ui_cleanup(void);
+void ui_refresh_all_windows(void);
 
 /* 서버 UI 함수 */
-void update_server_status(int session_count, int port);
-void update_server_devices(const Device* devices, int count, ResourceManager* resource_manager, ReservationManager* reservation_manager);
+void ui_update_server_status(int session_count, int port);
+void ui_update_server_devices(const Device* devices, int count, ResourceManager* resource_manager, ReservationManager* reservation_manager);
 
-UIManager* init_ui_manager(void);
-void cleanup_ui_manager(UIManager* manager);
-void set_status_message(UIManager* manager, const char* message);
+UIManager* ui_init_manager(void);
+void ui_cleanup_manager(UIManager* manager);
+void ui_set_status_message(UIManager* manager, const char* message);
 
-void show_error_message(const char* message);
-void show_success_message(const char* message);
+void ui_show_error_message(const char* message);
+void ui_show_success_message(const char* message);
 
 #endif /* UI_H */
