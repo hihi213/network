@@ -5,10 +5,10 @@
  */
 
 #include "../include/resource.h"  // 리소스 관련 헤더 파일 포함
-#include "../include/message.h"   // get_device_status_string 함수 사용을 위해 포함
+#include "../include/message.h"   // message_get_device_status_string 함수 사용을 위해 포함
 
 // [개선] Device 구조체 자체를 해제하기 위한 래퍼 함수
-static void free_device_wrapper(void* device) {
+static void resource_free_device_wrapper(void* device) {
     free(device);  // 장치 포인터 메모리 해제
 }
 
@@ -16,7 +16,7 @@ static void free_device_wrapper(void* device) {
  * @brief 리소스 매니저를 초기화하고 기본 장비들을 추가합니다.
  * @return 성공 시 초기화된 ResourceManager 포인터, 실패 시 NULL
  */
-ResourceManager* init_resource_manager(void) {
+ResourceManager* resource_init_manager(void) {
     ResourceManager* manager = (ResourceManager*)malloc(sizeof(ResourceManager));  // 자원 관리자 메모리 할당
     if (!manager) {  // 메모리 할당 실패 시
         utils_report_error(ERROR_RESOURCE_INIT_FAILED, "Resource", "자원 관리자 메모리 할당 실패");  // 에러 로그 출력
@@ -24,7 +24,7 @@ ResourceManager* init_resource_manager(void) {
     }
 
     // [개선] 해시 테이블 초기화. 최대 장비 수(MAX_DEVICES)를 크기로 지정.
-    manager->devices = utils_hashtable_create(MAX_DEVICES, free_device_wrapper);  // 해시 테이블 생성
+    manager->devices = utils_hashtable_create(MAX_DEVICES, resource_free_device_wrapper);  // 해시 테이블 생성
     if (!manager->devices) {  // 해시 테이블 생성 실패 시
         utils_report_error(ERROR_RESOURCE_INIT_FAILED, "Resource", "장치 해시 테이블 생성 실패");  // 에러 로그 출력
         free(manager);  // 관리자 메모리 해제
@@ -39,11 +39,11 @@ ResourceManager* init_resource_manager(void) {
     }
 
     // 기본 장치 추가
-    add_device(manager, "DEV001", "Printer", "HP LaserJet Pro");  // 프린터 장치 추가
-    add_device(manager, "DEV002", "Scanner", "Epson Perfection V600");  // 스캐너 장치 추가
-    add_device(manager, "DEV003", "Projector", "BenQ MH535");  // 프로젝터 장치 추가
-    add_device(manager, "DEV004", "Camera", "Canon EOS R5");  // 카메라 장치 추가
-    add_device(manager, "DEV005", "Microphone", "Blue Yeti");  // 마이크 장치 추가
+    resource_add_device(manager, "DEV001", "Printer", "HP LaserJet Pro");  // 프린터 장치 추가
+    resource_add_device(manager, "DEV002", "Scanner", "Epson Perfection V600");  // 스캐너 장치 추가
+    resource_add_device(manager, "DEV003", "Projector", "BenQ MH535");  // 프로젝터 장치 추가
+    resource_add_device(manager, "DEV004", "Camera", "Canon EOS R5");  // 카메라 장치 추가
+    resource_add_device(manager, "DEV005", "Microphone", "Blue Yeti");  // 마이크 장치 추가
 
     // LOG_INFO("Resource", "리소스 매니저 초기화 성공");  // 정보 로그 출력
     return manager;  // 초기화된 매니저 반환
@@ -53,7 +53,7 @@ ResourceManager* init_resource_manager(void) {
  * @brief 리소스 매니저의 메모리를 정리합니다.
  * @param manager 정리할 ResourceManager 포인터
  */
-void cleanup_resource_manager(ResourceManager* manager) {
+void resource_cleanup_manager(ResourceManager* manager) {
     if (!manager) return;  // 매니저가 NULL이면 함수 종료
 
     // [개선] 해시 테이블의 모든 자원을 해제
@@ -72,9 +72,9 @@ void cleanup_resource_manager(ResourceManager* manager) {
  * @param name 장비 이름
  * @return 성공 시 true, 실패 시 false
  */
-bool add_device(ResourceManager* manager, const char* id, const char* type, const char* name) {
+bool resource_add_device(ResourceManager* manager, const char* id, const char* type, const char* name) {
     if (!manager || !id || !type || !name) {  // 유효성 검사
-        utils_report_error(ERROR_INVALID_PARAMETER, "Resource", "add_device: 잘못된 파라미터");
+        utils_report_error(ERROR_INVALID_PARAMETER, "Resource", "resource_add_device: 잘못된 파라미터");
         return false;  // 에러 코드 반환
     }
 
@@ -127,7 +127,7 @@ bool add_device(ResourceManager* manager, const char* id, const char* type, cons
  * @param id 제거할 장비의 ID
  * @return 성공 시 true, 실패 시 false
  */
-bool remove_device(ResourceManager* manager, const char* id) {
+bool resource_remove_device(ResourceManager* manager, const char* id) {
     if (!manager || !id) {  // 유효성 검사
         utils_report_error(ERROR_INVALID_PARAMETER, "Resource", "잘못된 파라미터");  // 에러 로그 출력
         return false;  // 에러 코드 반환
@@ -171,7 +171,7 @@ bool remove_device(ResourceManager* manager, const char* id) {
  * @param active_res_id 활성 예약 ID (예약 상태일 때만 사용)
  * @return 성공 시 true, 실패 시 false
  */
-bool update_device_status(ResourceManager* manager, const char* device_id, DeviceStatus new_status, uint32_t active_res_id) {
+bool resource_update_device_status(ResourceManager* manager, const char* device_id, DeviceStatus new_status, uint32_t active_res_id) {
     if (!manager || !device_id) return false;  // 유효성 검사
 
     pthread_mutex_lock(&manager->mutex);  // 뮤텍스 잠금
@@ -208,7 +208,7 @@ typedef struct {
 } TraverseData;
 
 // [개선] 해시 테이블의 각 장치를 배열로 복사하는 콜백 함수
-static void copy_device_callback(const char* key, void* value, void* user_data) {
+static void resource_copy_device_callback(const char* key, void* value, void* user_data) {
     (void)key;  // 키는 사용하지 않음
     TraverseData* data = (TraverseData*)user_data;  // 사용자 데이터 캐스팅
     if (data->current_count < data->max_devices) {  // 최대 개수 제한 확인
@@ -234,9 +234,9 @@ static void copy_device_callback(const char* key, void* value, void* user_data) 
  * @param max_devices 배열의 최대 크기
  * @return 조회된 장비 개수, 실패 시 -1
  */
-int get_device_list(ResourceManager* manager, Device* devices, int max_devices) {
+int resource_get_device_list(ResourceManager* manager, Device* devices, int max_devices) {
     if (!manager || !devices || max_devices <= 0) {
-        utils_report_error(ERROR_INVALID_PARAMETER, "Resource", "get_device_list: 잘못된 파라미터");
+        utils_report_error(ERROR_INVALID_PARAMETER, "Resource", "resource_get_device_list: 잘못된 파라미터");
         return -1;  // 유효성 검사
     }
     
@@ -246,7 +246,7 @@ int get_device_list(ResourceManager* manager, Device* devices, int max_devices) 
     
     // [개선] 해시 테이블을 순회하며 장치 목록을 채움
     TraverseData data = { .devices = devices, .max_devices = max_devices, .current_count = 0 };  // 순회 데이터 초기화
-    utils_hashtable_traverse(manager->devices, copy_device_callback, &data);  // 해시 테이블 순회
+    utils_hashtable_traverse(manager->devices, resource_copy_device_callback, &data);  // 해시 테이블 순회
     int count = data.current_count;  // 조회된 장치 개수
 
     // LOG_INFO("Resource", "해시 테이블 순회 완료: 조회된 장비수=%d", count);
@@ -262,7 +262,7 @@ int get_device_list(ResourceManager* manager, Device* devices, int max_devices) 
  * @param id 확인할 장비의 ID
  * @return 사용 가능하면 true, 아니면 false
  */
-bool is_device_available(ResourceManager* manager, const char* id) {
+bool resource_is_device_available(ResourceManager* manager, const char* id) {
     if (!manager || !id) return false;  // 유효성 검사
 
     pthread_mutex_lock(&manager->mutex);  // 뮤텍스 잠금

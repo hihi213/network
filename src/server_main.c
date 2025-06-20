@@ -129,7 +129,7 @@ int main(int argc, char* argv[]) {
         }
         if (ret == 0) {
             Device devices[MAX_DEVICES];
-            int count = get_device_list(resource_manager, devices, MAX_DEVICES);
+            int count = resource_get_device_list(resource_manager, devices, MAX_DEVICES);
             if (count >= 0)  update_server_devices(devices, count, resource_manager, reservation_manager);
             update_server_status(session_manager->sessions->count, atoi(argv[1]));
             refresh_all_windows();
@@ -169,7 +169,7 @@ int main(int argc, char* argv[]) {
 
 static void broadcast_status_update(void) {
     Device devices[MAX_DEVICES];
-    int count = get_device_list(resource_manager, devices, MAX_DEVICES);
+    int count = resource_get_device_list(resource_manager, devices, MAX_DEVICES);
     if (count < 0) return;
     Message* response = message_create(MSG_STATUS_UPDATE, NULL);
     if (response) {
@@ -247,7 +247,7 @@ static void* client_thread_func(void* arg) {
 }
 
 static int process_device_reservation(Client* client, const char* device_id, int duration_sec) {
-    if (!is_device_available(resource_manager, device_id)) {
+    if (!resource_is_device_available(resource_manager, device_id)) {
         char error_msg[256];
         Reservation* active_res = get_active_reservation_for_device(reservation_manager, resource_manager, device_id);
         if (active_res) {
@@ -263,7 +263,7 @@ static int process_device_reservation(Client* client, const char* device_id, int
     if (new_res_id == 0) {
         return send_error_response(client->ssl, "예약 생성에 실패했습니다 (시간 중복 등).");
     }
-    if (!update_device_status(resource_manager, device_id, DEVICE_RESERVED, new_res_id)) {
+    if (!resource_update_device_status(resource_manager, device_id, DEVICE_RESERVED, new_res_id)) {
         cancel_reservation(reservation_manager, new_res_id, "system");
         return send_error_response(client->ssl, "서버 내부 오류: 예약 상태 동기화 실패");
     }
@@ -346,7 +346,7 @@ static int handle_login_request(Client* client, const Message* message) {
 static int handle_status_request(Client* client, const Message* message) {
     (void)message; 
     Device devices[MAX_DEVICES];
-    int count = get_device_list(resource_manager, devices, MAX_DEVICES);
+    int count = resource_get_device_list(resource_manager, devices, MAX_DEVICES);
     if (count < 0) return send_error_response(client->ssl, "서버에서 장비 목록을 가져오는 데 실패했습니다.");
     Message* response = message_create_status_response(devices, count, resource_manager, reservation_manager);
     if (response) {
@@ -382,7 +382,7 @@ static int handle_cancel_request(Client* client, const Message* message) {
     // 예약 취소 로직 호출
     if (cancel_reservation(reservation_manager, res->id, client->username)) {
         // 장비 상태를 'available'로 변경
-        update_device_status(resource_manager, device_id, DEVICE_AVAILABLE, 0);
+        resource_update_device_status(resource_manager, device_id, DEVICE_AVAILABLE, 0);
         
         // 모든 클라이언트에 상태 변경 전파
         broadcast_status_update();
@@ -435,7 +435,7 @@ static int init_server(int port) {
     if (network_init_ssl_manager(&ssl_manager, true, "certs/server.crt", "certs/server.key") < 0) return -1;
     if (init_ui() < 0) return -1;
     
-    resource_manager = init_resource_manager();
+    resource_manager = resource_init_manager();
     reservation_manager = init_reservation_manager(resource_manager, broadcast_status_update);
     session_manager = init_session_manager();
     load_users_from_file("users.txt"); // 사용자 정보 로드 추가
@@ -468,7 +468,7 @@ static void cleanup_server(void) {
     }
     
     if (resource_manager) {
-        cleanup_resource_manager(resource_manager);
+        resource_cleanup_manager(resource_manager);
         resource_manager = NULL;
     }
     

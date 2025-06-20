@@ -31,13 +31,12 @@ typedef struct {
 } Device;
 
 /* 함수 선언 */
-ResourceManager* init_resource_manager(void);
-bool add_device(ResourceManager* manager, const char* id, const char* type, const char* name);
-bool remove_device(ResourceManager* manager, const char* id);
-bool update_device_status(ResourceManager* manager, const char* device_id, DeviceStatus new_status, uint32_t active_res_id);
-Device* get_device(ResourceManager* manager, const char* id);
-int get_device_list(ResourceManager* manager, Device* devices, int max_devices);
-bool is_device_available(ResourceManager* manager, const char* id);
-void cleanup_resource_manager(ResourceManager* manager);
+ResourceManager* resource_init_manager(void);
+bool resource_add_device(ResourceManager* manager, const char* id, const char* type, const char* name);
+bool resource_remove_device(ResourceManager* manager, const char* id);
+bool resource_update_device_status(ResourceManager* manager, const char* device_id, DeviceStatus new_status, uint32_t active_res_id);
+int resource_get_device_list(ResourceManager* manager, Device* devices, int max_devices);
+bool resource_is_device_available(ResourceManager* manager, const char* id);
+void resource_cleanup_manager(ResourceManager* manager);
 
 #endif /* RESOURCE_H */ 

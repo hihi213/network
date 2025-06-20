@@ -257,7 +257,7 @@ void cleanup_expired_reservations(ReservationManager* manager, ResourceManager* 
 
     if (expired_count > 0) {
         for (int i = 0; i < expired_count; i++) {
-            update_device_status(res_manager, expired_device_ids[i], DEVICE_AVAILABLE, 0);
+            resource_update_device_status(res_manager, expired_device_ids[i], DEVICE_AVAILABLE, 0);
         }
         if (manager->broadcast_callback) {
             manager->broadcast_callback();
