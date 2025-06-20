@@ -25,6 +25,7 @@ message_t* message_create(message_type_t type, const char *data) {
     }
     msg->type = type;
     msg->arg_count = 0;
+    msg->error_code = ERROR_NONE; // 기본값 설정
     memset(msg->args, 0, sizeof(msg->args));
     if (data) {
         strncpy(msg->data, data, MAX_MESSAGE_LENGTH - 1);
@@ -86,6 +87,14 @@ message_t* message_create_reservation(const char *device_id, const char* duratio
 
 message_t* message_create_error(const char* error_message) {
     return message_create(MSG_ERROR, error_message);
+}
+
+message_t* message_create_error_with_code(error_code_t error_code, const char* error_message) {
+    message_t* msg = message_create(MSG_ERROR, error_message);
+    if (msg) {
+        msg->error_code = error_code;
+    }
+    return msg;
 }
 
 message_t* message_create_cancel(const char* device_id) {
@@ -163,6 +172,13 @@ static bool message_read_data(SSL* ssl, message_t* msg) {
     return true;
 }
 
+static bool message_read_error_code(SSL* ssl, message_t* msg) {
+    uint32_t error_code_net;
+    if (network_recv(ssl, &error_code_net, sizeof(error_code_net)) != sizeof(error_code_net)) return false;
+    msg->error_code = ntohl(error_code_net);
+    return true;
+}
+
 message_t* message_receive(SSL* ssl) {
     uint32_t type_net, arg_count_net;
     if (network_recv(ssl, &type_net, sizeof(type_net)) != sizeof(type_net)) return NULL;
@@ -171,6 +187,15 @@ message_t* message_receive(SSL* ssl) {
     uint32_t arg_count = ntohl(arg_count_net);
     message_t* message = message_create(type, NULL);
     if (!message) return NULL;
+    
+    // 에러 코드 읽기 (MSG_ERROR 타입인 경우)
+    if (type == MSG_ERROR) {
+        if (!message_read_error_code(ssl, message)) {
+            message_destroy(message);
+            return NULL;
+        }
+    }
+    
     if (!message_read_arguments(ssl, message, arg_count)) {
         message_destroy(message);
         return NULL;
@@ -189,4 +214,58 @@ const char *message_get_device_status_string(device_status_t status) {
         case DEVICE_MAINTENANCE: return "maintenance";
         default: return "unknown";
     }
+}
+
+const char* message_get_error_string(error_code_t error_code) {
+    switch (error_code) {
+        case ERROR_NONE: return "성공";
+        case ERROR_SESSION_AUTHENTICATION_FAILED: return "아이디 또는 비밀번호가 틀립니다";
+        case ERROR_SESSION_ALREADY_EXISTS: return "이미 로그인된 사용자입니다";
+        case ERROR_RESOURCE_IN_USE: return "장비를 사용할 수 없습니다";
+        case ERROR_RESOURCE_MAINTENANCE_MODE: return "점검 중인 장비입니다";
+        case ERROR_RESERVATION_ALREADY_EXISTS: return "이미 예약된 장비입니다";
+        case ERROR_RESERVATION_NOT_FOUND: return "예약을 찾을 수 없습니다";
+        case ERROR_RESERVATION_PERMISSION_DENIED: return "본인의 예약이 아닙니다";
+        case ERROR_RESERVATION_INVALID_TIME: return "유효하지 않은 예약 시간입니다";
+        case ERROR_UNKNOWN: return "서버 내부 오류가 발생했습니다";
+        case ERROR_NETWORK_CONNECT_FAILED: return "네트워크 연결 오류가 발생했습니다";
+        case ERROR_INVALID_PARAMETER: return "잘못된 요청입니다";
+        case ERROR_SESSION_INVALID_STATE: return "세션이 만료되었습니다";
+        case ERROR_PERMISSION_DENIED: return "권한이 없습니다";
+        default: return "알 수 없는 오류가 발생했습니다";
+    }
+}
+
+error_code_t message_get_error_code_from_string(const char* error_str) {
+    if (!error_str) return ERROR_UNKNOWN;
+    
+    if (strstr(error_str, "아이디") || strstr(error_str, "비밀번호")) {
+        return ERROR_SESSION_AUTHENTICATION_FAILED;
+    } else if (strstr(error_str, "이미 로그인")) {
+        return ERROR_SESSION_ALREADY_EXISTS;
+    } else if (strstr(error_str, "사용 불가") || strstr(error_str, "사용할 수 없")) {
+        return ERROR_RESOURCE_IN_USE;
+    } else if (strstr(error_str, "점검")) {
+        return ERROR_RESOURCE_MAINTENANCE_MODE;
+    } else if (strstr(error_str, "이미 예약") || strstr(error_str, "사용 중")) {
+        return ERROR_RESERVATION_ALREADY_EXISTS;
+    } else if (strstr(error_str, "예약을 찾을 수 없")) {
+        return ERROR_RESERVATION_NOT_FOUND;
+    } else if (strstr(error_str, "본인의 예약") || strstr(error_str, "권한이 없")) {
+        return ERROR_RESERVATION_PERMISSION_DENIED;
+    } else if (strstr(error_str, "유효하지 않은") || strstr(error_str, "시간")) {
+        return ERROR_RESERVATION_INVALID_TIME;
+    } else if (strstr(error_str, "서버 내부") || strstr(error_str, "내부 오류")) {
+        return ERROR_UNKNOWN;
+    } else if (strstr(error_str, "네트워크") || strstr(error_str, "연결")) {
+        return ERROR_NETWORK_CONNECT_FAILED;
+    } else if (strstr(error_str, "잘못된 요청")) {
+        return ERROR_INVALID_PARAMETER;
+    } else if (strstr(error_str, "세션")) {
+        return ERROR_SESSION_INVALID_STATE;
+    } else if (strstr(error_str, "권한")) {
+        return ERROR_PERMISSION_DENIED;
+    }
+    
+    return ERROR_UNKNOWN; // 기본값
 }

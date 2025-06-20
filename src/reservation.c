@@ -67,22 +67,17 @@ reservation_manager_t* reservation_init_manager(resource_manager_t* res_manager,
         return NULL;
     }
 
-    manager->reservation_count = 0;
-    manager->next_reservation_id = 1;
-    manager->broadcast_callback = callback;
-    manager->reservation_map = utils_hashtable_create(MAX_RESERVATIONS, free);
-    if (!manager->reservation_map) {
-        utils_report_error(ERROR_HASHTABLE_CREATION_FAILED, "Reservation", "예약 해시 테이블 생성 실패");
+    // [개선] 공통 초기화 헬퍼 함수 사용
+    if (!utils_init_manager_base(manager, sizeof(reservation_manager_t), &manager->reservation_map, MAX_RESERVATIONS, free, &manager->mutex)) {
+        utils_report_error(ERROR_HASHTABLE_CREATION_FAILED, "Reservation", "매니저 공통 초기화 실패");
         free(manager);
         return NULL;
     }
 
-    if (pthread_mutex_init(&manager->mutex, NULL) != 0) {
-        utils_report_error(ERROR_INVALID_STATE, "Reservation", "뮤텍스 초기화 실패");
-        utils_hashtable_destroy(manager->reservation_map);
-        free(manager);
-        return NULL;
-    }
+    // 예약 매니저 특화 초기화
+    manager->reservation_count = 0;
+    manager->next_reservation_id = 1;
+    manager->broadcast_callback = callback;
 
     global_manager = manager;
     global_resource_manager = res_manager;

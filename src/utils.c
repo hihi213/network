@@ -546,3 +546,27 @@ void utils_hashtable_traverse(hash_table_t* table, void (*callback)(const char* 
 
     // LOG_INFO("HashTable", "해시 테이블 순회 완료");
 }
+
+bool utils_init_manager_base(void* manager, size_t manager_size, hash_table_t** table, uint32_t table_size, void (*free_func)(void*), pthread_mutex_t* mutex_ptr) {
+    if (!manager || !table || !free_func || !mutex_ptr) {
+        return false;
+    }
+    
+    // 매니저 구조체를 0으로 초기화
+    memset(manager, 0, manager_size);
+    
+    // 해시 테이블 생성
+    *table = utils_hashtable_create(table_size, free_func);
+    if (!*table) {
+        return false;
+    }
+    
+    // 뮤텍스 초기화
+    if (pthread_mutex_init(mutex_ptr, NULL) != 0) {
+        utils_hashtable_destroy(*table);
+        *table = NULL;
+        return false;
+    }
+    
+    return true;
+}

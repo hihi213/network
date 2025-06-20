@@ -24,18 +24,9 @@ session_manager_t* session_init_manager(void) {
         return NULL;  // NULL 반환
     }
 
-    // [개선] 해시 테이블 초기화. 최대 세션 수(MAX_SESSIONS)를 크기로 지정.
-    manager->sessions = utils_hashtable_create(MAX_SESSIONS, session_free_wrapper);  // 해시 테이블 생성
-    if (!manager->sessions) {  // 해시 테이블 생성 실패 시
-        utils_report_error(ERROR_HASHTABLE_CREATION_FAILED, "Session", "세션 해시 테이블 생성 실패");  // 에러 로그 출력
-        free(manager);  // 매니저 메모리 해제
-        return NULL;  // NULL 반환
-    }
-    
-    // 뮤텍스 초기화
-    if (pthread_mutex_init(&manager->mutex, NULL) != 0) {  // 뮤텍스 초기화 실패 시
-        utils_report_error(ERROR_INVALID_STATE, "Session", "뮤텍스 초기화 실패");  // 에러 로그 출력
-        utils_hashtable_destroy(manager->sessions);  // 해시 테이블 정리
+    // [개선] 공통 초기화 헬퍼 함수 사용
+    if (!utils_init_manager_base(manager, sizeof(session_manager_t), &manager->sessions, MAX_SESSIONS, session_free_wrapper, &manager->mutex)) {
+        utils_report_error(ERROR_HASHTABLE_CREATION_FAILED, "Session", "매니저 공통 초기화 실패");  // 에러 로그 출력
         free(manager);  // 매니저 메모리 해제
         return NULL;  // NULL 반환
     }

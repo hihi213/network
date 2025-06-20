@@ -209,20 +209,32 @@ bool utils_hashtable_insert(hash_table_t* table, const char* key, void* value);
 void* utils_hashtable_get(hash_table_t* table, const char* key);
 
 /**
- * @brief 키를 사용하여 해시 테이블에서 항목을 삭제합니다.
+ * @brief 해시 테이블에서 키-값 쌍을 삭제합니다.
  * @param table 해시 테이블.
  * @param key 삭제할 키.
- * @return 성공 시 true, 키가 없을 경우 false.
+ * @return 성공 시 true, 실패 시 false.
  */
 bool utils_hashtable_delete(hash_table_t* table, const char* key);
 
 /**
- * @brief 해시 테이블을 순회하며 각 항목에 대해 콜백 함수를 실행합니다.
+ * @brief 해시 테이블의 모든 항목을 순회하며 콜백 함수를 호출합니다.
  * @param table 해시 테이블.
- * @param callback 각 키-값 쌍에 대해 실행할 함수.
+ * @param callback 각 항목에 대해 호출할 콜백 함수.
  * @param user_data 콜백 함수에 전달할 사용자 데이터.
  */
 void utils_hashtable_traverse(hash_table_t* table, void (*callback)(const char* key, void* value, void* user_data), void* user_data);
+
+/**
+ * @brief 매니저 구조체의 공통 초기화를 수행합니다.
+ * @param manager 매니저 구조체 포인터
+ * @param manager_size 매니저 구조체 크기
+ * @param table 해시 테이블 포인터의 포인터
+ * @param table_size 해시 테이블 크기
+ * @param free_func 해시 테이블 값 해제 함수
+ * @param mutex_ptr 뮤텍스 포인터 (매니저 구조체 내의 뮤텍스 필드)
+ * @return 성공 시 true, 실패 시 false
+ */
+bool utils_init_manager_base(void* manager, size_t manager_size, hash_table_t** table, uint32_t table_size, void (*free_func)(void*), pthread_mutex_t* mutex_ptr);
 
 /**
  * 네트워크 함수 오류 처리/로깅/자원정리 일관화 매크로

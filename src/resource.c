@@ -23,17 +23,9 @@ resource_manager_t* resource_init_manager(void) {
         return NULL;  // NULL 반환
     }
 
-    // [개선] 해시 테이블 초기화. 최대 장비 수(MAX_DEVICES)를 크기로 지정.
-    manager->devices = utils_hashtable_create(MAX_DEVICES, resource_free_device_wrapper);  // 해시 테이블 생성
-    if (!manager->devices) {  // 해시 테이블 생성 실패 시
-        utils_report_error(ERROR_RESOURCE_INIT_FAILED, "Resource", "장치 해시 테이블 생성 실패");  // 에러 로그 출력
-        free(manager);  // 관리자 메모리 해제
-        return NULL;  // NULL 반환
-    }
-    
-    if (pthread_mutex_init(&manager->mutex, NULL) != 0) {  // 뮤텍스 초기화 실패 시
-        utils_report_error(ERROR_RESOURCE_INIT_FAILED, "Resource", "뮤텍스 초기화 실패");  // 에러 로그 출력
-        utils_hashtable_destroy(manager->devices);  // 해시 테이블 정리
+    // [개선] 공통 초기화 헬퍼 함수 사용
+    if (!utils_init_manager_base(manager, sizeof(resource_manager_t), &manager->devices, MAX_DEVICES, resource_free_device_wrapper, &manager->mutex)) {
+        utils_report_error(ERROR_RESOURCE_INIT_FAILED, "Resource", "매니저 공통 초기화 실패");  // 에러 로그 출력
         free(manager);  // 관리자 메모리 해제
         return NULL;  // NULL 반환
     }

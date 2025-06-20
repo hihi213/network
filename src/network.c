@@ -39,6 +39,11 @@
 //     return true;
 // }
 
+static int network_send_error_code(SSL* ssl, error_code_t error_code) {
+    uint32_t net_error_code = htonl(error_code);
+    return network_send(ssl, &net_error_code, sizeof(net_error_code)) == sizeof(net_error_code) ? 0 : -1;
+}
+
 // [핵심 수정] 길이가 0인 문자열도 올바르게 처리하도록 수정
 int network_send_message(SSL* ssl, const message_t* message) {
     if (!ssl || !message) {
@@ -53,7 +58,12 @@ int network_send_message(SSL* ssl, const message_t* message) {
     uint32_t net_arg_count = htonl(message->arg_count);
     if (network_send(ssl, &net_arg_count, sizeof(net_arg_count)) != sizeof(net_arg_count)) return -1;
 
-    // 2. 각 인자 전송 (길이 + 내용)
+    // 2. 에러 코드 전송 (MSG_ERROR 타입인 경우)
+    if (message->type == MSG_ERROR) {
+        if (network_send_error_code(ssl, message->error_code) != 0) return -1;
+    }
+
+    // 3. 각 인자 전송 (길이 + 내용)
     for (int i = 0; i < message->arg_count; i++) {
         size_t arg_len = strlen(message->args[i]);
         uint32_t net_arg_len = htonl(arg_len);
@@ -64,7 +74,7 @@ int network_send_message(SSL* ssl, const message_t* message) {
         }
     }
 
-    // 3. 데이터 필드 전송 (길이 + 내용)
+    // 4. 데이터 필드 전송 (길이 + 내용)
     size_t data_len = strlen(message->data);
     uint32_t net_data_len = htonl(data_len);
     if (network_send(ssl, &net_data_len, sizeof(net_data_len)) != sizeof(net_data_len)) return -1;

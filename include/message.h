@@ -34,6 +34,7 @@ typedef struct message {
     char* args[MAX_ARGS];
     int arg_count;
     int priority;
+    error_code_t error_code; // utils.h의 error_code_t 사용
 } message_t;
 
 /* 메시지 버퍼 구조체 */
@@ -52,10 +53,15 @@ const char* message_get_device_status_string(device_status_t status);
 /* 메시지 생성 헬퍼 함수 */
 message_t* message_create_status_response(const device_t* devices, int device_count, resource_manager_t* resource_manager, reservation_manager_t* reservation_manager);
 message_t* message_create_error(const char* error_msg);
+message_t* message_create_error_with_code(error_code_t error_code, const char* error_msg);
 message_t* message_create_reservation(const char* device_id, const char* duration_str);
 message_t* message_receive(SSL* ssl);
 message_t* message_create_login(const char* username, const char* password);
 message_t* message_create_cancel(const char* device_id);
 bool message_fill_status_response_args(message_t* msg, const device_t* devices, int count, resource_manager_t* rm, reservation_manager_t* rvm);
 void message_destroy(message_t* msg);
+
+/* 에러 코드 관련 함수 */
+const char* message_get_error_string(error_code_t error_code);
+error_code_t message_get_error_code_from_string(const char* error_str);
 #endif /* MESSAGE_H */

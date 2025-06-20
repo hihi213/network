@@ -72,13 +72,29 @@ void ui_cleanup(void) {
 }
 
 /**
+ * @brief 메시지를 화면에 표시합니다.
+ * @param prefix 메시지 앞에 붙일 접두사
+ * @param message 표시할 메시지
+ * @param color_pair 메시지의 색상 쌍
+ */
+void ui_show_message(const char* prefix, const char* message, int color_pair) {
+    if (!g_ui_manager || !message) return;
+    pthread_mutex_lock(&g_ui_manager->mutex);
+    werase(g_ui_manager->status_win);
+    box(g_ui_manager->status_win, 0, 0);
+    wattron(g_ui_manager->status_win, COLOR_PAIR(color_pair));
+    mvwprintw(g_ui_manager->status_win, 1, 2, "%s: %s", prefix, message);
+    wattroff(g_ui_manager->status_win, COLOR_PAIR(color_pair));
+    wrefresh(g_ui_manager->status_win);
+    pthread_mutex_unlock(&g_ui_manager->mutex);
+}
+
+/**
  * @brief 에러 메시지를 화면에 표시합니다.
  * @param message 표시할 에러 메시지
  */
 void ui_show_error_message(const char* message) {
-    if (!g_ui_manager || !message) return;  // 유효성 검사
-    ui_set_error_message(g_ui_manager, message);  // 에러 메시지 설정
-    ui_refresh_all_windows();  // 모든 윈도우 새로고침
+    ui_show_message("ERROR", message, 3);
 }
 
 /**
@@ -86,9 +102,7 @@ void ui_show_error_message(const char* message) {
  * @param message 표시할 성공 메시지
  */
 void ui_show_success_message(const char* message) {
-    if (!g_ui_manager || !message) return;  // 유효성 검사
-    ui_set_status_message(g_ui_manager, message);  // 상태 메시지 설정
-    ui_refresh_all_windows();  // 모든 윈도우 새로고침
+    ui_show_message("SUCCESS", message, 4);
 }
 
 /**
@@ -201,8 +215,8 @@ void ui_cleanup_manager(ui_manager_t* manager) {
  * @param message 표시할 상태 메시지
  */
 void ui_set_status_message(ui_manager_t* manager, const char* message) {
-    if (!manager || !message) return;  // 유효성 검사
-    ui_display_message_on_window(manager->status_win, 4, "STATUS", message);
+    (void)manager;
+    ui_show_message("STATUS", message, 4);
 }
 
 /**
@@ -211,8 +225,8 @@ void ui_set_status_message(ui_manager_t* manager, const char* message) {
  * @param message 표시할 에러 메시지
  */
 void ui_set_error_message(ui_manager_t* manager, const char* message) {
-    if (!manager || !message) return;  // 유효성 검사
-    ui_display_message_on_window(manager->status_win, 3, "ERROR", message);
+    (void)manager;
+    ui_show_message("ERROR", message, 3);
 }
 
 void ui_handle_resize(void) {
@@ -240,15 +254,11 @@ void ui_handle_resize(void) {
 }
 
 void ui_show_status(const char* msg) {
-    if (!g_ui_manager || !msg) return;
-    ui_display_message_on_window(g_ui_manager->status_win, 4, "STATUS", msg);
-    wrefresh(g_ui_manager->status_win);
+    ui_show_message("STATUS", msg, 4);
 }
 
 void ui_show_error(const char* msg) {
-    if (!g_ui_manager || !msg) return;
-    ui_display_message_on_window(g_ui_manager->status_win, 3, "ERROR", msg);
-    wrefresh(g_ui_manager->status_win);
+    ui_show_message("ERROR", msg, 3);
 }
 
 // 내부 헬퍼 함수: 메시지를 윈도우에 표시

@@ -519,6 +519,8 @@ static void client_handle_input_device_list(int ch) {
                         }
                         message_destroy(msg);
                     }
+                } else if (dev->status == DEVICE_RESERVED) {
+                    ui_show_error_message("다른 사용자가 예약한 장비입니다.");
                 }
             }
             break;
@@ -581,22 +583,72 @@ static void client_handle_server_message(const message_t* message) {
     
     switch (message->type) {
         case MSG_ERROR:
-        LOG_WARNING("Client", "서버로부터 에러 메시지 수신: %s", message->data);
-            if (strcmp(message->data, "이미 로그인된 사용자입니다.") == 0) {
-                LOG_INFO("Client", "이미 로그인된 사용자로 로그인 시도: UI 에러 메시지 표시 및 입력 필드 초기화");
+        {
+            LOG_WARNING("Client", "서버로부터 에러 메시지 수신: %s (코드: %d)", message->data, message->error_code);
+            
+            // 에러 코드에 따른 처리
+            switch (message->error_code) {
+                case ERROR_SESSION_AUTHENTICATION_FAILED:
+                    ui_show_error_message("아이디 또는 비밀번호가 틀립니다.");
+                    break;
+                case ERROR_SESSION_ALREADY_EXISTS:
+                    ui_show_error_message("이미 로그인된 사용자입니다.");
+                    // 로그인 화면으로 복귀
+                    current_state = APP_STATE_LOGIN;
+                    menu_highlight = 0;
+                    active_login_field = LOGIN_FIELD_USERNAME;
+                    memset(login_username_buffer, 0, sizeof(login_username_buffer));
+                    memset(login_password_buffer, 0, sizeof(login_password_buffer));
+                    login_username_pos = 0;
+                    login_password_pos = 0;
+                    break;
+                case ERROR_RESOURCE_IN_USE:
+                    ui_show_error_message("장비를 사용할 수 없습니다.");
+                    break;
+                case ERROR_RESOURCE_MAINTENANCE_MODE:
+                    ui_show_error_message("점검 중인 장비입니다.");
+                    break;
+                case ERROR_RESERVATION_ALREADY_EXISTS:
+                    ui_show_error_message(message->data); // 서버에서 보낸 상세 메시지 사용
+                    break;
+                case ERROR_RESERVATION_NOT_FOUND:
+                    ui_show_error_message("예약을 찾을 수 없습니다.");
+                    break;
+                case ERROR_RESERVATION_PERMISSION_DENIED:
+                    ui_show_error_message("본인의 예약이 아니므로 취소할 수 없습니다.");
+                    break;
+                case ERROR_RESERVATION_INVALID_TIME:
+                    ui_show_error_message("유효하지 않은 예약 시간입니다.");
+                    break;
+                case ERROR_UNKNOWN:
+                    ui_show_error_message("서버 내부 오류가 발생했습니다.");
+                    break;
+                case ERROR_NETWORK_CONNECT_FAILED:
+                    ui_show_error_message("네트워크 연결 오류가 발생했습니다.");
+                    break;
+                case ERROR_INVALID_PARAMETER:
+                    ui_show_error_message("잘못된 요청입니다.");
+                    break;
+                case ERROR_SESSION_INVALID_STATE:
+                    ui_show_error_message("세션이 만료되었습니다. 다시 로그인해주세요.");
+                    current_state = APP_STATE_LOGIN;
+                    menu_highlight = 0;
+                    active_login_field = LOGIN_FIELD_USERNAME;
+                    memset(login_username_buffer, 0, sizeof(login_username_buffer));
+                    memset(login_password_buffer, 0, sizeof(login_password_buffer));
+                    login_username_pos = 0;
+                    login_password_pos = 0;
+                    break;
+                case ERROR_PERMISSION_DENIED:
+                    ui_show_error_message("권한이 없습니다.");
+                    break;
+                default:
+                    ui_show_error_message(message->data); // 기본적으로 서버 메시지 사용
+                    break;
             }
-            ui_show_error_message(message->data);
+            
             ui_refresh_all_windows(); // 강제 갱신
             napms(1200); // 1.2초간 메시지 노출
-            // 로그인 관련 에러라면 항상 로그인 화면 상태/입력 초기화
-            if (current_state == APP_STATE_LOGGED_IN_MENU || current_state == APP_STATE_DEVICE_LIST || current_state == APP_STATE_LOGIN) {
-            current_state = APP_STATE_LOGIN;
-                menu_highlight = 0;
-                active_login_field = LOGIN_FIELD_USERNAME;
-                memset(login_username_buffer, 0, sizeof(login_username_buffer));
-                memset(login_password_buffer, 0, sizeof(login_password_buffer));
-                login_username_pos = 0;
-                login_password_pos = 0;
         }
         break;
         
