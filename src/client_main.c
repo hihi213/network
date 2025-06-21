@@ -252,8 +252,8 @@ static void client_draw_device_list() {
     }
 
     // 공통 장비 목록 테이블 그리기 함수 사용
-    ui_draw_device_table(g_ui_manager->menu_win, device_list, device_count, menu_highlight, false, 
-                        NULL, NULL, current_time);
+    ui_draw_device_table(g_ui_manager->menu_win, device_list, device_count, menu_highlight, true, 
+                        NULL, NULL, current_time, true);
 
     if (device_count > 0 && menu_highlight < device_count) {
         char help_message[128] = {0};

@@ -181,20 +181,21 @@ void print_fixed_width(WINDOW* win, int y, int x, const char* str, int width) {
  * @param reservation_manager 예약 매니저 (서버용, 클라이언트는 NULL)
  * @param resource_manager 리소스 매니저 (서버용, 클라이언트는 NULL)
  * @param current_time 현재 시간 (클라이언트용)
+ * @param use_color 색상 적용 여부
  */
 void ui_draw_device_table(WINDOW* win, device_t* devices, int count, int highlight_row, 
                          bool show_remaining_time, void* reservation_manager, void* resource_manager, 
-                         time_t current_time) {
+                         time_t current_time, bool use_color) {
     if (!win || !devices) return;
     
     int win_height, win_width;
     getmaxyx(win, win_height, win_width);
     
-    // 컬럼 위치/폭 설정
-    int col_w[6] = {10, 27, 15, 14, 8, 8};
-    int col_x[6];
+    // 컬럼 위치/폭 설정 (5개 컬럼으로 변경)
+    int col_w[5] = {10, 27, 15, 14, 20}; // 예약자 컬럼 폭을 늘림
+    int col_x[5];
     col_x[0] = 2;
-    for (int i = 1; i < 6; ++i) {
+    for (int i = 1; i < 5; ++i) {
         col_x[i] = col_x[i-1] + col_w[i-1] + 1;
     }
     
@@ -204,14 +205,11 @@ void ui_draw_device_table(WINDOW* win, device_t* devices, int count, int highlig
     print_fixed_width(win, 1, col_x[1], "이름", col_w[1]);
     print_fixed_width(win, 1, col_x[2], "타입", col_w[2]);
     print_fixed_width(win, 1, col_x[3], "상태", col_w[3]);
-    print_fixed_width(win, 1, col_x[4], "예약자", col_w[4]);
-    if (show_remaining_time) {
-        print_fixed_width(win, 1, col_x[5], "남은시간", col_w[5]);
-    }
+    print_fixed_width(win, 1, col_x[4], "예약정보", col_w[4]);
     wattroff(win, A_BOLD);
     
     // 구분선
-    for (int i = 0; i < 6; ++i) {
+    for (int i = 0; i < 5; ++i) {
         mvwaddch(win, 1, col_x[i] - 2, '|');
     }
     
@@ -219,8 +217,7 @@ void ui_draw_device_table(WINDOW* win, device_t* devices, int count, int highlig
     int max_rows = win_height - 4;
     for (int i = 0; i < count && i < max_rows; i++) {
         const device_t* device = &devices[i];
-        char reservation_info[32] = "-";
-        char remain_str[16] = "-";
+        char reservation_info[64] = "-"; // 버퍼 크기 증가
         
         if (device->status == DEVICE_RESERVED) {
             if (reservation_manager && resource_manager) {
@@ -232,32 +229,36 @@ void ui_draw_device_table(WINDOW* win, device_t* devices, int count, int highlig
                 if (res) {
                     time_t now = time(NULL);
                     long remaining_sec = (res->end_time > now) ? (res->end_time - now) : 0;
-                    snprintf(reservation_info, sizeof(reservation_info), "%s", res->username);
-                    snprintf(remain_str, sizeof(remain_str), "%lds", remaining_sec);
+                    if (show_remaining_time) {
+                        snprintf(reservation_info, sizeof(reservation_info), "%s(%lds)", res->username, remaining_sec);
+                    } else {
+                        snprintf(reservation_info, sizeof(reservation_info), "%s", res->username);
+                    }
                 }
             } else {
                 // 클라이언트 모드: 로컬 데이터 사용
                 strncpy(reservation_info, device->reserved_by, sizeof(reservation_info) - 1);
                 reservation_info[sizeof(reservation_info) - 1] = '\0';
-                
-                if (current_time > 0 && device->reservation_end_time > 0) {
+                if (show_remaining_time && current_time > 0 && device->reservation_end_time > 0) {
                     long remaining_sec = (device->reservation_end_time > current_time) ? 
                                         (device->reservation_end_time - current_time) : 0;
-                    snprintf(remain_str, sizeof(remain_str), "%lds", remaining_sec);
+                    char temp_info[64];
+                    snprintf(temp_info, sizeof(temp_info), "%s(%lds)", reservation_info, remaining_sec);
+                    strncpy(reservation_info, temp_info, sizeof(reservation_info) - 1);
+                    reservation_info[sizeof(reservation_info) - 1] = '\0';
                 }
             }
         }
         
         const char* status_str = message_get_device_status_string(device->status);
         
-        // 상태별 색상 강조 (서버 모드에서만)
-        if (reservation_manager) {
+        // 색상 강조 (use_color가 true일 때만)
+        if (use_color) {
             if (device->status == DEVICE_RESERVED) wattron(win, COLOR_PAIR(2));
             else if (device->status == DEVICE_MAINTENANCE) wattron(win, COLOR_PAIR(3));
             else if (device->status == DEVICE_AVAILABLE) wattron(win, COLOR_PAIR(4));
         }
         
-        // 하이라이트 처리 (클라이언트 모드에서만)
         if (highlight_row == i) {
             wattron(win, A_REVERSE);
         }
@@ -267,16 +268,13 @@ void ui_draw_device_table(WINDOW* win, device_t* devices, int count, int highlig
         print_fixed_width(win, i + 2, col_x[2], device->type, col_w[2]);
         print_fixed_width(win, i + 2, col_x[3], status_str, col_w[3]);
         print_fixed_width(win, i + 2, col_x[4], reservation_info, col_w[4]);
-        if (show_remaining_time) {
-            print_fixed_width(win, i + 2, col_x[5], remain_str, col_w[5]);
-        }
         
-        // 색상 및 하이라이트 해제
-        if (reservation_manager) {
+        if (use_color) {
             wattroff(win, COLOR_PAIR(2));
             wattroff(win, COLOR_PAIR(3));
             wattroff(win, COLOR_PAIR(4));
         }
+        
         if (highlight_row == i) {
             wattroff(win, A_REVERSE);
         }

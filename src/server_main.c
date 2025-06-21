@@ -620,7 +620,7 @@ void server_draw_ui_for_current_state(void) {
     
     // 공통 장비 목록 테이블 그리기 함수 사용
     ui_draw_device_table(g_ui_manager->menu_win, devices, count, -1, true, 
-                        reservation_manager, resource_manager, 0);
+                        reservation_manager, resource_manager, 0, true);
     
     wrefresh(g_ui_manager->menu_win);
 
