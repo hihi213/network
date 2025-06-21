@@ -582,14 +582,10 @@ void server_draw_ui_for_current_state(void) {
     if (!g_ui_manager) return;
     pthread_mutex_lock(&g_ui_manager->mutex);
 
-    // 1. 상단 정보 바 (status_win) - 성능 통계 추가
+    // 1. 상단 정보 바 (status_win) - 성능 통계 및 에러 메시지 공간
     werase(g_ui_manager->status_win);
     box(g_ui_manager->status_win, 0, 0);
     int session_count = (session_manager && session_manager->sessions) ? session_manager->sessions->count : 0;
-    time_t now = time(NULL);
-    struct tm* tm_info = localtime(&now);
-    char time_str[32];
-    strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M:%S", tm_info);
     
     // 성능 통계 정보 가져오기
     pthread_mutex_lock(&g_perf_stats.mutex);
@@ -601,8 +597,8 @@ void server_draw_ui_for_current_state(void) {
     uint64_t min_response_time = g_perf_stats.min_response_time;
     pthread_mutex_unlock(&g_perf_stats.mutex);
     
-    // 첫 번째 줄: 기본 서버 정보
-    mvwprintw(g_ui_manager->status_win, 1, 2, "서버: MyServer  포트: %d  세션: %d  시간: %s", g_server_port, session_count, time_str);
+    // 첫 번째 줄: 기본 서버 정보 (시간 제거) + 에러 메시지 공간
+    mvwprintw(g_ui_manager->status_win, 1, 2, "포트: %d  세션: %d", g_server_port, session_count);
     
     // 두 번째 줄: 성능 통계
     mvwprintw(g_ui_manager->status_win, 2, 2, "요청: 총%lu 성공%lu 실패%lu | 응답시간: 평균%luμs 최대%luμs 최소%luμs", 
@@ -610,7 +606,7 @@ void server_draw_ui_for_current_state(void) {
     
     wrefresh(g_ui_manager->status_win);
 
-    // 2. 장비 목록 표 (menu_win)
+    // 2. 장비 목록 표 (menu_win) - status_win이 4줄이므로 menu_win 위치 조정
     werase(g_ui_manager->menu_win);
     box(g_ui_manager->menu_win, 0, 0);
     

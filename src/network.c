@@ -98,7 +98,8 @@ ssize_t network_send(SSL* ssl, const void* buf, size_t len) {
         }
         int err = SSL_get_error(ssl, ret);
         if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE || err == SSL_ERROR_SYSCALL) {
-            utils_report_error(ERROR_NETWORK_SEND_FAILED, "Network", "network_send: 재시도 필요 (err=%d, retry=%d)", err, retry);
+            // 정상적인 재시도 상황이므로 오류로 보고하지 않음
+            // utils_report_error(ERROR_NETWORK_SEND_FAILED, "Network", "network_send: 재시도 필요 (err=%d, retry=%d)", err, retry);
             retry++;
             continue;
         } else if (err == SSL_ERROR_ZERO_RETURN) {
@@ -127,7 +128,8 @@ ssize_t network_recv(SSL* ssl, void* buf, size_t len) {
         }
         int err = SSL_get_error(ssl, ret);
         if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE || err == SSL_ERROR_SYSCALL) {
-            utils_report_error(ERROR_NETWORK_RECEIVE_FAILED, "Network", "network_recv: 재시도 필요 (err=%d, retry=%d)", err, retry);
+            // 정상적인 재시도 상황이므로 오류로 보고하지 않음
+            // utils_report_error(ERROR_NETWORK_RECEIVE_FAILED, "Network", "network_recv: 재시도 필요 (err=%d, retry=%d)", err, retry);
             retry++;
             continue;
         } else if (err == SSL_ERROR_ZERO_RETURN) {
