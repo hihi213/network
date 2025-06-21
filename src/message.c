@@ -77,35 +77,11 @@ message_t* message_create_status_response(const device_t *devices, int device_co
     return message;
 }
 
-message_t* message_create_login(const char* username, const char* password) {
-    return message_create_with_two_args(MSG_LOGIN, username, password);
-}
-
-message_t* message_create_reservation(const char *device_id, const char* duration_str) {
-    return message_create_with_two_args(MSG_RESERVE_REQUEST, device_id, duration_str);
-}
-
-message_t* message_create_error(const char* error_message) {
-    return message_create(MSG_ERROR, error_message);
-}
-
 message_t* message_create_error_with_code(error_code_t error_code, const char* error_message) {
     message_t* msg = message_create(MSG_ERROR, error_message);
     if (msg) {
         msg->error_code = error_code;
     }
-    return msg;
-}
-
-message_t* message_create_cancel(const char* device_id) {
-    message_t* msg = message_create(MSG_CANCEL_REQUEST, NULL);
-    if (!msg) return NULL;
-    msg->args[0] = strdup(device_id);
-    if (!msg->args[0]) {
-        message_destroy(msg);
-        return NULL;
-    }
-    msg->arg_count = 1;
     return msg;
 }
 

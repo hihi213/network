@@ -114,8 +114,27 @@ int main(int argc, char* argv[]) {
         utils_report_error(ERROR_FILE_OPERATION_FAILED, "Client", "pipe 생성 실패"); 
         return 1; 
     }
-    signal(SIGINT, client_signal_handler); signal(SIGTERM, client_signal_handler);
-    if (ui_init(UI_CLIENT) < 0 || network_init_ssl_manager(&ssl_manager, false, NULL, NULL) < 0) { client_cleanup_resources(); return 1; }
+     signal(SIGINT, client_signal_handler); signal(SIGTERM, client_signal_handler);
+    
+    // 1. UI를 먼저 초기화합니다.
+    if (ui_init(UI_CLIENT) < 0) { /* ... */ return 1; } 
+
+    // [개선] 즉각적인 UI 피드백을 위해 '연결 중' 메시지 표시
+    // -----------------------------------------------------------------
+    pthread_mutex_lock(&g_ui_manager->mutex);
+    werase(g_ui_manager->menu_win); // 창을 깨끗이 지웁니다.
+    box(g_ui_manager->menu_win, 0, 0);
+    const char* conn_msg = "서버에 연결 중입니다...";
+    int max_y, max_x;
+    getmaxyx(g_ui_manager->menu_win, max_y, max_x);
+    // 메시지를 창 중앙에 출력합니다.
+    mvwprintw(g_ui_manager->menu_win, max_y / 2, (max_x - strlen(conn_msg)) / 2, "%s", conn_msg);
+    wrefresh(g_ui_manager->menu_win); // 화면에 즉시 반영합니다.
+    pthread_mutex_unlock(&g_ui_manager->mutex);
+    // -----------------------------------------------------------------
+
+    // 2. SSL 초기화 및 서버 연결을 시도합니다. (사용자는 위 메시지를 보고 있게 됩니다)
+    if (network_init_ssl_manager(&ssl_manager, false, NULL, NULL) < 0) { client_cleanup_resources(); return 1; }
     if (client_connect_to_server(argv[1], atoi(argv[2])) < 0) { client_cleanup_resources(); return 1; }
 
     while (running) {
@@ -502,10 +521,14 @@ static void client_handle_input_device_list(int ch) {
                 device_t* dev = &device_list[menu_highlight];
                 if (dev->status == DEVICE_RESERVED && strcmp(dev->reserved_by, client_session.username) == 0) {
                     ui_show_success_message("예약 취소 요청 중...");
-                    message_t* msg = message_create_cancel(dev->id);
+                    message_t* msg = message_create(MSG_CANCEL_REQUEST, NULL);
                     if (msg) {
-                        if (network_send_message(client_session.ssl, msg) < 0) {
-                            running = false;
+                        msg->args[0] = strdup(dev->id);
+                        if (msg->args[0]) {
+                            msg->arg_count = 1;
+                            if (network_send_message(client_session.ssl, msg) < 0) {
+                                running = false;
+                            }
                         }
                         message_destroy(msg);
                     }
@@ -538,13 +561,18 @@ static void client_handle_input_reservation_time(int ch) {
                         LOG_INFO("Client", "예약 요청 전송 시작: 장비=%s, 시간=%d초, 사용자=%s", 
                                 dev->id, reservation_time, client_session.username);
                         
-                        message_t* msg = message_create_reservation(dev->id, time_str);
+                        message_t* msg = message_create(MSG_RESERVE_REQUEST, NULL);
                         if (msg) {
-                            if (network_send_message(client_session.ssl, msg) < 0) {
-                                LOG_ERROR("Client", "예약 요청 전송 실패: 장비=%s, 시간=%d초", dev->id, reservation_time);
-                                running = false;
-                            } else {
-                                LOG_INFO("Client", "예약 요청 전송 성공: 장비=%s, 시간=%d초", dev->id, reservation_time);
+                            msg->args[0] = strdup(dev->id);
+                            msg->args[1] = strdup(time_str);
+                            if (msg->args[0] && msg->args[1]) {
+                                msg->arg_count = 2;
+                                if (network_send_message(client_session.ssl, msg) < 0) {
+                                    LOG_ERROR("Client", "예약 요청 전송 실패: 장비=%s, 시간=%d초", dev->id, reservation_time);
+                                    running = false;
+                                } else {
+                                    LOG_INFO("Client", "예약 요청 전송 성공: 장비=%s, 시간=%d초", dev->id, reservation_time);
+                                }
                             }
                             message_destroy(msg);
                         } else {
@@ -817,18 +845,22 @@ static void client_process_and_store_device_list(const message_t* message) {
 }
 
 static void client_login_submitted(const char* username, const char* password) {
-    message_t* login_msg = message_create_login(username, password);
+    message_t* login_msg = message_create(MSG_LOGIN, NULL);
     if (!login_msg) {
         ui_show_error_message("로그인 메시지 생성 실패");
         return;
     }
     
-    if (network_send_message(client_session.ssl, login_msg) < 0) {
-        ui_show_error_message("로그인 요청 전송 실패");
-        message_destroy(login_msg);
-        return;
+    login_msg->args[0] = strdup(username);
+    login_msg->args[1] = strdup(password);
+    if (login_msg->args[0] && login_msg->args[1]) {
+        login_msg->arg_count = 2;
+        if (network_send_message(client_session.ssl, login_msg) < 0) {
+            ui_show_error_message("로그인 요청 전송 실패");
+            message_destroy(login_msg);
+            return;
+        }
     }
-    
     message_destroy(login_msg);
 }
 
