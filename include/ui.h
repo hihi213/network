@@ -82,4 +82,9 @@ void ui_show_error_message(const char* message);
 
 void ui_show_success_message(const char* message);
 
+// 장비 목록 테이블 그리기 함수
+void ui_draw_device_table(WINDOW* win, device_t* devices, int count, int highlight_row, 
+                         bool show_remaining_time, void* reservation_manager, void* resource_manager, 
+                         time_t current_time);
+
 #endif /* UI_H */

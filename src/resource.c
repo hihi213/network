@@ -46,6 +46,7 @@ resource_manager_t* resource_init_manager(void) {
  * @param manager 정리할 resource_manager_t 포인터
  */
 void resource_cleanup_manager(resource_manager_t* manager) {
+    if (!manager) return;
     if (!manager) return;  // 매니저가 NULL이면 함수 종료
 
     // [개선] 해시 테이블의 모든 자원을 해제

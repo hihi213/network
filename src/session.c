@@ -43,14 +43,8 @@ session_manager_t* session_init_manager(void) {
  * @param manager 정리할 session_manager_t 포인터
  */
 void session_cleanup_manager(session_manager_t* manager) {
-    if (!manager) return;  // 매니저가 NULL이면 함수 종료
-    
-    // [개선] 해시 테이블의 모든 자원을 해제
-    if (manager->sessions) {
-        utils_hashtable_destroy(manager->sessions);  // 해시 테이블 정리
-    }
-    pthread_mutex_destroy(&manager->mutex);  // 뮤텍스 정리
-    free(manager);  // 매니저 메모리 해제
+    if (!manager) return;
+    utils_cleanup_manager_base(manager, manager->sessions, &manager->mutex);
 }
 
 /**

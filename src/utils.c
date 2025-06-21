@@ -570,3 +570,24 @@ bool utils_init_manager_base(void* manager, size_t manager_size, hash_table_t** 
     
     return true;
 }
+
+/**
+ * @brief 기본 시그널 핸들러 - self-pipe를 통한 안전한 종료
+ * @param signum 시그널 번호
+ * @param pipe_fd self-pipe의 쓰기 파일 디스크립터
+ */
+void utils_default_signal_handler(int signum, int pipe_fd) {
+    (void)signum;
+    (void)write(pipe_fd, "s", 1);
+}
+
+void utils_cleanup_manager_base(void* manager, hash_table_t* table, pthread_mutex_t* mutex) {
+    if (!manager) return;
+    if (table) {
+        utils_hashtable_destroy(table);
+    }
+    if (mutex) {
+        pthread_mutex_destroy(mutex);
+    }
+    free(manager);
+}

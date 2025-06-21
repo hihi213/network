@@ -417,12 +417,7 @@ static int server_handle_client_message(Client* client, const message_t* message
 }
 
 static void server_signal_handler(int signum) {
-    (void)signum;
-    if (pipe(self_pipe) == -1) { 
-        utils_report_error(ERROR_FILE_OPERATION_FAILED, "Server", "pipe 생성 실패"); 
-        return; 
-    }
-    (void)write(self_pipe[1], "s", 1);
+    utils_default_signal_handler(signum, self_pipe[1]);
 }
 
 static int server_init(int port) {
@@ -618,60 +613,15 @@ void server_draw_ui_for_current_state(void) {
     // 2. 장비 목록 표 (menu_win)
     werase(g_ui_manager->menu_win);
     box(g_ui_manager->menu_win, 0, 0);
-    int menu_win_height, menu_win_width;
-    getmaxyx(g_ui_manager->menu_win, menu_win_height, menu_win_width);
-    // 컬럼 위치/폭 설정 (예약자, 남은시간 칸을 더 작게)
-    int col_w[6] = {10, 27, 15, 14, 8, 8};
-    int col_x[6];
-    col_x[0] = 2;
-    for (int i = 1; i < 6; ++i) {
-        col_x[i] = col_x[i-1] + col_w[i-1] + 1;
-    }
-    // 헤더
-    wattron(g_ui_manager->menu_win, A_BOLD);
-    print_fixed_width(g_ui_manager->menu_win, 1, col_x[0], "ID", col_w[0]);
-    print_fixed_width(g_ui_manager->menu_win, 1, col_x[1], "이름", col_w[1]);
-    print_fixed_width(g_ui_manager->menu_win, 1, col_x[2], "타입", col_w[2]);
-    print_fixed_width(g_ui_manager->menu_win, 1, col_x[3], "상태", col_w[3]);
-    print_fixed_width(g_ui_manager->menu_win, 1, col_x[4], "예약자", col_w[4]);
-    print_fixed_width(g_ui_manager->menu_win, 1, col_x[5], "남은시간", col_w[5]);
-    wattroff(g_ui_manager->menu_win, A_BOLD);
-    // 구분선
-    for (int i = 0; i < 6; ++i) {
-        mvwaddch(g_ui_manager->menu_win, 1, col_x[i] - 2, '|');
-    }
+    
     // 장비 목록
     device_t devices[MAX_DEVICES];
     int count = resource_get_device_list(resource_manager, devices, MAX_DEVICES);
-    int max_rows = menu_win_height - 4;
-    for (int i = 0; i < count && i < max_rows; i++) {
-        const device_t* device = &devices[i];
-        char reservation_info[32] = "-";
-        char remain_str[16] = "-";
-        if (device->status == DEVICE_RESERVED) {
-            reservation_t* res = reservation_get_active_for_device(reservation_manager, resource_manager, device->id);
-            if (res) {
-                time_t current_time = time(NULL);
-                long remaining_sec = (res->end_time > current_time) ? (res->end_time - current_time) : 0;
-                snprintf(reservation_info, sizeof(reservation_info), "%s", res->username);
-                snprintf(remain_str, sizeof(remain_str), "%lds", remaining_sec);
-            }
-        }
-        const char* status_str = message_get_device_status_string(device->status);
-        // 상태별 색상 강조(예약:노랑, 점검:빨강, 사용가능:초록)
-        if (device->status == DEVICE_RESERVED) wattron(g_ui_manager->menu_win, COLOR_PAIR(2));
-        else if (device->status == DEVICE_MAINTENANCE) wattron(g_ui_manager->menu_win, COLOR_PAIR(3));
-        else if (device->status == DEVICE_AVAILABLE) wattron(g_ui_manager->menu_win, COLOR_PAIR(4));
-        print_fixed_width(g_ui_manager->menu_win, i + 2, col_x[0], device->id, col_w[0]);
-        print_fixed_width(g_ui_manager->menu_win, i + 2, col_x[1], device->name, col_w[1]);
-        print_fixed_width(g_ui_manager->menu_win, i + 2, col_x[2], device->type, col_w[2]);
-        print_fixed_width(g_ui_manager->menu_win, i + 2, col_x[3], status_str, col_w[3]);
-        print_fixed_width(g_ui_manager->menu_win, i + 2, col_x[4], reservation_info, col_w[4]);
-        print_fixed_width(g_ui_manager->menu_win, i + 2, col_x[5], remain_str, col_w[5]);
-        wattroff(g_ui_manager->menu_win, COLOR_PAIR(2));
-        wattroff(g_ui_manager->menu_win, COLOR_PAIR(3));
-        wattroff(g_ui_manager->menu_win, COLOR_PAIR(4));
-    }
+    
+    // 공통 장비 목록 테이블 그리기 함수 사용
+    ui_draw_device_table(g_ui_manager->menu_win, devices, count, -1, true, 
+                        reservation_manager, resource_manager, 0);
+    
     wrefresh(g_ui_manager->menu_win);
 
     // 3. 하단 안내/상태 바 (message_win)

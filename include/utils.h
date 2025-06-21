@@ -150,11 +150,13 @@ typedef struct performance_stats {
     pthread_mutex_t mutex;
 } performance_stats_t;
 
-// Performance 함수 프로토타입
+// 성능 측정 관련 함수
 uint64_t utils_get_current_time(void);
 void utils_get_performance_stats(performance_stats_t* stats, performance_stats_t* output);
 void utils_print_performance_stats(performance_stats_t* stats);
 
+// 시그널 핸들러
+void utils_default_signal_handler(int signum, int pipe_fd);
 
 /*
  * =====================================================================================
@@ -235,6 +237,14 @@ void utils_hashtable_traverse(hash_table_t* table, void (*callback)(const char* 
  * @return 성공 시 true, 실패 시 false
  */
 bool utils_init_manager_base(void* manager, size_t manager_size, hash_table_t** table, uint32_t table_size, void (*free_func)(void*), pthread_mutex_t* mutex_ptr);
+
+/**
+ * @brief 매니저 구조체의 공통 정리를 수행합니다.
+ * @param manager 매니저 구조체 포인터
+ * @param table 해시 테이블 포인터
+ * @param mutex 뮤텍스 포인터
+ */
+void utils_cleanup_manager_base(void* manager, hash_table_t* table, pthread_mutex_t* mutex);
 
 /**
  * 네트워크 함수 오류 처리/로깅/자원정리 일관화 매크로

@@ -38,6 +38,7 @@ static void client_cleanup_resources(void);
 static int client_connect_to_server(const char* server_ip, int port);
 static void client_handle_server_message(const message_t* message);
 static void client_login_submitted(const char* username, const char* password);
+static void client_perform_logout(void);
 
 static void client_draw_main_menu(void);
 static void client_draw_logged_in_menu(void);
@@ -238,46 +239,21 @@ static void client_draw_device_list() {
     }
 
     time_t current_time = client_get_synced_time();
-    const int visible_items = menu_win_height - 5;
-
-    // 각 열의 시작 x좌표와 폭(한글 포함)
-    int col_x[6] = {2, 12, 38, 56, 70, 84};
-    int col_w[6] = {8, 24, 15, 12, 12, 10};
-
-    // 헤더
-    print_fixed_width(g_ui_manager->menu_win, 1, col_x[0], "ID", col_w[0]);
-    print_fixed_width(g_ui_manager->menu_win, 1, col_x[1], "이름", col_w[1]);
-    print_fixed_width(g_ui_manager->menu_win, 1, col_x[2], "타입", col_w[2]);
-    print_fixed_width(g_ui_manager->menu_win, 1, col_x[3], "상태", col_w[3]);
-    print_fixed_width(g_ui_manager->menu_win, 1, col_x[4], "예약자", col_w[4]);
-
-    for (int i = 0; i < visible_items; i++) {
-        int device_index = scroll_offset + i;
-        if (device_index >= device_count) break;
-        device_t* current_device = &device_list[device_index];
+    
+    // 예약 만료 처리
+    for (int i = 0; i < device_count; i++) {
+        device_t* current_device = &device_list[i];
         if (current_device->status == DEVICE_RESERVED && current_device->reservation_end_time > 0) {
             if (current_time >= current_device->reservation_end_time) {
                 current_device->status = DEVICE_AVAILABLE;
                 current_device->reserved_by[0] = '\0';
             }
         }
-        char status_str[32];
-        if (current_device->status == DEVICE_RESERVED) {
-            long remaining_sec = (current_device->reservation_end_time > current_time) ? (current_device->reservation_end_time - current_time) : 0;
-            snprintf(status_str, sizeof(status_str), "reserved (%lds)", remaining_sec);
-        } else {
-            strncpy(status_str, message_get_device_status_string(current_device->status), sizeof(status_str) - 1);
-            status_str[sizeof(status_str) - 1] = '\0';
-        }
-        int row = i + 2;
-        if (device_index == menu_highlight) wattron(g_ui_manager->menu_win, A_REVERSE);
-        print_fixed_width(g_ui_manager->menu_win, row, col_x[0], current_device->id, col_w[0]);
-        print_fixed_width(g_ui_manager->menu_win, row, col_x[1], current_device->name, col_w[1]);
-        print_fixed_width(g_ui_manager->menu_win, row, col_x[2], current_device->type, col_w[2]);
-        print_fixed_width(g_ui_manager->menu_win, row, col_x[3], status_str, col_w[3]);
-        print_fixed_width(g_ui_manager->menu_win, row, col_x[4], current_device->reserved_by, col_w[4]);
-        if (device_index == menu_highlight) wattroff(g_ui_manager->menu_win, A_REVERSE);
     }
+
+    // 공통 장비 목록 테이블 그리기 함수 사용
+    ui_draw_device_table(g_ui_manager->menu_win, device_list, device_count, menu_highlight, false, 
+                        NULL, NULL, current_time);
 
     if (device_count > 0 && menu_highlight < device_count) {
         char help_message[128] = {0};
@@ -446,30 +422,12 @@ static void client_handle_input_logged_in_menu(int ch) {
                     message_destroy(msg);
                 }
             } else { // "로그아웃" 선택
-                message_t* logout_msg = message_create(MSG_LOGOUT, NULL);
-                if (logout_msg) {
-                    network_send_message(client_session.ssl, logout_msg);
-                    message_destroy(logout_msg);
-                }
-                client_session.state = SESSION_DISCONNECTED;
-                memset(client_session.username, 0, sizeof(client_session.username));
-                current_state = APP_STATE_MAIN_MENU;
-                menu_highlight = 0;
-                ui_show_success_message("로그아웃되었습니다.");
+                client_perform_logout();
             }
             break;
         case 27: // ESC 키로 메인 메뉴 복귀 (로그아웃과 동일하게 처리)
         {
-            message_t* logout_msg = message_create(MSG_LOGOUT, NULL);
-            if (logout_msg) {
-                network_send_message(client_session.ssl, logout_msg);
-                message_destroy(logout_msg);
-            }
-            client_session.state = SESSION_DISCONNECTED;
-            memset(client_session.username, 0, sizeof(client_session.username));
-            current_state = APP_STATE_MAIN_MENU;
-            menu_highlight = 0;
-            ui_show_success_message("로그아웃되었습니다.");
+            client_perform_logout();
         }
         break;
         default:
@@ -775,7 +733,22 @@ static void client_login_submitted(const char* username, const char* password) {
     message_destroy(login_msg);
 }
 
-static void client_signal_handler(int signum) { (void)signum; (void)write(self_pipe[1], "s", 1); }
+static void client_perform_logout(void) {
+    message_t* logout_msg = message_create(MSG_LOGOUT, NULL);
+    if (logout_msg) {
+        network_send_message(client_session.ssl, logout_msg);
+        message_destroy(logout_msg);
+    }
+    client_session.state = SESSION_DISCONNECTED;
+    memset(client_session.username, 0, sizeof(client_session.username));
+    current_state = APP_STATE_MAIN_MENU;
+    menu_highlight = 0;
+    ui_show_success_message("로그아웃되었습니다.");
+}
+
+static void client_signal_handler(int signum) { 
+    utils_default_signal_handler(signum, self_pipe[1]); 
+}
 
 static void client_cleanup_resources(void) {
     if (device_list) {
@@ -791,26 +764,9 @@ static void client_cleanup_resources(void) {
 }
 
 static int client_connect_to_server(const char* server_ip, int port) {
-    client_session.socket_fd = socket(AF_INET, SOCK_STREAM, 0);
+    client_session.socket_fd = network_init_client_socket(server_ip, port);
     if (client_session.socket_fd < 0) {
-        utils_report_error(ERROR_NETWORK_SOCKET_CREATION_FAILED, "Client", "소켓 생성 실패");
-        return -1;
-    }
-    
-    struct sockaddr_in server_addr;
-    memset(&server_addr, 0, sizeof(server_addr));
-    server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons(port);
-    
-    if (inet_pton(AF_INET, server_ip, &server_addr.sin_addr) <= 0) {
-        utils_report_error(ERROR_NETWORK_IP_CONVERSION_FAILED, "Client", "서버 IP 주소 변환 실패");
-        close(client_session.socket_fd);
-        return -1;
-    }
-    
-    if (connect(client_session.socket_fd, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
         utils_report_error(ERROR_NETWORK_CONNECT_FAILED, "Client", "서버 연결 실패");
-        close(client_session.socket_fd);
         return -1;
     }
     
