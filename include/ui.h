@@ -91,8 +91,5 @@ void ui_draw_device_table(WINDOW* win, device_t* devices, int count, int highlig
 
 // 메뉴 렌더링 함수들
 void ui_render_menu(WINDOW* win, const ui_menu_t* menu);
-void ui_render_device_table(WINDOW* win, device_t* devices, int count, int highlight_row, 
-                           bool show_remaining_time, void* reservation_manager, void* resource_manager, 
-                           time_t current_time, bool use_color);
 
 #endif /* UI_H */

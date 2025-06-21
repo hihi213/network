@@ -153,7 +153,7 @@ typedef struct performance_stats {
 // 성능 측정 관련 함수
 uint64_t utils_get_current_time(void);
 void utils_get_performance_stats(performance_stats_t* stats, performance_stats_t* output);
-void utils_print_performance_stats(performance_stats_t* stats);
+void utils_print_performance_stats(const performance_stats_t* stats);
 
 // 시그널 핸들러
 void utils_default_signal_handler(int signum, int pipe_fd);

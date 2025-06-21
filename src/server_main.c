@@ -84,8 +84,8 @@ int main(int argc, char* argv[]) {
             // 파이프로부터 데이터를 읽어 어떤 이벤트인지 확인
             read(self_pipe[0], buf, 1);
             if (buf[0] == 's') { // 's' for shutdown
-                running = false;
-                continue;
+            running = false;
+            continue;
             }
             // 'u' 또는 다른 신호는 UI 갱신으로 간주
         }
@@ -131,11 +131,11 @@ static void server_broadcast_status_update(void) {
     if (response) {
         if (!message_fill_status_response_args(response, devices, count, resource_manager, reservation_manager)) {
             message_destroy(response);
-            return;
-        }
-        pthread_mutex_lock(&client_list_mutex);
-        for (int i = 0; i < num_clients; i++) {
-            if (client_list[i] && client_list[i]->state == SESSION_LOGGED_IN) {
+        return;
+    }
+    pthread_mutex_lock(&client_list_mutex);
+    for (int i = 0; i < num_clients; i++) {
+        if (client_list[i] && client_list[i]->state == SESSION_LOGGED_IN) {
                 network_send_message(client_list[i]->ssl, response);
             }
         }
@@ -394,9 +394,21 @@ static int server_handle_client_message(Client* client, const message_t* message
             return server_handle_cancel_request(client, message);
         case MSG_TIME_SYNC_REQUEST:
         {
-            char time_str[32];
-            snprintf(time_str, sizeof(time_str), "%ld", time(NULL));
-            server_send_generic_response(client, MSG_TIME_SYNC_RESPONSE, "sync", 1, time_str);
+            // 클라이언트가 보낸 T1 타임스탬프가 있는지 확인
+            if (message->arg_count < 1) {
+                // 이전 버전 클라이언트와의 호환성을 위해 에러 대신 단순 처리
+                return server_send_error_response_with_code(client->ssl, ERROR_INVALID_PARAMETER, "Invalid time sync request.");
+            }
+
+            // T1: 클라이언트가 보낸 타임스탬프
+            const char* t1_str = message->args[0]; 
+
+            // T3: 서버가 응답을 보내는 시간
+            char t3_str[32];
+            snprintf(t3_str, sizeof(t3_str), "%ld", time(NULL));
+
+            // [수정] 클라이언트가 보낸 T1과 서버의 T3를 함께 응답으로 전송
+            server_send_generic_response(client, MSG_TIME_SYNC_RESPONSE, "sync", 2, t1_str, t3_str);
             return 0;
         }
         case MSG_LOGOUT:
@@ -579,8 +591,8 @@ void server_draw_ui_for_current_state(void) {
     if (!g_ui_manager) return;
     pthread_mutex_lock(&g_ui_manager->mutex);
 
-    // [추가] UI 갱신 시작 로그
-    LOG_INFO("ServerUI", "UI 갱신 시작");
+    // [주석처리] UI 갱신 시작 로그
+    // LOG_INFO("ServerUI", "UI 갱신 시작");
 
     // 1. 상단 정보 바 (status_win) - 성능 통계 및 에러 메시지 공간
     werase(g_ui_manager->status_win);
@@ -614,8 +626,8 @@ void server_draw_ui_for_current_state(void) {
     device_t devices[MAX_DEVICES];
     int count = resource_get_device_list(resource_manager, devices, MAX_DEVICES);
     
-    // [추가] 장비 목록 조회 로그
-    LOG_INFO("ServerUI", "장비 목록 조회: 총 %d개 장비", count);
+    // [주석처리] 장비 목록 조회 로그
+    // LOG_INFO("ServerUI", "장비 목록 조회: 총 %d개 장비", count);
     
     // 공통 장비 목록 테이블 그리기 함수 사용
     ui_draw_device_table(g_ui_manager->menu_win, devices, count, -1, true, 
@@ -631,14 +643,14 @@ void server_draw_ui_for_current_state(void) {
 
     pthread_mutex_unlock(&g_ui_manager->mutex);
     
-    // [추가] UI 갱신 완료 로그
-    LOG_INFO("ServerUI", "UI 갱신 완료");
+    // [주석처리] UI 갱신 완료 로그
+    // LOG_INFO("ServerUI", "UI 갱신 완료");
 }
 
 // [추가] UI 갱신 트리거 함수
 static void server_trigger_ui_refresh(void) {
-    // [추가] UI 갱신 트리거 로그
-    LOG_INFO("ServerUI", "UI 갱신 트리거 발생");
+    // [주석처리] UI 갱신 트리거 로그
+    // LOG_INFO("ServerUI", "UI 갱신 트리거 발생");
     
     // 파이프에 간단한 데이터를 써서 poll()을 깨운다.
     // 에러 처리는 간단하게 처리하거나 무시할 수 있다.
@@ -646,7 +658,8 @@ static void server_trigger_ui_refresh(void) {
     if (result < 0) {
         LOG_WARNING("ServerUI", "UI 갱신 트리거 실패: %s", strerror(errno));
     } else {
-        LOG_INFO("ServerUI", "UI 갱신 트리거 성공");
+        // [주석처리] UI 갱신 트리거 성공 로그
+        // LOG_INFO("ServerUI", "UI 갱신 트리거 성공");
     }
 }
 

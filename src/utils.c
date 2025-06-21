@@ -207,27 +207,32 @@ void utils_get_performance_stats(performance_stats_t* stats, performance_stats_t
  * @brief 성능 통계를 콘솔에 출력합니다.
  * @param stats 출력할 성능 통계 포인터
  */
-void utils_print_performance_stats(performance_stats_t* stats) {
-    if (!stats) {  // 통계 포인터가 NULL인 경우
-        utils_report_error(ERROR_PERFORMANCE_STATS_INVALID, "Performance", "잘못된 성능 통계 포인터");  // 에러 로그 출력
-        return;  // 함수 종료
+void utils_print_performance_stats(const performance_stats_t* stats) {
+    if (!stats) return;
+    
+    pthread_mutex_lock((pthread_mutex_t*)&stats->mutex);
+    
+    printf("\n=== 성능 통계 ===\n");
+    printf("총 요청 수: %llu\n", stats->total_requests);
+    printf("성공 요청 수: %llu\n", stats->successful_requests);
+    printf("실패 요청 수: %llu\n", stats->failed_requests);
+    printf("성공률: %.2f%%\n", 
+           stats->total_requests > 0 ? 
+           (double)stats->successful_requests / stats->total_requests * 100.0 : 0.0);
+    
+    if (stats->total_requests > 0) {
+        printf("평균 응답 시간: %llu μs\n", stats->total_response_time / stats->total_requests);
+        printf("최대 응답 시간: %llu μs\n", stats->max_response_time);
+        printf("최소 응답 시간: %llu μs\n", stats->min_response_time);
     }
-
-    // LOG_INFO("Performance", "성능 통계 출력");  // 정보 로그 출력
-    printf("=== 성능 통계 ===\n");  // 제목 출력
-    printf("총 요청 수: %llu\n", stats->total_requests);  // 총 요청 수 출력
-    printf("성공한 요청 수: %llu\n", stats->successful_requests);  // 성공한 요청 수 출력
-    printf("실패한 요청 수: %llu\n", stats->failed_requests);  // 실패한 요청 수 출력
-    printf("최대 동시 요청 수: %llu\n", stats->max_concurrent_requests);  // 최대 동시 요청 수 출력
-    printf("평균 응답 시간: %llu ms\n",   // 평균 응답 시간 출력
-           stats->total_requests > 0 ? stats->total_response_time / stats->total_requests : 0);
-    printf("최소 응답 시간: %llu ms\n", stats->min_response_time);  // 최소 응답 시간 출력
-    printf("최대 응답 시간: %llu ms\n", stats->max_response_time);  // 최대 응답 시간 출력
-    printf("총 송신 바이트: %llu\n", stats->total_data_sent);  // 총 송신 바이트 출력
-    printf("총 수신 바이트: %llu\n", stats->total_data_received);  // 총 수신 바이트 출력
-  
-    printf("총 에러 수: %llu\n", stats->total_errors);  // 총 에러 수 출력
-    printf("================\n");  // 구분선 출력
+    
+    printf("최대 동시 요청 수: %llu\n", stats->max_concurrent_requests);
+    printf("총 전송 데이터: %llu bytes\n", stats->total_data_sent);
+    printf("총 수신 데이터: %llu bytes\n", stats->total_data_received);
+    printf("총 오류 수: %llu\n", stats->total_errors);
+    printf("================\n\n");
+    
+    pthread_mutex_unlock((pthread_mutex_t*)&stats->mutex);
 }
 
 /*
@@ -243,22 +248,24 @@ static const char* utils_get_log_level_string(log_level_t level);  // 로그 레
  * @return 성공 시 0, 실패 시 -1
  */
 int utils_init_logger(const char* filename) {
-    if (g_log_file != NULL) {  // 이미 초기화된 경우
-        return -1; // 이미 초기화됨
-    }
-
-    g_log_file = fopen(filename, "a"); // 추가 모드로 열기
-    if (g_log_file == NULL) {  // 파일 열기 실패 시
-        return -1;  // 에러 코드 반환
-    }
-
-    // [수정] 비동기 로깅 시스템 초기화
-    if (log_queue_init(1000) != 0) {  // 1000개 메시지 큐 용량
-        fclose(g_log_file);
-        g_log_file = NULL;
+    if (!filename) {
+        utils_report_error(ERROR_INVALID_PARAMETER, "Logger", "로그 파일명이 NULL입니다");
         return -1;
     }
-    
+
+    // 비동기 로거 초기화
+    if (log_queue_init(1000) != 0) {
+        utils_report_error(ERROR_FILE_OPERATION_FAILED, "Logger", "비동기 로거 초기화 실패: %s", filename);
+        return -1;
+    }
+
+    g_log_file = fopen(filename, "a");
+    if (!g_log_file) {
+        log_queue_cleanup();
+        utils_report_error(ERROR_FILE_OPERATION_FAILED, "Logger", "로그 파일 열기 실패: %s", filename);
+        return -1;
+    }
+
     g_logger_running = true;
     
     // 로거 스레드 생성
@@ -268,19 +275,12 @@ int utils_init_logger(const char* filename) {
         g_log_file = NULL;
         return -1;
     }
-    
-    // LOG_INFO("System", "비동기 로거 초기화 완료. 로그 파일: %s", filename);
-    return 0;  // 성공 코드 반환
+
+    return 0;
 }
 
-/**
- * @brief 로거를 정리합니다.
- */
 void utils_cleanup_logger(void) {
-    // [수정] Graceful Shutdown 구현
     if (g_logger_running) {
-        // LOG_INFO("System", "비동기 로거 정리 중...");
-        
         // 로거 스레드 종료 신호
         log_queue_signal_shutdown();
         
@@ -390,25 +390,25 @@ static uint32_t utils_hash_function(const char* key, uint32_t size) {
 /**
  * @brief 해시 테이블을 생성합니다.
  * @param size 해시 테이블 크기
- * @param free_value_func 값 해제 함수 포인터
+ * @param free_func 값 해제 함수 포인터
  * @return 생성된 hash_table_t 포인터, 실패 시 NULL
  */
-hash_table_t* utils_hashtable_create(uint32_t size, void (*free_value_func)(void*)) {
-    hash_table_t* table = (hash_table_t*)malloc(sizeof(hash_table_t));  // 해시 테이블 메모리 할당
-    if (!table) {
-        utils_report_error(ERROR_HASHTABLE_CREATION_FAILED, "HashTable", "해시 테이블 메모리 할당 실패");
-        return NULL;
-    }
-    table->size = size;  // 해시 테이블 크기 설정
-    table->count = 0;  // 요소 개수를 0으로 초기화
-    table->free_value = free_value_func;  // 값 해제 함수 설정
-    table->buckets = (hash_node_t**)calloc(table->size, sizeof(hash_node_t*));  // 버킷 배열 메모리 할당
+hash_table_t* utils_hashtable_create(uint32_t size, void (*free_func)(void*)) {
+    if (size == 0) return NULL;
+    
+    hash_table_t* table = malloc(sizeof(hash_table_t));
+    if (!table) return NULL;
+    
+    table->buckets = calloc(size, sizeof(hash_node_t*));
     if (!table->buckets) {
-        utils_report_error(ERROR_HASHTABLE_CREATION_FAILED, "HashTable", "버킷 메모리 할당 실패");
         free(table);
         return NULL;
     }
-    // LOG_INFO("Utils", "해시테이블 생성 성공: 크기=%u", size);
+    
+    table->size = size;
+    table->count = 0;
+    table->free_value = free_func;
+    
     return table;
 }
 
@@ -440,53 +440,40 @@ void utils_hashtable_destroy(hash_table_t* table) {
  * @return 성공 시 true, 실패 시 false
  */
 bool utils_hashtable_insert(hash_table_t* table, const char* key, void* value) {
-    if (!table || !key) {
-        utils_report_error(ERROR_INVALID_PARAMETER, "HashTable", "utils_hashtable_insert: 잘못된 파라미터");
-        return false;
-    }
-
-    // LOG_INFO("HashTable", "해시 테이블 삽입 시작: 키=%s", key);
-
-    uint32_t index = utils_hash_function(key, table->size);  // 해시 인덱스 계산
-    // LOG_INFO("HashTable", "해시 인덱스 계산: 키=%s, 인덱스=%u", key, index);
+    if (!table || !key) return false;
     
-    hash_node_t* node = table->buckets[index];  // 해당 버킷의 첫 번째 노드
+    uint32_t index = utils_hash_function(key, table->size);
     
     // 기존 키가 있는지 확인
-    while (node) {  // 노드가 존재하는 동안 반복
-        if (strcmp(node->key, key) == 0) {  // 키가 일치하는 경우
-            // LOG_INFO("HashTable", "기존 키 발견, 값 교체: 키=%s", key);
-            if (table->free_value) {  // 값 해제 함수가 존재하는 경우
-                table->free_value(node->value);  // 기존 값 메모리 해제
+    hash_node_t* current = table->buckets[index];
+    while (current) {
+        if (strcmp(current->key, key) == 0) {
+            // 기존 값 해제
+            if (table->free_value && current->value) {
+                table->free_value(current->value);
             }
-            node->value = value;  // 새 값으로 교체
-            // LOG_INFO("HashTable", "새 노드 삽입 성공: 키=%s, 인덱스=%u", key, index);
-            return true;  // true 반환
+            current->value = value;
+            return true;
         }
-        node = node->next;  // 다음 노드로 이동
+        current = current->next;
     }
-
+    
     // 새 노드 생성
-    hash_node_t* new_node = (hash_node_t*)malloc(sizeof(hash_node_t));  // 새 노드 메모리 할당
-    if (!new_node) {  // 메모리 할당 실패 시
-        utils_report_error(ERROR_HASHTABLE_INSERT_FAILED, "HashTable", "새 노드 메모리 할당 실패: 키=%s", key);
-        return false;  // false 반환
+    hash_node_t* new_node = malloc(sizeof(hash_node_t));
+    if (!new_node) return false;
+    
+    new_node->key = strdup(key);
+    if (!new_node->key) {
+        free(new_node);
+        return false;
     }
-
-    // 노드 초기화
-    new_node->key = strdup(key);  // 키 복사
-    if (!new_node->key) {  // 키 복사 실패 시
-        utils_report_error(ERROR_HASHTABLE_INSERT_FAILED, "HashTable", "키 복사 실패: 키=%s", key);
-        free(new_node);  // 노드 메모리 해제
-        return false;  // false 반환
-    }
-    new_node->value = value;  // 값 설정
-    new_node->next = table->buckets[index];  // 기존 첫 번째 노드를 다음으로 설정
-    table->buckets[index] = new_node;  // 새 노드를 첫 번째로 설정
-    table->count++; // <--- 이 라인을 추가하세요.
-
-    // LOG_INFO("HashTable", "새 노드 삽입 성공: 키=%s, 인덱스=%u", key, index);
-    return true;  // true 반환
+    
+    new_node->value = value;
+    new_node->next = table->buckets[index];
+    table->buckets[index] = new_node;
+    table->count++;
+    
+    return true;
 }
 
 /**
@@ -520,18 +507,13 @@ bool utils_hashtable_delete(hash_table_t* table, const char* key) {
         return false;  // 유효성 검사
     }
 
-    // LOG_INFO("HashTable", "해시 테이블 삭제 시작: 키=%s", key);
-
     uint32_t index = utils_hash_function(key, table->size);  // 해시 인덱스 계산
-    // LOG_INFO("HashTable", "해시 인덱스 계산: 키=%s, 인덱스=%u", key, index);
     
     hash_node_t* node = table->buckets[index];  // 해당 버킷의 첫 번째 노드
     hash_node_t* prev = NULL;  // 이전 노드 포인터
 
     while (node) {  // 노드가 존재하는 동안 반복
         if (strcmp(node->key, key) == 0) {  // 키가 일치하는 경우
-            // LOG_INFO("HashTable", "삭제할 노드 발견: 키=%s", key);
-            
             if (prev) {  // 이전 노드가 존재하는 경우
                 prev->next = node->next;  // 이전 노드의 다음을 현재 노드의 다음으로 설정
             } else {  // 첫 번째 노드인 경우
@@ -543,16 +525,13 @@ bool utils_hashtable_delete(hash_table_t* table, const char* key) {
             }
             free(node->key);  // 키 메모리 해제
             free(node);  // 노드 메모리 해제
-            table->count--; // <--- 이 라인을 추가하세요.
-
-            // LOG_INFO("HashTable", "노드 삭제 성공: 키=%s", key);
+            table->count--;
             return true;  // true 반환
         }
         prev = node;  // 이전 노드를 현재 노드로 설정
         node = node->next;  // 다음 노드로 이동
     }
 
-    // LOG_WARNING("HashTable", "삭제할 키를 찾을 수 없음: 키=%s", key);
     return false;  // false 반환
 }
 
@@ -568,8 +547,6 @@ void utils_hashtable_traverse(hash_table_t* table, void (*callback)(const char* 
         return;  // 유효성 검사
     }
 
-    // LOG_INFO("HashTable", "해시 테이블 순회 시작: 크기=%u", table->size);
-
     for (uint32_t i = 0; i < table->size; i++) {  // 모든 버킷에 대해 반복
         hash_node_t* node = table->buckets[i];  // 현재 버킷의 첫 번째 노드
         int bucket_count = 0;  // 버킷 내 노드 개수
@@ -584,8 +561,6 @@ void utils_hashtable_traverse(hash_table_t* table, void (*callback)(const char* 
             // LOG_INFO("HashTable", "버킷 %u 처리 완료: %d개 노드", i, bucket_count);
         }
     }
-
-    // LOG_INFO("HashTable", "해시 테이블 순회 완료");
 }
 
 bool utils_init_manager_base(void* manager, size_t manager_size, hash_table_t** table, uint32_t table_size, void (*free_func)(void*), pthread_mutex_t* mutex_ptr) {

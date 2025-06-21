@@ -13,7 +13,7 @@
 #include "../include/ui.h"
 #include "../include/resource.h"
 #include "../include/reservation.h"
-#include <ctype.h> // isprint() 사용을 위해 추가
+
 
 // 로그인 필드 구분을 위한 enum
 typedef enum {
@@ -25,6 +25,7 @@ typedef enum {
 // UI 상태를 관리하기 위한 enum (State Machine 기반)
 typedef enum {
     APP_STATE_LOGIN = 0,        // 로그인 화면 (초기 상태)
+    APP_STATE_SYNCING,          // [추가] 시간 동기화 중 상태
     APP_STATE_MAIN_MENU,        // 메인 메뉴
     APP_STATE_LOGGED_IN_MENU,   // 로그인된 메뉴
     APP_STATE_DEVICE_LIST,      // 장비 목록
@@ -83,6 +84,7 @@ static AppState current_state = APP_STATE_LOGIN;
 static int menu_highlight = 0;
 static int scroll_offset = 0;
 static time_t g_time_offset = 0; // 서버 시간 - 클라이언트 시간
+static bool g_time_sync_completed = false; // [추가] 시간 동기화 완료 여부 추적
 
 // 입력 버퍼 분리
 static char reservation_input_buffer[20] = {0};
@@ -125,7 +127,7 @@ int main(int argc, char* argv[]) {
         fds[2].fd = STDIN_FILENO;
         fds[2].events = POLLIN;
 
-        int ret = poll(fds, 3, 100);
+        int ret = poll(fds, 3, 1000);
         if (ret < 0) { if (errno == EINTR) continue; break; }
 
         if (fds[2].revents & POLLIN) {
@@ -147,7 +149,6 @@ int main(int argc, char* argv[]) {
                 running = false;
             }
         }
-
         // 모든 입력(키보드, 네트워크)을 처리한 후,
         // 최종적으로 확정된 상태를 기반으로 UI를 그립니다.
         client_draw_ui_for_current_state();
@@ -165,6 +166,15 @@ void client_draw_ui_for_current_state(void) {
             client_draw_login_input_ui();
             curs_set(1);
             break;
+        case APP_STATE_SYNCING:
+        {
+            const char* sync_message = "서버와 시간을 동기화하는 중입니다...";
+            int max_y, max_x;
+            getmaxyx(g_ui_manager->menu_win, max_y, max_x);
+            mvwprintw(g_ui_manager->menu_win, max_y / 2, (max_x - strlen(sync_message)) / 2, "%s", sync_message);
+            client_draw_message_win("잠시만 기다려주세요...");
+            break;
+        }
         case APP_STATE_MAIN_MENU: 
             client_draw_main_menu();
             break;
@@ -259,16 +269,8 @@ static void client_draw_device_list() {
 
     time_t current_time = client_get_synced_time();
     
-    // 예약 만료 처리
-    for (int i = 0; i < device_count; i++) {
-        device_t* current_device = &device_list[i];
-        if (current_device->status == DEVICE_RESERVED && current_device->reservation_end_time > 0) {
-            if (current_time >= current_device->reservation_end_time) {
-                current_device->status = DEVICE_AVAILABLE;
-                current_device->reserved_by[0] = '\0';
-            }
-        }
-    }
+    // [수정] 클라이언트의 자체적인 만료 처리 로직 제거 - 서버가 보내주는 정보만 신뢰
+    // 서버의 상태 업데이트를 그대로 사용하여 UI 일관성 보장
 
     // 공통 장비 목록 테이블 그리기 함수 사용
     ui_draw_device_table(g_ui_manager->menu_win, device_list, device_count, menu_highlight, true, 
@@ -365,11 +367,11 @@ static void client_handle_input_login_input(int ch) {
         buffer_size = sizeof(login_password_buffer);
     }
 
-    // [로그 추가] 어떤 키가 어느 필드에 입력됐는지 기록
-#ifdef DEBUG
-    LOG_INFO("LoginInput", "입력 필드: %s, 입력 키: %d (문자: %c)",
-        (active_login_field == LOGIN_FIELD_USERNAME) ? "USERNAME" : "PASSWORD", ch, (ch >= 32 && ch <= 126) ? ch : ' ');
-#endif
+    // [주석처리] 어떤 키가 어느 필드에 입력됐는지 기록
+    // #ifdef DEBUG
+    // LOG_INFO("LoginInput", "입력 필드: %s, 입력 키: %d (문자: %c)",
+    //     (active_login_field == LOGIN_FIELD_USERNAME) ? "USERNAME" : "PASSWORD", ch, (ch >= 32 && ch <= 126) ? ch : ' ');
+    // #endif
 
     switch (ch) {
         case 9: // Tab 키
@@ -403,9 +405,9 @@ static void client_handle_input_login_input(int ch) {
                 (*current_pos)--;
                 current_buffer[*current_pos] = '\0';
                 // [로그 추가] 실제로 UI에서 삭제가 반영될 때만 로그
-#ifdef DEBUG
-                LOG_INFO("LoginInput", "UI 반영: %s 필드에서 백스페이스(코드:%d)로 1글자 삭제", (active_login_field == LOGIN_FIELD_USERNAME) ? "USERNAME" : "PASSWORD", ch);
-#endif
+                // #ifdef DEBUG
+                // LOG_INFO("LoginInput", "UI 반영: %s 필드에서 백스페이스(코드:%d)로 1글자 삭제", (active_login_field == LOGIN_FIELD_USERNAME) ? "USERNAME" : "PASSWORD", ch);
+                // #endif
             }
             break;
 
@@ -415,9 +417,9 @@ static void client_handle_input_login_input(int ch) {
                 current_buffer[(*current_pos)++] = ch;
                 current_buffer[*current_pos] = '\0';
                 // [로그 추가] 실제로 UI에 문자가 추가될 때만 로그
-#ifdef DEBUG
-                LOG_INFO("LoginInput", "UI 반영: %s 필드에 키 입력(코드:%d, 문자:%c) 추가", (active_login_field == LOGIN_FIELD_USERNAME) ? "USERNAME" : "PASSWORD", ch, ch);
-#endif
+                // #ifdef DEBUG
+                // LOG_INFO("LoginInput", "UI 반영: %s 필드에 키 입력(코드:%d, 문자:%c) 추가", (active_login_field == LOGIN_FIELD_USERNAME) ? "USERNAME" : "PASSWORD", ch, ch);
+                // #endif
             }
             break;
     }
@@ -630,7 +632,7 @@ static void client_handle_server_message(const message_t* message) {
             }
             
             ui_refresh_all_windows(); // 강제 갱신
-            napms(1200); // 1.2초간 메시지 노출
+            napms(2000); 
         }
         break;
         
@@ -641,14 +643,24 @@ static void client_handle_server_message(const message_t* message) {
                 strncpy(client_session.username, login_username_buffer, MAX_USERNAME_LENGTH - 1);
                 client_session.username[MAX_USERNAME_LENGTH - 1] = '\0';
                 client_session.state = SESSION_LOGGED_IN;
-                current_state = APP_STATE_LOGGED_IN_MENU;
-                menu_highlight = 0;
-                ui_show_success_message("로그인 성공!");
                 
-                // [추가] 서버 시간 동기화 요청
+                // [수정] 바로 메뉴로 가는 대신, '동기화 중' 상태로 변경
+                current_state = APP_STATE_SYNCING;
+                
+                ui_show_success_message("로그인 성공! 서버와 시간 동기화를 시작합니다.");
+                
+                // [수정] 시간 동기화 요청 시 클라이언트의 현재 시간(T1)을 인자로 추가
                 message_t* sync_msg = message_create(MSG_TIME_SYNC_REQUEST, NULL);
                 if (sync_msg) {
-                    network_send_message(client_session.ssl, sync_msg);
+                    char t1_str[32];
+                    // T1: 클라이언트가 요청을 보내는 시간
+                    snprintf(t1_str, sizeof(t1_str), "%ld", time(NULL)); 
+                    
+                    sync_msg->args[0] = strdup(t1_str);
+                    if (sync_msg->args[0]) {
+                        sync_msg->arg_count = 1;
+                        network_send_message(client_session.ssl, sync_msg);
+                    }
                     message_destroy(sync_msg);
                 }
             } else {
@@ -676,36 +688,53 @@ static void client_handle_server_message(const message_t* message) {
             ui_show_success_message("예약이 성공적으로 취소되었습니다.");
             break;
         case MSG_STATUS_UPDATE:
-            client_process_and_store_device_list(message);
-            current_state = APP_STATE_DEVICE_LIST;
-            // [추가] 장비 목록이 변경되어 현재 선택된 인덱스가 유효하지 않을 경우 처리
-            if (menu_highlight >= device_count && device_count > 0) {
-                menu_highlight = device_count - 1;  // 마지막 장비로 조정
+            // [수정] 서버 업데이트는 항상 신뢰하고 처리 - 초기 상태만 아니라면 항상 업데이트
+            if (g_time_sync_completed && current_state > APP_STATE_SYNCING) {
+                client_process_and_store_device_list(message);
+                current_state = APP_STATE_DEVICE_LIST;
+                // [추가] 장비 목록이 변경되어 현재 선택된 인덱스가 유효하지 않을 경우 처리
+                if (menu_highlight >= device_count && device_count > 0) {
+                    menu_highlight = device_count - 1;  // 마지막 장비로 조정
+                }
+            } else {
+                // 동기화 중이거나 다른 상태일 때는 로그만 남기고 무시
+                LOG_INFO("Client", "Ignoring status update while in state %d (sync_completed: %s)", 
+                        current_state, g_time_sync_completed ? "true" : "false");
             }
             break;
         case MSG_TIME_SYNC_RESPONSE:
         {
-            if (message->arg_count > 0) {
-                time_t server_time = atol(message->args[0]);
-                g_time_offset = server_time - time(NULL);
-                LOG_INFO("TimeSync", "서버 시간 동기화 완료. Offset: %ld초", g_time_offset);
-                
-                // [추가] 시간 동기화 완료 후 장비 목록 요청
-                LOG_INFO("Client", "시간 동기화 완료, 장비 목록 요청 시작");
-                message_t* status_msg = message_create(MSG_STATUS_REQUEST, NULL);
-                if (status_msg) {
-                    if (network_send_message(client_session.ssl, status_msg) < 0) {
-                        LOG_ERROR("Client", "장비 목록 요청 전송 실패");
-                        running = false;
-                    } else {
-                        LOG_INFO("Client", "장비 목록 요청 전송 성공");
-                    }
-                    message_destroy(status_msg);
-                } else {
-                    LOG_ERROR("Client", "장비 목록 요청 메시지 생성 실패");
-                }
+            if (message->arg_count >= 2) {
+                // T4: 클라이언트가 응답을 받은 시간
+                time_t t4 = time(NULL); 
+                // T1: 클라이언트가 요청을 보냈던 시간 (서버가 되돌려준 값)
+                time_t t1 = atol(message->args[0]); 
+                // T3: 서버가 응답을 보냈던 시간
+                time_t t3 = atol(message->args[1]); 
+
+                // 1. 왕복 시간(RTT) 계산: (응답 받은 시간 - 요청 보낸 시간)
+                time_t rtt = t4 - t1;
+                // 2. 편도 지연(Latency) 추정: RTT의 절반
+                time_t latency = rtt / 2;
+                // 3. 현재 실제 서버 시간 추정: 서버가 보낸 시간 + 편도 지연
+                time_t actual_server_time = t3 + latency;
+                // 4. 최종 시간 오차 계산: (추정된 실제 서버 시간 - 현재 클라이언트 시간)
+                g_time_offset = actual_server_time - t4;
+
+                LOG_INFO("TimeSync", "정밀 시간 동기화 완료. RTT: %ld초, Latency: %ld초, Offset: %ld초", rtt, latency, g_time_offset);
+
+                // [추가] 시간 동기화 완료 플래그 설정
+                g_time_sync_completed = true;
+
+                // 동기화가 완료되었으므로 로그인 후 메뉴 상태로 안전하게 전환
+                current_state = APP_STATE_LOGGED_IN_MENU;
+                menu_highlight = 0; // 메뉴 하이라이트 초기화
             } else {
-                LOG_WARNING("TimeSync", "시간 동기화 응답에 서버 시간 정보가 없음");
+                LOG_WARNING("TimeSync", "시간 동기화 응답 형식이 올바르지 않음");
+                // 예외 처리 (단순 동기화 또는 동기화 실패 처리)
+                ui_show_error_message("시간 동기화에 실패했습니다.");
+                current_state = APP_STATE_LOGGED_IN_MENU;
+                menu_highlight = 0;
             }
             break;
         }
@@ -781,6 +810,9 @@ static void client_perform_logout(void) {
     memset(client_session.username, 0, sizeof(client_session.username));
     current_state = APP_STATE_MAIN_MENU;
     menu_highlight = 0;
+    // [추가] 시간 동기화 상태 리셋
+    g_time_sync_completed = false;
+    g_time_offset = 0;
     ui_show_success_message("로그아웃되었습니다.");
 }
 

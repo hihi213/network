@@ -31,7 +31,7 @@
 #include <menu.h>
 #include <form.h>
 #include <stdarg.h> // 가변 인자 사용을 위해 추가
-
+#include <ctype.h>
 #include <locale.h>
 #include <time.h>
 /* 전역 상수 정의 */
