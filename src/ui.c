@@ -205,7 +205,7 @@ void ui_draw_device_table(WINDOW* win, device_t* devices, int count, int highlig
     print_fixed_width(win, 1, col_x[1], "이름", col_w[1]);
     print_fixed_width(win, 1, col_x[2], "타입", col_w[2]);
     print_fixed_width(win, 1, col_x[3], "상태", col_w[3]);
-    print_fixed_width(win, 1, col_x[4], "예약정보", col_w[4]);
+    print_fixed_width(win, 1, col_x[4], "예약자(남은시간)", col_w[4]);
     wattroff(win, A_BOLD);
     
     // 구분선
