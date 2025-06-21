@@ -39,9 +39,6 @@ static bool server_is_user_authenticated(const char* username, const char* passw
 static void server_load_users_from_file(const char* filename);
 static int server_process_device_reservation(Client* client, const char* device_id, int duration_sec);
 static void server_trigger_ui_refresh(void);
-static void* server_session_cleanup_thread_function(void* arg);
-static void server_cleanup_inactive_clients(void);
-static void server_set_error_message(const char* message);
 // 전역 변수
 static int server_sock;
 static bool running = true;
@@ -57,11 +54,6 @@ static pthread_mutex_t client_list_mutex;
 static int g_server_port = 0; // [추가] 서버 포트 저장을 위한 전역 변수
 static performance_stats_t g_perf_stats;
 
-// 에러 메시지 관리용 전역 변수 추가
-static char g_error_message[256] = {0};
-static time_t g_error_timestamp = 0;
-static pthread_mutex_t g_error_mutex = PTHREAD_MUTEX_INITIALIZER;
-
 int main(int argc, char* argv[]) {
     if (argc != 2) {
         utils_report_error(ERROR_INVALID_PARAMETER, "Server", "사용법: %s <포트>", argv[0]);
@@ -70,7 +62,6 @@ int main(int argc, char* argv[]) {
     g_server_port = atoi(argv[1]); // [추가] 포트 번호를 전역 변수에 저장
     if (server_init(g_server_port) != 0) {
         utils_report_error(ERROR_NETWORK_SOCKET_CREATION_FAILED, "Main", "서버 초기화 실패");
-        server_set_error_message("서버 초기화 실패");
         server_cleanup();
         return 1;
     }
@@ -85,7 +76,6 @@ int main(int argc, char* argv[]) {
         if (ret < 0) {
             if (errno == EINTR) continue;
             utils_report_error(ERROR_NETWORK_SOCKET_OPTION_FAILED, "Main", "Poll 에러: %s", strerror(errno));
-            server_set_error_message("Poll 에러 발생");
             break;
         }
         
@@ -119,7 +109,6 @@ int main(int argc, char* argv[]) {
             pthread_t thread;
             if (pthread_create(&thread, NULL, server_client_thread_func, client) != 0) {
                 utils_report_error(ERROR_SESSION_CREATION_FAILED, "Main", "클라이언트 스레드 생성 실패");
-                server_set_error_message("클라이언트 스레드 생성 실패");
                 server_cleanup_client(client);
             }
             pthread_detach(thread);
@@ -465,17 +454,6 @@ static int server_init(int port) {
     g_perf_stats.total_data_received = 0;
     g_perf_stats.total_errors = 0;
     
-    // 클라이언트 리스트 뮤텍스 초기화
-    pthread_mutex_init(&client_list_mutex, NULL);
-    
-    // 세션 정리 스레드 시작
-    pthread_t session_cleanup_thread;
-    if (pthread_create(&session_cleanup_thread, NULL, server_session_cleanup_thread_function, NULL) != 0) {
-        utils_report_error(ERROR_INVALID_STATE, "Server", "세션 정리 스레드 생성 실패");
-        return -1;
-    }
-    pthread_detach(session_cleanup_thread);
-    
     return 0;
 }
 
@@ -604,10 +582,14 @@ void server_draw_ui_for_current_state(void) {
     if (!g_ui_manager) return;
     pthread_mutex_lock(&g_ui_manager->mutex);
 
-    // 1. 상단 정보 바 (status_win) - 성능 통계와 에러 메시지
+    // 1. 상단 정보 바 (status_win) - 성능 통계 추가
     werase(g_ui_manager->status_win);
     box(g_ui_manager->status_win, 0, 0);
     int session_count = (session_manager && session_manager->sessions) ? session_manager->sessions->count : 0;
+    time_t now = time(NULL);
+    struct tm* tm_info = localtime(&now);
+    char time_str[32];
+    strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M:%S", tm_info);
     
     // 성능 통계 정보 가져오기
     pthread_mutex_lock(&g_perf_stats.mutex);
@@ -619,25 +601,12 @@ void server_draw_ui_for_current_state(void) {
     uint64_t min_response_time = g_perf_stats.min_response_time;
     pthread_mutex_unlock(&g_perf_stats.mutex);
     
-    // 첫 번째 줄: 포트와 세션 정보
-    mvwprintw(g_ui_manager->status_win, 1, 2, "포트: %d  세션: %d", g_server_port, session_count);
+    // 첫 번째 줄: 기본 서버 정보
+    mvwprintw(g_ui_manager->status_win, 1, 2, "서버: MyServer  포트: %d  세션: %d  시간: %s", g_server_port, session_count, time_str);
     
     // 두 번째 줄: 성능 통계
     mvwprintw(g_ui_manager->status_win, 2, 2, "요청: 총%lu 성공%lu 실패%lu | 응답시간: 평균%luμs 최대%luμs 최소%luμs", 
               total_req, success_req, failed_req, avg_response_time, max_response_time, min_response_time);
-    
-    // 세 번째 줄: 에러 메시지 (있는 경우)
-    pthread_mutex_lock(&g_error_mutex);
-    if (g_error_message[0] != '\0') {
-        time_t current_time = time(NULL);
-        if (current_time - g_error_timestamp < 10) { // 10초간 에러 메시지 표시
-            mvwprintw(g_ui_manager->status_win, 3, 2, "에러: %s", g_error_message);
-        } else {
-            // 10초가 지나면 에러 메시지 초기화
-            g_error_message[0] = '\0';
-        }
-    }
-    pthread_mutex_unlock(&g_error_mutex);
     
     wrefresh(g_ui_manager->status_win);
 
@@ -679,61 +648,4 @@ static int server_send_error_response_with_code(SSL* ssl, error_code_t error_cod
     int ret = network_send_message(ssl, response);
     message_destroy(response);
     return ret;
-}
-
-static void* server_session_cleanup_thread_function(void* arg) {
-    (void)arg;
-    while (running) {
-        server_cleanup_inactive_clients();
-        sleep(5); // 5초마다 체크
-    }
-    return NULL;
-}
-
-static void server_cleanup_inactive_clients(void) {
-    time_t current_time = time(NULL);
-    const time_t INACTIVE_TIMEOUT = 60; // 60초로 되돌림
-    
-    pthread_mutex_lock(&client_list_mutex);
-    
-    for (int i = num_clients - 1; i >= 0; i--) { // 역순으로 순회하여 삭제 안전성 확보
-        if (client_list[i]) {
-            time_t inactive_time = current_time - client_list[i]->last_activity;
-            
-            if (inactive_time > INACTIVE_TIMEOUT) {
-                LOG_INFO("Server", "비활성 클라이언트 정리: %s (비활성 시간: %ld초)", 
-                        client_list[i]->username[0] ? client_list[i]->username : client_list[i]->ip, 
-                        inactive_time);
-                
-                // 클라이언트에게 종료 메시지 전송
-                message_t* disconnect_msg = message_create(MSG_ERROR, "서버에서 연결을 종료합니다. (60초 비활성)");
-                if (disconnect_msg) {
-                    disconnect_msg->error_code = ERROR_SESSION_INVALID_STATE;
-                    network_send_message(client_list[i]->ssl, disconnect_msg);
-                    message_destroy(disconnect_msg);
-                }
-                
-                // 세션만 정리하고, 클라이언트 스레드가 자체적으로 정리하도록 함
-                if (client_list[i]->state == SESSION_LOGGED_IN) {
-                    session_close(session_manager, client_list[i]->username);
-                    client_list[i]->state = SESSION_DISCONNECTED;
-                    memset(client_list[i]->username, 0, sizeof(client_list[i]->username));
-                }
-                
-                // 리스트에서 제거
-                client_list[i] = client_list[num_clients - 1];
-                client_list[num_clients - 1] = NULL;
-                num_clients--;
-            }
-        }
-    }
-    
-    pthread_mutex_unlock(&client_list_mutex);
-}
-
-static void server_set_error_message(const char* message) {
-    pthread_mutex_lock(&g_error_mutex);
-    strncpy(g_error_message, message, sizeof(g_error_message) - 1);
-    g_error_timestamp = time(NULL);
-    pthread_mutex_unlock(&g_error_mutex);
 }
