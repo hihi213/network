@@ -32,6 +32,25 @@ typedef enum {
     APP_STATE_EXIT              // 종료
 } AppState;
 
+// 메뉴 데이터 정의
+static ui_menu_item_t main_menu_items[] = {
+    {"로그인", 0, true, NULL},
+    {"종료", 1, true, NULL}
+};
+
+static ui_menu_item_t logged_in_menu_items[] = {
+    {"장비 현황 조회 및 예약", 0, true, NULL},
+    {"로그아웃", 1, true, NULL}
+};
+
+static ui_menu_t main_menu = {
+    NULL, main_menu_items, 2, 0, "[↑↓] 이동  [Enter] 선택  [ESC] 종료"
+};
+
+static ui_menu_t logged_in_menu = {
+    NULL, logged_in_menu_items, 2, 0, "[↑↓] 이동  [Enter] 선택  [ESC] 로그아웃"
+};
+
 // 함수 프로토타입
 static void client_signal_handler(int signum);
 static void client_cleanup_resources(void);
@@ -208,25 +227,25 @@ static void client_draw_login_input_ui() {
 
 
 static void client_draw_main_menu() {
+    // 메뉴 하이라이트 인덱스 업데이트
+    main_menu.highlight_index = menu_highlight;
+    
+    // 데이터 기반 메뉴 렌더링
+    ui_render_menu(g_ui_manager->menu_win, &main_menu);
+    
     // 안내 메시지 message_win에 출력
-    client_draw_message_win("[↑↓] 이동  [Enter] 선택  [ESC] 종료");
-    const char* items[] = { "로그인", "종료" };
-    for (int i = 0; i < 2; i++) {
-        if (i == menu_highlight) wattron(g_ui_manager->menu_win, A_REVERSE);
-        mvwprintw(g_ui_manager->menu_win, i + 2, 2, " > %s", items[i]);
-        if (i == menu_highlight) wattroff(g_ui_manager->menu_win, A_REVERSE);
-    }
+    client_draw_message_win(main_menu.help_text);
 }
 
 static void client_draw_logged_in_menu() {
+    // 메뉴 하이라이트 인덱스 업데이트
+    logged_in_menu.highlight_index = menu_highlight;
+    
+    // 데이터 기반 메뉴 렌더링
+    ui_render_menu(g_ui_manager->menu_win, &logged_in_menu);
+    
     // 안내 메시지 message_win에 출력
-    client_draw_message_win("[↑↓] 이동  [Enter] 선택  [ESC] 로그아웃");
-    const char* items[] = { "장비 현황 조회 및 예약", "로그아웃" };
-    for (int i = 0; i < 2; i++) {
-        if (i == menu_highlight) wattron(g_ui_manager->menu_win, A_REVERSE);
-        mvwprintw(g_ui_manager->menu_win, i + 2, 2, " > %s", items[i]);
-        if (i == menu_highlight) wattroff(g_ui_manager->menu_win, A_REVERSE);
-    }
+    client_draw_message_win(logged_in_menu.help_text);
 }
 
 static void client_draw_device_list() {

@@ -280,3 +280,73 @@ void ui_draw_device_table(WINDOW* win, device_t* devices, int count, int highlig
         }
     }
 }
+
+/**
+ * @brief 메뉴를 렌더링하는 함수
+ * @param win 출력할 윈도우
+ * @param menu 렌더링할 메뉴 구조체
+ */
+void ui_render_menu(WINDOW* win, const ui_menu_t* menu) {
+    if (!win || !menu || !menu->items) return;
+    
+    int win_height, win_width;
+    getmaxyx(win, win_height, win_width);
+    
+    // 메뉴 제목 출력
+    if (menu->title) {
+        wattron(win, A_BOLD);
+        mvwprintw(win, 1, 2, "%s", menu->title);
+        wattroff(win, A_BOLD);
+    }
+    
+    // 메뉴 아이템들 출력
+    int start_y = menu->title ? 3 : 2;
+    for (int i = 0; i < menu->item_count && (start_y + i) < win_height - 2; i++) {
+        const ui_menu_item_t* item = &menu->items[i];
+        
+        // 비활성화된 아이템은 회색으로 표시
+        if (!item->enabled) {
+            wattron(win, A_DIM);
+        }
+        
+        // 하이라이트된 아이템은 반전 표시
+        if (i == menu->highlight_index) {
+            wattron(win, A_REVERSE);
+        }
+        
+        // 메뉴 아이템 출력
+        mvwprintw(win, start_y + i, 2, " > %s", item->text);
+        
+        // 속성 해제
+        if (i == menu->highlight_index) {
+            wattroff(win, A_REVERSE);
+        }
+        if (!item->enabled) {
+            wattroff(win, A_DIM);
+        }
+    }
+    
+    // 도움말 텍스트 출력
+    if (menu->help_text) {
+        mvwprintw(win, win_height - 2, 2, "%s", menu->help_text);
+    }
+}
+
+/**
+ * @brief 장비 목록 테이블을 렌더링하는 함수 (ui_draw_device_table의 별칭)
+ * @param win 출력할 윈도우
+ * @param devices 장비 배열
+ * @param count 장비 개수
+ * @param highlight_row 하이라이트할 행 (-1이면 없음)
+ * @param show_remaining_time 남은 시간 표시 여부
+ * @param reservation_manager 예약 매니저 (서버용, 클라이언트는 NULL)
+ * @param resource_manager 리소스 매니저 (서버용, 클라이언트는 NULL)
+ * @param current_time 현재 시간 (클라이언트용)
+ * @param use_color 색상 적용 여부
+ */
+void ui_render_device_table(WINDOW* win, device_t* devices, int count, int highlight_row, 
+                           bool show_remaining_time, void* reservation_manager, void* resource_manager, 
+                           time_t current_time, bool use_color) {
+    ui_draw_device_table(win, devices, count, highlight_row, show_remaining_time, 
+                        reservation_manager, resource_manager, current_time, use_color);
+}

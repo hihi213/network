@@ -6,6 +6,7 @@
 #include "reservation.h" // Reservation 정보 표시
 #include "session.h"     // ClientSession 정보 표시
 #include <ncurses.h>
+#include <pthread.h>
 
 /* UI 상수 */
 #define COLOR_PAIR_TITLE 1
@@ -27,36 +28,37 @@ typedef enum menu_type {
 #define MAX_MESSAGE_LENGTH 1024
 #define MAX_ARG_LENGTH 256
 
-/* UI 메뉴 항목 구조체 */
-typedef struct ui_menu_item {
-    char key;
-    const char* description;
-    void (*handler)(void);
+/* UI 모드 정의 */
+typedef enum {
+    UI_CLIENT,
+    UI_SERVER
+} ui_mode_t;
+
+/* 메뉴 아이템 구조체 */
+typedef struct {
+    const char* text;           // 메뉴 텍스트
+    int id;                     // 메뉴 ID (선택 시 반환될 값)
+    bool enabled;               // 활성화 여부
+    void (*action)(void);       // 선택 시 실행할 콜백 함수 (선택사항)
 } ui_menu_item_t;
 
-typedef enum { UI_CLIENT, UI_SERVER } ui_mode_t;
+/* 메뉴 구조체 */
+typedef struct {
+    const char* title;          // 메뉴 제목
+    ui_menu_item_t* items;      // 메뉴 아이템 배열
+    int item_count;             // 아이템 개수
+    int highlight_index;        // 현재 하이라이트된 아이템 인덱스
+    const char* help_text;      // 도움말 텍스트
+} ui_menu_t;
 
 /* UI 매니저 구조체 */
-typedef struct ui_manager {
-    WINDOW* main_win;
-    WINDOW* status_win;
-    WINDOW* menu_win;
-    WINDOW* message_win;
-    WINDOW* input_win;
-    MENU* menu;
-    ITEM** menu_items;
-    FORM* form;
-    FIELD** form_fields;
-    bool is_running;
-    pthread_mutex_t mutex;
-    int menu_count;
-    int field_count;
-    menu_type_t current_menu;
-    int selected_item;
-    char status_message[MAX_MESSAGE_LENGTH];
-    char error_message[MAX_MESSAGE_LENGTH];
-    char success_message[MAX_MESSAGE_LENGTH];
+typedef struct {
     ui_mode_t mode;
+    WINDOW* main_win;
+    WINDOW* menu_win;
+    WINDOW* status_win;
+    WINDOW* message_win;
+    pthread_mutex_t mutex;
 } ui_manager_t;
 
 /* 전역 UI 매니저 */
@@ -86,5 +88,11 @@ void ui_show_success_message(const char* message);
 void ui_draw_device_table(WINDOW* win, device_t* devices, int count, int highlight_row, 
                          bool show_remaining_time, void* reservation_manager, void* resource_manager, 
                          time_t current_time, bool use_color);
+
+// 메뉴 렌더링 함수들
+void ui_render_menu(WINDOW* win, const ui_menu_t* menu);
+void ui_render_device_table(WINDOW* win, device_t* devices, int count, int highlight_row, 
+                           bool show_remaining_time, void* reservation_manager, void* resource_manager, 
+                           time_t current_time, bool use_color);
 
 #endif /* UI_H */
