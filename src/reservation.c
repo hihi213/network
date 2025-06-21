@@ -79,8 +79,11 @@ static void time_wheel_add(time_wheel_t* wheel, reservation_t* res) {
 
     // [수정] 남은 시간을 기준으로 cycle과 bucket_index를 계산합니다.
     node->cycle = remaining_seconds / wheel->size;
-    int bucket_index = (wheel->current_index + remaining_seconds) % wheel->size;
+    int bucket_index = (wheel->current_index + (remaining_seconds % wheel->size)) % wheel->size;
     
+    LOG_INFO("TimeWheel", "타임휠 추가: 예약ID=%u, 장비=%s, 남은시간=%ld초, cycle=%d, 버킷=%d", 
+             res->id, res->device_id, remaining_seconds, node->cycle, bucket_index);
+
     pthread_mutex_lock(&wheel->mutex);
     node->next = wheel->buckets[bucket_index];
     wheel->buckets[bucket_index] = node;
@@ -99,7 +102,7 @@ static void time_wheel_remove(time_wheel_t* wheel, reservation_t* res) {
     // [수정] 예약 제거 시에도 현재 시간 기준으로 버킷 인덱스를 계산합니다.
     time_t now = time(NULL);
     long remaining_seconds = (res->end_time > now) ? (res->end_time - now) : 0;
-    int bucket_index = (wheel->current_index + remaining_seconds) % wheel->size;
+    int bucket_index = (wheel->current_index + (remaining_seconds % wheel->size)) % wheel->size;
 
     LOG_INFO("TimeWheel", "타임휠 제거 시작: 예약ID=%u, 장비=%s, 버킷=%d", 
              res->id, res->device_id, bucket_index);
@@ -127,11 +130,14 @@ static void time_wheel_remove(time_wheel_t* wheel, reservation_t* res) {
 
 static void time_wheel_tick(reservation_manager_t* manager) {
     time_wheel_t* wheel = manager->time_wheel;
-    pthread_mutex_lock(&wheel->mutex);
-
-    wheel->current_index = (wheel->current_index + 1) % wheel->size;
     
+    // 락 외부에서 처리할 노드 리스트 분리
+    pthread_mutex_lock(&wheel->mutex);
+    wheel->current_index = (wheel->current_index + 1) % wheel->size;
     time_wheel_node_t* node = wheel->buckets[wheel->current_index];
+    wheel->buckets[wheel->current_index] = NULL;
+    pthread_mutex_unlock(&wheel->mutex);
+
     int node_count = 0;
     time_wheel_node_t* temp = node;
     while (temp) {
@@ -143,10 +149,6 @@ static void time_wheel_tick(reservation_manager_t* manager) {
         LOG_INFO("TimeWheel", "현재 버킷[%d]에서 %d개 노드 처리 시작 (현재시간: %ld)", 
                  wheel->current_index, node_count, time(NULL));
     }
-    
-    wheel->buckets[wheel->current_index] = NULL;
-
-    pthread_mutex_unlock(&wheel->mutex);
 
     // 만료 처리 (이제 락 외부에서 수행)
     bool updated = false;
@@ -157,58 +159,58 @@ static void time_wheel_tick(reservation_manager_t* manager) {
     while (node) {
         time_wheel_node_t* next = node->next;
         processed_count++;
-        
-        LOG_INFO("TimeWheel", "노드[%d] 처리: 예약ID=%u, 장비=%s, 사용자=%s, 종료시간=%ld, cycle=%d", 
-                 processed_count, node->reservation->id, node->reservation->device_id, 
-                 node->reservation->username, node->reservation->end_time, node->cycle);
-        
-        if (node->cycle > 0) {
-            node->cycle--;
-            recycled_count++;
-            LOG_INFO("TimeWheel", "노드[%d] 재사용: cycle 감소 (%d -> %d)", processed_count, node->cycle + 1, node->cycle);
-            // 다시 제자리에 넣기 (락 필요)
-            pthread_mutex_lock(&wheel->mutex);
-            node->next = wheel->buckets[wheel->current_index];
-            wheel->buckets[wheel->current_index] = node;
-            pthread_mutex_unlock(&wheel->mutex);
-        } else {
-            // 만료된 예약 처리
+
+        reservation_t* res_snapshot = node->reservation;
+        bool should_free_node = false;
+
+        pthread_mutex_lock(&manager->mutex);
+
+        char id_str[16];
+        snprintf(id_str, sizeof(id_str), "%u", res_snapshot->id);
+        reservation_t* live_res = (reservation_t*)utils_hashtable_get(manager->reservation_map, id_str);
+
+        if (!live_res) {
+            should_free_node = true;
+        } else if (live_res->status == RESERVATION_CANCELLED) {
+            LOG_INFO("TimeWheel", "취소된 예약 정리: 예약ID=%u", live_res->id);
+            utils_hashtable_delete(manager->reservation_map, id_str);
+            should_free_node = true;
             expired_count++;
-            reservation_t* res = node->reservation;
-            time_t current_time = time(NULL);
-
-            // [수정 시작] reservation_cancel() 호출을 제거하고 직접 상태를 관리합니다.
-            if (res->end_time <= current_time) {
-                pthread_mutex_lock(&manager->mutex); // manager->mutex로 잠금
-
-                // 해시 테이블에서 최신 예약 정보를 다시 가져와 확인 (안전성 확보)
-                char id_str[16];
-                snprintf(id_str, sizeof(id_str), "%u", res->id);
-                reservation_t* live_res = (reservation_t*)utils_hashtable_get(manager->reservation_map, id_str);
-
-                // 사용자가 동시에 취소했을 수 있으므로, 아직 '승인' 상태일 때만 처리
-                if (live_res && live_res->status == RESERVATION_APPROVED) {
-                    live_res->status = RESERVATION_COMPLETED; // 상태를 '완료'로 변경
-                    LOG_INFO("TimeWheel", "예약 만료 처리: 예약ID=%u, 장비=%s, 상태=APPROVED->COMPLETED", 
-                             live_res->id, live_res->device_id);
-
-                    // 장비 상태를 '사용 가능'으로 업데이트
+        } else if (live_res->status == RESERVATION_APPROVED) {
+            if (node->cycle == 0) {
+                time_t current_time = time(NULL);
+                if (live_res->end_time <= current_time) {
+                    LOG_INFO("TimeWheel", "예약 만료 처리: 예약ID=%u", live_res->id);
+                    live_res->status = RESERVATION_COMPLETED;
                     resource_update_device_status(global_resource_manager, live_res->device_id, DEVICE_AVAILABLE, 0);
-                    updated = true; // 브로드캐스트를 위해 플래그 설정
-                    
-                    LOG_INFO("TimeWheel", "장비 상태 업데이트 완료: 장비=%s, 상태=RESERVED->AVAILABLE", live_res->device_id);
-                } else if (live_res) {
-                    LOG_INFO("TimeWheel", "예약이 이미 처리됨: 예약ID=%u, 상태=%d", live_res->id, live_res->status);
-                } else {
-                    LOG_WARNING("TimeWheel", "만료 처리 중 예약을 찾을 수 없음: 예약ID=%u", res->id);
+                    updated = true;
+                    utils_hashtable_delete(manager->reservation_map, id_str);
+                    should_free_node = true;
+                    expired_count++;
                 }
-
-                pthread_mutex_unlock(&manager->mutex);
             }
-            // [수정 끝]
-
-            // 타임휠 노드 자체는 항상 해제
+        }
+        
+        pthread_mutex_unlock(&manager->mutex);
+        
+        if (should_free_node) {
             free(node);
+        } else {
+            recycled_count++;
+            
+            if (node->cycle > 0) {
+                node->cycle--;
+                pthread_mutex_lock(&wheel->mutex);
+                node->next = wheel->buckets[wheel->current_index];
+                wheel->buckets[wheel->current_index] = node;
+                pthread_mutex_unlock(&wheel->mutex);
+            } else {
+                int next_bucket_index = (wheel->current_index + 1) % wheel->size;
+                pthread_mutex_lock(&wheel->mutex);
+                node->next = wheel->buckets[next_bucket_index];
+                wheel->buckets[next_bucket_index] = node;
+                pthread_mutex_unlock(&wheel->mutex);
+            }
         }
         node = next;
     }
@@ -436,10 +438,18 @@ uint32_t reservation_create(reservation_manager_t* manager, const char* device_i
         LOG_INFO("Reservation", "예약 생성 성공: ID=%u, 장비=%s, 사용자=%s, 종료시간=%ld", 
                  reservation_id, device_id, username, end_time);
         time_wheel_add(manager->time_wheel, new_reservation); // [추가] 타임휠에 추가
-    manager->reservation_count++;
-    pthread_mutex_unlock(&manager->mutex);
-    // LOG_INFO("Reservation", "예약 생성 성공: ID=%u", reservation_id);
-    return reservation_id; 
+        
+        // [추가] 장비 상태를 RESERVED로 변경하고 active_reservation_id 설정
+        if (global_resource_manager) {
+            resource_update_device_status(global_resource_manager, device_id, DEVICE_RESERVED, reservation_id);
+            LOG_INFO("Reservation", "장비 상태 업데이트 완료: 장비=%s, 상태=AVAILABLE->RESERVED, 예약ID=%u", 
+                     device_id, reservation_id);
+        }
+        
+        manager->reservation_count++;
+        pthread_mutex_unlock(&manager->mutex);
+        // LOG_INFO("Reservation", "예약 생성 성공: ID=%u", reservation_id);
+        return reservation_id; 
     } else {
         // [수정] 해시 테이블 추가 실패 시 메모리 해제
         free(new_reservation);
@@ -456,39 +466,31 @@ bool reservation_cancel(reservation_manager_t* manager, uint32_t reservation_id,
         return false;
     }
 
-    // LOG_INFO("Reservation", "예약 취소 시작: ID=%u, 사용자=%s", reservation_id, username);
     pthread_mutex_lock(&manager->mutex);
 
     char id_str[16];
     snprintf(id_str, sizeof(id_str), "%u", reservation_id);
     reservation_t* reservation = (reservation_t*)utils_hashtable_get(manager->reservation_map, id_str);
 
-    if (!reservation) {
+    if (!reservation || strcmp(reservation->username, username) != 0 || reservation->status != RESERVATION_APPROVED) {
         pthread_mutex_unlock(&manager->mutex);
-        utils_report_error(ERROR_RESERVATION_NOT_FOUND, "Reservation", "예약을 찾을 수 없음: ID=%u", reservation_id);
         return false;
     }
 
-    if (strcmp(reservation->username, username) != 0) {
-        pthread_mutex_unlock(&manager->mutex);
-        utils_report_error(ERROR_RESERVATION_PERMISSION_DENIED, "Reservation", "예약 취소 권한 없음: ID=%u, 사용자=%s", reservation_id, username);
-        return false;
-    }
-
-    if (reservation->status != RESERVATION_APPROVED) {
-        pthread_mutex_unlock(&manager->mutex);
-        utils_report_error(ERROR_RESERVATION_CANCELLATION_FAILED, "Reservation", "이미 처리되었거나 취소된 예약입니다: ID=%u", reservation_id);
-        return false;
-    }
-
-    // [수정] 타임휠에서 제거 후 해시 테이블에서 삭제
-    LOG_INFO("Reservation", "예약 취소 처리: ID=%u, 사용자=%s, 장비=%s", 
+    // --- 수정된 로직 ---
+    // 1. 상태를 '취소됨'으로 변경 (메모리는 해제하지 않음)
+    LOG_INFO("Reservation", "예약 취소 처리 (상태 변경): ID=%u, 사용자=%s, 장비=%s",
              reservation_id, username, reservation->device_id);
-    time_wheel_remove(manager->time_wheel, reservation); // [추가] 타임휠에서 제거
     reservation->status = RESERVATION_CANCELLED;
-    utils_hashtable_delete(manager->reservation_map, id_str);
 
-    // LOG_INFO("Reservation", "예약 취소 성공: ID=%u", reservation_id);
+    // 2. 장비 상태를 '사용 가능'으로 업데이트 (역할 명확화)
+    if (global_resource_manager) {
+        resource_update_device_status(global_resource_manager, reservation->device_id, DEVICE_AVAILABLE, 0);
+    }
+    
+    // 3. time_wheel_remove와 hashtable_delete 호출 제거
+    //    정리는 time_wheel_tick 에서 일괄 처리합니다.
+
     pthread_mutex_unlock(&manager->mutex);
     return true;
 }

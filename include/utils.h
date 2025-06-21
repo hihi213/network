@@ -177,6 +177,7 @@ typedef struct hash_table {
     uint32_t count;
     hash_node_t** buckets;
     void (*free_value)(void*); // 값을 해제하는 함수 포인터
+    pthread_mutex_t mutex;     // 스레드 안전성을 위한 뮤텍스
 } hash_table_t;
 
 /**

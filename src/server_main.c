@@ -49,7 +49,7 @@ static reservation_manager_t* reservation_manager = NULL;
 static session_manager_t* session_manager = NULL;
 static hash_table_t* user_credentials = NULL; // 사용자 정보 해시 테이블 추가
 static Client* client_list[MAX_CLIENTS];
-static int num_clients = 0;
+static int client_count = 0;
 static pthread_mutex_t client_list_mutex;
 static int g_server_port = 0; // [추가] 서버 포트 저장을 위한 전역 변수
 static performance_stats_t g_perf_stats;
@@ -124,27 +124,43 @@ int main(int argc, char* argv[]) {
 }
 
 static void server_broadcast_status_update(void) {
+    LOG_INFO("Server", "상태 업데이트 브로드캐스트 시작: 연결된 클라이언트 수=%d", client_count);
+    
     device_t devices[MAX_DEVICES];
     int count = resource_get_device_list(resource_manager, devices, MAX_DEVICES);
-    if (count < 0) return;
-    message_t* response = message_create(MSG_STATUS_UPDATE, NULL);
-    if (response) {
-        if (!message_fill_status_response_args(response, devices, count, resource_manager, reservation_manager)) {
-            message_destroy(response);
+    if (count < 0) {
+        LOG_ERROR("Server", "상태 업데이트 실패: 장비 목록 가져오기 실패");
         return;
     }
+    
+    message_t* status_msg = message_create(MSG_STATUS_UPDATE, NULL);
+    if (!status_msg) {
+        LOG_ERROR("Server", "상태 업데이트 실패: 상태 메시지 생성 실패");
+        return;
+    }
+    
+    if (!message_fill_status_response_args(status_msg, devices, count, resource_manager, reservation_manager)) {
+        LOG_ERROR("Server", "상태 업데이트 실패: 상태 메시지 인수 채우기 실패");
+        message_destroy(status_msg);
+        return;
+    }
+    
     pthread_mutex_lock(&client_list_mutex);
-    for (int i = 0; i < num_clients; i++) {
+    int sent_count = 0;
+    for (int i = 0; i < client_count; i++) {
         if (client_list[i] && client_list[i]->state == SESSION_LOGGED_IN) {
-                network_send_message(client_list[i]->ssl, response);
+            if (network_send_message(client_list[i]->ssl, status_msg) >= 0) {
+                sent_count++;
+                LOG_DEBUG("Server", "상태 업데이트 전송 성공: 클라이언트=%s", client_list[i]->username);
+            } else {
+                LOG_WARNING("Server", "상태 업데이트 전송 실패: 클라이언트=%s", client_list[i]->username);
             }
         }
-        pthread_mutex_unlock(&client_list_mutex);
-        message_destroy(response);
-        
-        // UI 즉시 갱신 신호 보내기
-        server_trigger_ui_refresh();
     }
+    pthread_mutex_unlock(&client_list_mutex);
+    
+    LOG_INFO("Server", "상태 업데이트 브로드캐스트 완료: 전송된 클라이언트=%d/%d", sent_count, client_count);
+    message_destroy(status_msg);
 }
 
 static void server_client_message_loop(Client* client) {
@@ -183,17 +199,17 @@ static void server_client_message_loop(Client* client) {
 
 static void server_add_client_to_list(Client* client) {
     pthread_mutex_lock(&client_list_mutex);
-    if (num_clients < MAX_CLIENTS) client_list[num_clients++] = client;
+    if (client_count < MAX_CLIENTS) client_list[client_count++] = client;
     pthread_mutex_unlock(&client_list_mutex);
     server_trigger_ui_refresh();
 }
 
 static void server_remove_client_from_list(Client* client) {
     pthread_mutex_lock(&client_list_mutex);
-    for (int i = 0; i < num_clients; i++) {
+    for (int i = 0; i < client_count; i++) {
         if (client_list[i] == client) {
-            client_list[i] = client_list[num_clients - 1];
-            num_clients--;
+            client_list[i] = client_list[client_count - 1];
+            client_count--;
             break;
         }
     }
@@ -220,27 +236,39 @@ static void* server_client_thread_func(void* arg) {
 }
 
 static int server_process_device_reservation(Client* client, const char* device_id, int duration_sec) {
+    LOG_INFO("Server", "예약 처리 검증 시작: 장비=%s, 사용자=%s", device_id, client->username);
+    
     if (!resource_is_device_available(resource_manager, device_id)) {
+        LOG_WARNING("Server", "예약 실패: 장비 사용 불가 (장비=%s, 사용자=%s)", device_id, client->username);
         reservation_t* active_res = reservation_get_active_for_device(reservation_manager, resource_manager, device_id);
         if (active_res) {
             char error_msg[256];
             snprintf(error_msg, sizeof(error_msg), "사용 불가: '%s'님이 사용 중입니다.", active_res->username);
+            LOG_INFO("Server", "예약 실패: 다른 사용자가 사용 중 (장비=%s, 요청자=%s, 사용자=%s)", 
+                    device_id, client->username, active_res->username);
             return server_send_error_response_with_code(client->ssl, ERROR_RESERVATION_ALREADY_EXISTS, error_msg);
         } else {
+            LOG_WARNING("Server", "예약 실패: 장비 점검 중 또는 사용 불가 (장비=%s, 사용자=%s)", device_id, client->username);
             return server_send_error_response_with_code(client->ssl, ERROR_RESOURCE_IN_USE, "현재 사용 불가 또는 점검 중인 장비입니다.");
         }
     }
+    
+    LOG_INFO("Server", "예약 생성 시작: 장비=%s, 사용자=%s, 시간=%d초", device_id, client->username, duration_sec);
     time_t start = time(NULL);
     time_t end = start + duration_sec;
     uint32_t new_res_id = reservation_create(reservation_manager, device_id, client->username, start, end, "User Reservation");
     if (new_res_id == 0) {
+        LOG_ERROR("Server", "예약 생성 실패: 장비=%s, 사용자=%s, 시간=%d초", device_id, client->username, duration_sec);
         return server_send_error_response_with_code(client->ssl, ERROR_UNKNOWN, "예약 생성에 실패했습니다 (시간 중복 등).");
     }
-    if (!resource_update_device_status(resource_manager, device_id, DEVICE_RESERVED, new_res_id)) {
-        reservation_cancel(reservation_manager, new_res_id, "system");
-        return server_send_error_response_with_code(client->ssl, ERROR_UNKNOWN, "서버 내부 오류: 예약 상태 동기화 실패");
-    }
+    
+    LOG_INFO("Server", "예약 생성 성공: 예약ID=%u, 장비=%s, 사용자=%s, 시작=%ld, 종료=%ld", 
+             new_res_id, device_id, client->username, start, end);
+    
+    LOG_INFO("Server", "상태 업데이트 브로드캐스트 시작");
     server_broadcast_status_update();
+    LOG_INFO("Server", "상태 업데이트 브로드캐스트 완료");
+    
     message_t* response = message_create(MSG_RESERVE_RESPONSE, "success");
     if (response) {
         device_t updated_device;
@@ -251,11 +279,18 @@ static int server_process_device_reservation(Client* client, const char* device_
             response->arg_count = 1;
             message_fill_status_response_args(response, &updated_device, 1, resource_manager, reservation_manager);
         }
+        
+        LOG_INFO("Server", "예약 성공 응답 전송: 예약ID=%u, 장비=%s, 사용자=%s", new_res_id, device_id, client->username);
         network_send_message(client->ssl, response);
         message_destroy(response);
+    } else {
+        LOG_ERROR("Server", "예약 성공 응답 생성 실패: 예약ID=%u, 장비=%s, 사용자=%s", new_res_id, device_id, client->username);
     }
+    
+    LOG_INFO("Server", "예약 처리 완료: 예약ID=%u, 장비=%s, 사용자=%s", new_res_id, device_id, client->username);
     return 0;
 }
+
 static bool server_is_user_authenticated(const char* username, const char* password) {
     if (!user_credentials) {
         LOG_WARNING("Auth", "사용자 정보 해시 테이블이 초기화되지 않음");
@@ -273,6 +308,7 @@ static bool server_is_user_authenticated(const char* username, const char* passw
     LOG_WARNING("Auth", "사용자 인증 실패: %s (사용자 없음 또는 비밀번호 불일치)", username);
     return false; // 사용자가 없거나 비밀번호 불일치
 }
+
 static int server_handle_login_request(Client* client, const message_t* message) {
     if (message->arg_count < 2) {
         LOG_WARNING("Auth", "로그인 요청 실패: 인수 부족 (필요: 2, 받음: %d)", message->arg_count);
@@ -311,6 +347,7 @@ static int server_handle_login_request(Client* client, const message_t* message)
 
     return 0;
 }
+
 static int server_handle_status_request(Client* client, const message_t* message) {
     (void)message; 
     device_t devices[MAX_DEVICES];
@@ -332,51 +369,53 @@ static int server_handle_status_request(Client* client, const message_t* message
 
 static int server_handle_reserve_request(Client* client, const message_t* message) {
     if (message->arg_count < 2) {
+        LOG_WARNING("Server", "예약 요청 실패: 인수 부족 (필요: 2, 받음: %d)", message->arg_count);
         return server_send_error_response_with_code(client->ssl, ERROR_INVALID_PARAMETER, "예약 요청 정보(장비 ID, 시간)가 부족합니다.");
     }
     const char* device_id = message->args[0];
     int duration_sec = atoi(message->args[1]);
+    
+    LOG_INFO("Server", "예약 요청 수신: 사용자=%s, 장비=%s, 시간=%d초", client->username, device_id, duration_sec);
+    
     if (duration_sec <= 0) {
+        LOG_WARNING("Server", "예약 요청 실패: 유효하지 않은 시간 (사용자=%s, 장비=%s, 시간=%d초)", 
+                   client->username, device_id, duration_sec);
         return server_send_error_response_with_code(client->ssl, ERROR_RESERVATION_INVALID_TIME, "유효하지 않은 예약 시간입니다.");
     }
+    
+    LOG_INFO("Server", "예약 처리 시작: 사용자=%s, 장비=%s, 시간=%d초", client->username, device_id, duration_sec);
     server_process_device_reservation(client, device_id, duration_sec);
     return 0;
 }
+
 static int server_handle_cancel_request(Client* client, const message_t* message) {
     if (message->arg_count < 1) {
         return server_send_error_response_with_code(client->ssl, ERROR_INVALID_PARAMETER, "예약 취소 정보(장비 ID)가 부족합니다.");
     }
 
     const char* device_id = message->args[0];
-    
-    // 예약 정보 확인
     reservation_t* res = reservation_get_active_for_device(reservation_manager, resource_manager, device_id);
 
-    // 본인의 예약이 맞는지 확인
     if (!res) {
         return server_send_error_response_with_code(client->ssl, ERROR_RESERVATION_NOT_FOUND, "취소할 수 있는 예약이 없습니다.");
     }
-    
     if (strcmp(res->username, client->username) != 0) {
         return server_send_error_response_with_code(client->ssl, ERROR_RESERVATION_PERMISSION_DENIED, "본인의 예약이 아니므로 취소할 수 없습니다.");
     }
 
-    // 예약 취소 로직 호출
+    // [수정된 로직] 예약 취소 함수만 호출
     if (reservation_cancel(reservation_manager, res->id, client->username)) {
-        // 장비 상태를 'available'로 변경
-        resource_update_device_status(resource_manager, device_id, DEVICE_AVAILABLE, 0);
-        
-        // 모든 클라이언트에 상태 변경 전파
+        // 성공 시 브로드캐스트와 응답 전송
         server_broadcast_status_update();
-
-        // 요청한 클라이언트에 성공 응답 전송
         server_send_generic_response(client, MSG_CANCEL_RESPONSE, "success", 0);
     } else {
+        // 실패 응답
         server_send_error_response_with_code(client->ssl, ERROR_UNKNOWN, "알 수 없는 오류로 예약 취소에 실패했습니다.");
     }
 
     return 0;
 }
+
 static int server_handle_client_message(Client* client, const message_t* message) {
     if (!client || !message) return -1;
     // 로그인되지 않은 상태에서는 로그인 요청만 허용

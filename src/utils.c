@@ -409,6 +409,13 @@ hash_table_t* utils_hashtable_create(uint32_t size, void (*free_func)(void*)) {
     table->count = 0;
     table->free_value = free_func;
     
+    // 뮤텍스 초기화
+    if (pthread_mutex_init(&table->mutex, NULL) != 0) {
+        free(table->buckets);
+        free(table);
+        return NULL;
+    }
+    
     return table;
 }
 
@@ -418,6 +425,8 @@ hash_table_t* utils_hashtable_create(uint32_t size, void (*free_func)(void*)) {
  */
 void utils_hashtable_destroy(hash_table_t* table) {
     if (!table) return;
+    
+    pthread_mutex_lock(&table->mutex);
     for (uint32_t i = 0; i < table->size; i++) {
         hash_node_t* node = table->buckets[i];  // 현재 버킷의 첫 번째 노드
         while (node) {
@@ -428,6 +437,9 @@ void utils_hashtable_destroy(hash_table_t* table) {
             free(temp);
         }
     }
+    pthread_mutex_unlock(&table->mutex);
+    
+    pthread_mutex_destroy(&table->mutex);
     free(table->buckets);
     free(table);
 }
@@ -442,6 +454,8 @@ void utils_hashtable_destroy(hash_table_t* table) {
 bool utils_hashtable_insert(hash_table_t* table, const char* key, void* value) {
     if (!table || !key) return false;
     
+    pthread_mutex_lock(&table->mutex);
+    
     uint32_t index = utils_hash_function(key, table->size);
     
     // 기존 키가 있는지 확인
@@ -453,6 +467,7 @@ bool utils_hashtable_insert(hash_table_t* table, const char* key, void* value) {
                 table->free_value(current->value);
             }
             current->value = value;
+            pthread_mutex_unlock(&table->mutex);
             return true;
         }
         current = current->next;
@@ -460,11 +475,15 @@ bool utils_hashtable_insert(hash_table_t* table, const char* key, void* value) {
     
     // 새 노드 생성
     hash_node_t* new_node = malloc(sizeof(hash_node_t));
-    if (!new_node) return false;
+    if (!new_node) {
+        pthread_mutex_unlock(&table->mutex);
+        return false;
+    }
     
     new_node->key = strdup(key);
     if (!new_node->key) {
         free(new_node);
+        pthread_mutex_unlock(&table->mutex);
         return false;
     }
     
@@ -473,6 +492,7 @@ bool utils_hashtable_insert(hash_table_t* table, const char* key, void* value) {
     table->buckets[index] = new_node;
     table->count++;
     
+    pthread_mutex_unlock(&table->mutex);
     return true;
 }
 
@@ -484,14 +504,18 @@ bool utils_hashtable_insert(hash_table_t* table, const char* key, void* value) {
  */
 void* utils_hashtable_get(hash_table_t* table, const char* key) {
     if (!table || !key) return NULL;  // 유효성 검사
+    
+    pthread_mutex_lock(&table->mutex);
     uint32_t index = utils_hash_function(key, table->size);  // 해시 인덱스 계산
     hash_node_t* node = table->buckets[index];  // 해당 버킷의 첫 번째 노드
     while (node) {  // 노드가 존재하는 동안 반복
         if (strcmp(node->key, key) == 0) {  // 키가 일치하는 경우
+            pthread_mutex_unlock(&table->mutex);
             return node->value;  // 값 반환
         }
         node = node->next;  // 다음 노드로 이동
     }
+    pthread_mutex_unlock(&table->mutex);
     return NULL;  // 키를 찾지 못한 경우 NULL 반환
 }
 
@@ -507,6 +531,7 @@ bool utils_hashtable_delete(hash_table_t* table, const char* key) {
         return false;  // 유효성 검사
     }
 
+    pthread_mutex_lock(&table->mutex);
     uint32_t index = utils_hash_function(key, table->size);  // 해시 인덱스 계산
     
     hash_node_t* node = table->buckets[index];  // 해당 버킷의 첫 번째 노드
@@ -526,12 +551,14 @@ bool utils_hashtable_delete(hash_table_t* table, const char* key) {
             free(node->key);  // 키 메모리 해제
             free(node);  // 노드 메모리 해제
             table->count--;
+            pthread_mutex_unlock(&table->mutex);
             return true;  // true 반환
         }
         prev = node;  // 이전 노드를 현재 노드로 설정
         node = node->next;  // 다음 노드로 이동
     }
 
+    pthread_mutex_unlock(&table->mutex);
     return false;  // false 반환
 }
 
@@ -547,6 +574,7 @@ void utils_hashtable_traverse(hash_table_t* table, void (*callback)(const char* 
         return;  // 유효성 검사
     }
 
+    pthread_mutex_lock(&table->mutex);
     for (uint32_t i = 0; i < table->size; i++) {  // 모든 버킷에 대해 반복
         hash_node_t* node = table->buckets[i];  // 현재 버킷의 첫 번째 노드
         int bucket_count = 0;  // 버킷 내 노드 개수
@@ -561,6 +589,7 @@ void utils_hashtable_traverse(hash_table_t* table, void (*callback)(const char* 
             // LOG_INFO("HashTable", "버킷 %u 처리 완료: %d개 노드", i, bucket_count);
         }
     }
+    pthread_mutex_unlock(&table->mutex);
 }
 
 bool utils_init_manager_base(void* manager, size_t manager_size, hash_table_t** table, uint32_t table_size, void (*free_func)(void*), pthread_mutex_t* mutex_ptr) {

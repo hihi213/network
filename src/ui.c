@@ -255,25 +255,22 @@ void ui_draw_device_table(WINDOW* win, device_t* devices, int count, int highlig
                     status_color_pair = 2; // 'reserved'에 해당하는 노란색
                 }
             } else {
-                // [수정된 부분] 클라이언트 모드 로직 - 시각적 트릭 적용
-                if (strlen(device->reserved_by) > 0) { // 예약자가 있는 경우에만 처리
-                    long remaining_sec = 0;
-                    if (show_remaining_time && current_time > 0 && device->reservation_end_time > 0) {
-                        remaining_sec = (device->reservation_end_time > current_time) ? 
-                                        (device->reservation_end_time - current_time) : 0;
-                    }
-
-                    // [핵심 로직] 남은 시간이 0초이면, 화면 표시용 상태를 'available'로 간주
-                    if (remaining_sec <= 0) {
+                // [개선된 클라이언트 모드 로직]
+                if (strlen(device->reserved_by) > 0 && device->reservation_end_time > 0) { // 예약자 정보와 종료 시간이 유효한 경우
+                    // [핵심] 현재 시간과 예약 종료 시간을 직접 비교하여 상태를 결정
+                    if (current_time >= device->reservation_end_time) {
+                        // 시간이 만료된 경우, 'available'로 표시
                         display_status_str = "available";
-                        // display_reservation_info는 기본값 "-"를 그대로 사용
+                        strcpy(display_reservation_info, "-");
                         status_color_pair = 4; // 'available'에 해당하는 녹색
                     } else {
-                        // 남은 시간이 있으면 기존 예약 정보 표시
+                        // 아직 시간이 남은 경우, 남은 시간 표시
+                        long remaining_sec = device->reservation_end_time - current_time;
                         snprintf(display_reservation_info, sizeof(display_reservation_info), "%s(%lds)", device->reserved_by, remaining_sec);
                         status_color_pair = 2; // 'reserved'에 해당하는 노란색
                     }
                 } else {
+                    // 예약 정보가 불완전하지만 상태가 'RESERVED'인 경우
                     status_color_pair = 2; // 'reserved'에 해당하는 노란색
                 }
             }

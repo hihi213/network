@@ -474,18 +474,24 @@ static void client_handle_input_device_list(int ch) {
             if (device_list && menu_highlight < device_count) {
                 device_t* dev = &device_list[menu_highlight];
                 if (dev->status == DEVICE_AVAILABLE) {
+                    LOG_INFO("Client", "예약 시작: 장비=%s, 사용자=%s", dev->id, client_session.username);
                     reservation_target_device_index = menu_highlight;
                     current_state = APP_STATE_RESERVATION_TIME;
                     reservation_input_pos = 0;
                     memset(reservation_input_buffer, 0, sizeof(reservation_input_buffer));
                     ui_show_success_message("예약 시간을 입력하세요 (초 단위)");
+                    LOG_INFO("Client", "예약 시간 입력 화면으로 전환: 장비=%s", dev->id);
                 } else if (dev->status == DEVICE_RESERVED) {
                     if (strcmp(dev->reserved_by, client_session.username) == 0) {
+                        LOG_INFO("Client", "이미 예약한 장비 선택: 장비=%s, 사용자=%s", dev->id, client_session.username);
                         ui_show_success_message("이미 예약한 장비입니다.");
                     } else {
+                        LOG_INFO("Client", "다른 사용자가 예약한 장비 선택: 장비=%s, 예약자=%s, 현재사용자=%s", 
+                                dev->id, dev->reserved_by, client_session.username);
                         ui_show_error_message("다른 사용자가 예약한 장비입니다.");
                     }
                 } else {
+                    LOG_INFO("Client", "점검 중인 장비 선택: 장비=%s, 상태=%d", dev->id, dev->status);
                     ui_show_error_message("점검 중인 장비입니다.");
                 }
             }
@@ -521,27 +527,40 @@ static void client_handle_input_reservation_time(int ch) {
         case '\r':
             if (reservation_input_pos > 0) {
                 int reservation_time = atoi(reservation_input_buffer);
+                LOG_INFO("Client", "예약 시간 입력 완료: 시간=%d초, 입력값=%s", reservation_time, reservation_input_buffer);
+                
                 if (reservation_time >= 1 && reservation_time <= 86400) {
                     if (reservation_target_device_index >= 0 && reservation_target_device_index < device_count) {
                         device_t* dev = &device_list[reservation_target_device_index];
                         char time_str[32];
                         snprintf(time_str, sizeof(time_str), "%d", reservation_time);
+                        
+                        LOG_INFO("Client", "예약 요청 전송 시작: 장비=%s, 시간=%d초, 사용자=%s", 
+                                dev->id, reservation_time, client_session.username);
+                        
                         message_t* msg = message_create_reservation(dev->id, time_str);
-            if (msg) {
+                        if (msg) {
                             if (network_send_message(client_session.ssl, msg) < 0) {
+                                LOG_ERROR("Client", "예약 요청 전송 실패: 장비=%s, 시간=%d초", dev->id, reservation_time);
                                 running = false;
+                            } else {
+                                LOG_INFO("Client", "예약 요청 전송 성공: 장비=%s, 시간=%d초", dev->id, reservation_time);
                             }
                             message_destroy(msg);
-            }
+                        } else {
+                            LOG_ERROR("Client", "예약 메시지 생성 실패: 장비=%s, 시간=%d초", dev->id, reservation_time);
+                        }
                     }
                     current_state = APP_STATE_DEVICE_LIST;
                     reservation_target_device_index = -1;
-        } else {
+                    LOG_INFO("Client", "예약 요청 후 장비 목록 화면으로 복귀");
+                } else {
+                    LOG_WARNING("Client", "유효하지 않은 예약 시간 입력: %d초 (범위: 1~86400)", reservation_time);
                     ui_show_error_message("유효하지 않은 시간입니다. (1~86400초)");
-            memset(reservation_input_buffer, 0, sizeof(reservation_input_buffer));
-            reservation_input_pos = 0;
-        }
-    }
+                    memset(reservation_input_buffer, 0, sizeof(reservation_input_buffer));
+                    reservation_input_pos = 0;
+                }
+            }
             break;
         case 27: // ESC
             current_state = APP_STATE_DEVICE_LIST;
@@ -682,6 +701,7 @@ static void client_handle_server_message(const message_t* message) {
             break;
             
         case MSG_RESERVE_RESPONSE:
+            LOG_INFO("Client", "서버로부터 예약 성공 응답 수신");
             ui_show_success_message("예약이 성공적으로 완료되었습니다.");
             break;
         case MSG_CANCEL_RESPONSE:
@@ -690,12 +710,24 @@ static void client_handle_server_message(const message_t* message) {
         case MSG_STATUS_UPDATE:
             // [수정] 서버 업데이트는 항상 신뢰하고 처리 - 초기 상태만 아니라면 항상 업데이트
             if (g_time_sync_completed && current_state > APP_STATE_SYNCING) {
+                LOG_INFO("Client", "서버 상태 업데이트 수신: 현재상태=%d", current_state);
                 client_process_and_store_device_list(message);
-                current_state = APP_STATE_DEVICE_LIST;
+                
+                // [수정] 현재 상태가 예약 시간 입력 중이면 상태를 변경하지 않음
+                if (current_state != APP_STATE_RESERVATION_TIME) {
+                    LOG_INFO("Client", "상태 업데이트로 장비 목록 화면으로 전환");
+                    current_state = APP_STATE_DEVICE_LIST;
+                } else {
+                    LOG_INFO("Client", "예약 시간 입력 중이므로 상태 변경 건너뜀");
+                }
+                
                 // [추가] 장비 목록이 변경되어 현재 선택된 인덱스가 유효하지 않을 경우 처리
                 if (menu_highlight >= device_count && device_count > 0) {
                     menu_highlight = device_count - 1;  // 마지막 장비로 조정
+                    LOG_INFO("Client", "메뉴 하이라이트 인덱스 조정: %d -> %d", device_count, menu_highlight);
                 }
+                
+                LOG_INFO("Client", "UI 업데이트 완료: 장비수=%d, 하이라이트=%d", device_count, menu_highlight);
             } else {
                 // 동기화 중이거나 다른 상태일 때는 로그만 남기고 무시
                 LOG_INFO("Client", "Ignoring status update while in state %d (sync_completed: %s)", 
