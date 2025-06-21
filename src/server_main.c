@@ -309,9 +309,6 @@ static int server_handle_login_request(Client* client, const message_t* message)
     // 4단계: 클라이언트에 성공 응답 전송
     server_send_generic_response(client, MSG_LOGIN, "success", 1, user);
 
-    // 5단계: 로그인 직후, 클라이언트가 다음 화면을 그릴 수 있도록 장비 현황 전송
-    server_handle_status_request(client, NULL); 
-
     return 0;
 }
 static int server_handle_status_request(Client* client, const message_t* message) {
@@ -582,6 +579,9 @@ void server_draw_ui_for_current_state(void) {
     if (!g_ui_manager) return;
     pthread_mutex_lock(&g_ui_manager->mutex);
 
+    // [추가] UI 갱신 시작 로그
+    LOG_INFO("ServerUI", "UI 갱신 시작");
+
     // 1. 상단 정보 바 (status_win) - 성능 통계 및 에러 메시지 공간
     werase(g_ui_manager->status_win);
     box(g_ui_manager->status_win, 0, 0);
@@ -614,6 +614,9 @@ void server_draw_ui_for_current_state(void) {
     device_t devices[MAX_DEVICES];
     int count = resource_get_device_list(resource_manager, devices, MAX_DEVICES);
     
+    // [추가] 장비 목록 조회 로그
+    LOG_INFO("ServerUI", "장비 목록 조회: 총 %d개 장비", count);
+    
     // 공통 장비 목록 테이블 그리기 함수 사용
     ui_draw_device_table(g_ui_manager->menu_win, devices, count, -1, true, 
                         reservation_manager, resource_manager, 0, true);
@@ -627,13 +630,24 @@ void server_draw_ui_for_current_state(void) {
     wrefresh(g_ui_manager->message_win);
 
     pthread_mutex_unlock(&g_ui_manager->mutex);
+    
+    // [추가] UI 갱신 완료 로그
+    LOG_INFO("ServerUI", "UI 갱신 완료");
 }
 
 // [추가] UI 갱신 트리거 함수
 static void server_trigger_ui_refresh(void) {
+    // [추가] UI 갱신 트리거 로그
+    LOG_INFO("ServerUI", "UI 갱신 트리거 발생");
+    
     // 파이프에 간단한 데이터를 써서 poll()을 깨운다.
     // 에러 처리는 간단하게 처리하거나 무시할 수 있다.
-    (void)write(self_pipe[1], "u", 1); // 'u' for update
+    int result = write(self_pipe[1], "u", 1); // 'u' for update
+    if (result < 0) {
+        LOG_WARNING("ServerUI", "UI 갱신 트리거 실패: %s", strerror(errno));
+    } else {
+        LOG_INFO("ServerUI", "UI 갱신 트리거 성공");
+    }
 }
 
 static int server_send_error_response_with_code(SSL* ssl, error_code_t error_code, const char* error_message) {

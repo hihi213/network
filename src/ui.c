@@ -219,7 +219,7 @@ void ui_draw_device_table(WINDOW* win, device_t* devices, int count, int highlig
         const device_t* device = &devices[i];
         char reservation_info[64] = "-"; // 버퍼 크기 증가
         
-        if (device->status == DEVICE_RESERVED) {
+            if (device->status == DEVICE_RESERVED) {
             if (reservation_manager && resource_manager) {
                 // 서버 모드: reservation_manager를 통해 예약 정보 조회
                 reservation_t* res = reservation_get_active_for_device(
@@ -229,11 +229,24 @@ void ui_draw_device_table(WINDOW* win, device_t* devices, int count, int highlig
                 if (res) {
                     time_t now = time(NULL);
                     long remaining_sec = (res->end_time > now) ? (res->end_time - now) : 0;
+                    
+                    // [추가] 서버 UI 시간 계산 로그
+                    LOG_INFO("ServerUI", "장비[%s] 예약 정보 계산: 사용자=%s, 종료시간=%ld, 현재시간=%ld, 남은시간=%ld초", 
+                             device->id, res->username, res->end_time, now, remaining_sec);
+                    
                     if (show_remaining_time) {
                         snprintf(reservation_info, sizeof(reservation_info), "%s(%lds)", res->username, remaining_sec);
                     } else {
                         snprintf(reservation_info, sizeof(reservation_info), "%s", res->username);
                     }
+                    
+                    // [추가] 남은 시간이 0초 이하인 경우 로그
+                    if (remaining_sec <= 0) {
+                        LOG_WARNING("ServerUI", "장비[%s] 예약 만료됨: 사용자=%s, 종료시간=%ld, 현재시간=%ld, 시간차=%ld초", 
+                                   device->id, res->username, res->end_time, now, now - res->end_time);
+                    }
+                } else {
+                    LOG_WARNING("ServerUI", "장비[%s] 예약 상태이지만 예약 정보를 찾을 수 없음", device->id);
                 }
             } else {
                 // 클라이언트 모드: 로컬 데이터 사용
@@ -242,10 +255,22 @@ void ui_draw_device_table(WINDOW* win, device_t* devices, int count, int highlig
                 if (show_remaining_time && current_time > 0 && device->reservation_end_time > 0) {
                     long remaining_sec = (device->reservation_end_time > current_time) ? 
                                         (device->reservation_end_time - current_time) : 0;
+                    
+                    // [추가] 클라이언트 UI 시간 계산 로그
+                    LOG_INFO("ClientUI", "장비[%s] 예약 정보 계산: 사용자=%s, 종료시간=%ld, 현재시간=%ld, 남은시간=%ld초", 
+                             device->id, device->reserved_by, device->reservation_end_time, current_time, remaining_sec);
+                    
                     char temp_info[64];
                     snprintf(temp_info, sizeof(temp_info), "%s(%lds)", reservation_info, remaining_sec);
                     strncpy(reservation_info, temp_info, sizeof(reservation_info) - 1);
                     reservation_info[sizeof(reservation_info) - 1] = '\0';
+                    
+                    // [추가] 남은 시간이 0초 이하인 경우 로그
+                    if (remaining_sec <= 0) {
+                        LOG_WARNING("ClientUI", "장비[%s] 예약 만료됨: 사용자=%s, 종료시간=%ld, 현재시간=%ld, 시간차=%ld초", 
+                                   device->id, device->reserved_by, device->reservation_end_time, current_time, 
+                                   current_time - device->reservation_end_time);
+                    }
                 }
             }
         }
