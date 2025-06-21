@@ -29,6 +29,7 @@ typedef enum {
     APP_STATE_LOGGED_IN_MENU,   // 로그인된 메뉴
     APP_STATE_DEVICE_LIST,      // 장비 목록
     APP_STATE_RESERVATION_TIME, // 예약 시간 입력
+    APP_STATE_RECONNECTING,     // 재연결 시도 중
     APP_STATE_EXIT              // 종료
 } AppState;
 
@@ -53,6 +54,7 @@ static void client_handle_input_login_input(int ch);
 static device_status_t client_string_to_device_status(const char* status_str);
 static void client_process_and_store_device_list(const message_t* message);
 static void client_draw_message_win(const char* msg);
+static bool client_attempt_reconnect(void);
 
 // 전역 변수
 extern ui_manager_t* g_ui_manager;
@@ -78,6 +80,14 @@ static int reservation_target_device_index = -1;
 static device_t* device_list = NULL;
 static int device_count = 0;
 
+// 재연결 관련 변수
+static char reconnect_server_ip[INET_ADDRSTRLEN] = {0};
+static int reconnect_server_port = 0;
+static int reconnect_attempt_count = 0;
+static const int MAX_RECONNECT_ATTEMPTS = -1; // 무제한 재연결 시도 (-1로 설정)
+static const int RECONNECT_DELAY_SECONDS = 3; // 5초에서 3초로 단축
+static time_t last_reconnect_attempt = 0;
+
 // [추가] 동기화된 시간을 반환하는 헬퍼 함수
 static time_t client_get_synced_time(void) {
     return time(NULL) + g_time_offset;
@@ -95,7 +105,14 @@ int main(int argc, char* argv[]) {
     }
     signal(SIGINT, client_signal_handler); signal(SIGTERM, client_signal_handler);
     if (ui_init(UI_CLIENT) < 0 || network_init_ssl_manager(&ssl_manager, false, NULL, NULL) < 0) { client_cleanup_resources(); return 1; }
-    if (client_connect_to_server(argv[1], atoi(argv[2])) < 0) { client_cleanup_resources(); return 1; }
+    
+    // 초기 연결 시도
+    if (client_connect_to_server(argv[1], atoi(argv[2])) < 0) {
+        // 초기 연결 실패 시에도 재연결 상태로 전환
+        current_state = APP_STATE_RECONNECTING;
+        reconnect_attempt_count = 0;
+        ui_show_error_message("초기 서버 연결 실패. 재연결을 시도합니다.");
+    }
 
     while (running) {
         struct pollfd fds[3];
@@ -106,7 +123,9 @@ int main(int argc, char* argv[]) {
         fds[2].fd = STDIN_FILENO;
         fds[2].events = POLLIN;
 
-        int ret = poll(fds, 3, 100);
+        // 재연결 상태일 때는 더 짧은 타임아웃 사용
+        int poll_timeout = (current_state == APP_STATE_RECONNECTING) ? 1000 : 100;
+        int ret = poll(fds, 3, poll_timeout);
         if (ret < 0) { if (errno == EINTR) continue; break; }
 
         if (fds[2].revents & POLLIN) {
@@ -123,9 +142,17 @@ int main(int argc, char* argv[]) {
                 message_destroy(msg);
                
             } else {
-               ui_show_error_message("서버와의 연결이 끊어졌습니다. 종료합니다.");
-                sleep(2); // 메시지를 볼 수 있도록 잠시 대기
-                running = false;
+                // 연결이 끊어진 경우 재연결 시도
+                if (current_state != APP_STATE_RECONNECTING) {
+                    current_state = APP_STATE_RECONNECTING;
+                }
+            }
+        }
+        
+        // 재연결 상태일 때 주기적으로 재연결 시도
+        if (current_state == APP_STATE_RECONNECTING) {
+            if (client_attempt_reconnect()) {
+                // 재연결 성공 시 상태는 이미 client_attempt_reconnect에서 변경됨
             }
         }
 
@@ -164,6 +191,17 @@ void client_draw_ui_for_current_state(void) {
                 snprintf(help_msg, sizeof(help_msg), "도움말: 1 ~ 86400 사이의 예약 시간(초)을 입력하고 Enter를 누르세요.");
             mvwprintw(g_ui_manager->menu_win, menu_win_height - 2, 2, "%-s", help_msg);
             curs_set(1);
+            break;
+        case APP_STATE_RECONNECTING:
+            client_draw_message_win("재연결 시도 중입니다...");
+            mvwprintw(g_ui_manager->menu_win, 2, 2, "서버와의 연결이 끊어졌습니다.");
+            mvwprintw(g_ui_manager->menu_win, 3, 2, "자동으로 재연결을 시도하고 있습니다...");
+            mvwprintw(g_ui_manager->menu_win, 4, 2, "잠시만 기다려주세요.");
+            if (MAX_RECONNECT_ATTEMPTS > 0) {
+                mvwprintw(g_ui_manager->menu_win, 5, 2, "재연결 시도: %d/%d", reconnect_attempt_count, MAX_RECONNECT_ATTEMPTS);
+            } else {
+                mvwprintw(g_ui_manager->menu_win, 5, 2, "재연결 시도: %d (무제한)", reconnect_attempt_count);
+            }
             break;
         case APP_STATE_EXIT: 
             break;
@@ -417,7 +455,9 @@ static void client_handle_input_logged_in_menu(int ch) {
                 message_t* msg = message_create(MSG_STATUS_REQUEST, NULL);
                 if (msg) {
                     if (network_send_message(client_session.ssl, msg) < 0) {
-                        running = false;
+                        ui_show_error_message("서버 연결이 끊어졌습니다. 재연결을 시도합니다.");
+                        current_state = APP_STATE_RECONNECTING;
+                        reconnect_attempt_count = 0;
                     }
                     message_destroy(msg);
                 }
@@ -478,7 +518,9 @@ static void client_handle_input_device_list(int ch) {
                     message_t* msg = message_create_cancel(dev->id);
                     if (msg) {
                         if (network_send_message(client_session.ssl, msg) < 0) {
-                            running = false;
+                            ui_show_error_message("서버 연결이 끊어졌습니다. 재연결을 시도합니다.");
+                            current_state = APP_STATE_RECONNECTING;
+                            reconnect_attempt_count = 0;
                         }
                         message_destroy(msg);
                     }
@@ -508,7 +550,9 @@ static void client_handle_input_reservation_time(int ch) {
                         message_t* msg = message_create_reservation(dev->id, time_str);
             if (msg) {
                             if (network_send_message(client_session.ssl, msg) < 0) {
-                                running = false;
+                                ui_show_error_message("서버 연결이 끊어졌습니다. 재연결을 시도합니다.");
+                                current_state = APP_STATE_RECONNECTING;
+                                reconnect_attempt_count = 0;
                             }
                             message_destroy(msg);
             }
@@ -593,14 +637,13 @@ static void client_handle_server_message(const message_t* message) {
                     ui_show_error_message("잘못된 요청입니다.");
                     break;
                 case ERROR_SESSION_INVALID_STATE:
-                    ui_show_error_message("세션이 만료되었습니다. 다시 로그인해주세요.");
-                    current_state = APP_STATE_LOGIN;
-                    menu_highlight = 0;
-                    active_login_field = LOGIN_FIELD_USERNAME;
-                    memset(login_username_buffer, 0, sizeof(login_username_buffer));
-                    memset(login_password_buffer, 0, sizeof(login_password_buffer));
-                    login_username_pos = 0;
-                    login_password_pos = 0;
+                    ui_show_error_message(message->data); // 서버에서 보낸 메시지 표시
+                    // 서버에서 연결을 종료했으므로 재연결 시도
+                    current_state = APP_STATE_RECONNECTING;
+                    reconnect_attempt_count = 0; // 재연결 카운터 리셋
+                    // 서버에서 보낸 메시지를 표시한 후 잠시 대기
+                    ui_refresh_all_windows();
+                    napms(2000); // 2초간 메시지 노출
                     break;
                 case ERROR_PERMISSION_DENIED:
                     ui_show_error_message("권한이 없습니다.");
@@ -725,8 +768,11 @@ static void client_login_submitted(const char* username, const char* password) {
     }
     
     if (network_send_message(client_session.ssl, login_msg) < 0) {
-        ui_show_error_message("로그인 요청 전송 실패");
+        ui_show_error_message("로그인 요청 전송 실패 - 연결이 끊어졌습니다.");
         message_destroy(login_msg);
+        // 연결이 끊어진 것으로 간주하고 재연결 시도
+        current_state = APP_STATE_RECONNECTING;
+        reconnect_attempt_count = 0;
         return;
     }
     
@@ -736,7 +782,10 @@ static void client_login_submitted(const char* username, const char* password) {
 static void client_perform_logout(void) {
     message_t* logout_msg = message_create(MSG_LOGOUT, NULL);
     if (logout_msg) {
-        network_send_message(client_session.ssl, logout_msg);
+        if (network_send_message(client_session.ssl, logout_msg) < 0) {
+            // 전송 실패 시에도 로그아웃 처리 (연결이 끊어진 경우)
+            LOG_WARNING("Client", "로그아웃 메시지 전송 실패 - 연결이 끊어졌습니다.");
+        }
         message_destroy(logout_msg);
     }
     client_session.state = SESSION_DISCONNECTED;
@@ -764,6 +813,11 @@ static void client_cleanup_resources(void) {
 }
 
 static int client_connect_to_server(const char* server_ip, int port) {
+    // 재연결을 위해 서버 정보 저장
+    strncpy(reconnect_server_ip, server_ip, sizeof(reconnect_server_ip) - 1);
+    reconnect_server_ip[sizeof(reconnect_server_ip) - 1] = '\0';
+    reconnect_server_port = port;
+    
     client_session.socket_fd = network_init_client_socket(server_ip, port);
     if (client_session.socket_fd < 0) {
         utils_report_error(ERROR_NETWORK_CONNECT_FAILED, "Client", "서버 연결 실패");
@@ -808,4 +862,39 @@ static void client_draw_message_win(const char* msg) {
     box(g_ui_manager->message_win, 0, 0);
     mvwprintw(g_ui_manager->message_win, 0, 2, "%s", msg);
     wrefresh(g_ui_manager->message_win);
+}
+
+static bool client_attempt_reconnect(void) {
+    time_t current_time = time(NULL);
+    
+    // 재연결 시도 간격 체크
+    if (current_time - last_reconnect_attempt < RECONNECT_DELAY_SECONDS) {
+        return false; // 아직 대기 시간이 남음
+    }
+    
+    // 무제한 재연결 시도 (MAX_RECONNECT_ATTEMPTS가 -1이면 무제한)
+    if (MAX_RECONNECT_ATTEMPTS > 0 && reconnect_attempt_count >= MAX_RECONNECT_ATTEMPTS) {
+        ui_show_error_message("최대 재연결 시도 횟수를 초과했습니다. 프로그램을 종료합니다.");
+        running = false; // 프로그램 종료
+        return false;
+    }
+    
+    reconnect_attempt_count++;
+    last_reconnect_attempt = current_time;
+    
+    // 재연결 시도 메시지는 표시하지 않음 (서버에서 보낸 메시지가 이미 표시됨)
+    
+    // 기존 연결 정리
+    session_cleanup_client(&client_session);
+    network_cleanup_ssl_manager(&ssl_manager);
+    
+    // 재연결 시도
+    if (client_connect_to_server(reconnect_server_ip, reconnect_server_port) == 0) {
+        reconnect_attempt_count = 0; // 성공 시 카운터 리셋
+        current_state = APP_STATE_LOGIN; // 로그인 화면으로 복귀
+        ui_show_success_message("재연결 성공! 다시 로그인해주세요.");
+        return true;
+    }
+    
+    return false;
 }
