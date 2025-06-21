@@ -356,10 +356,14 @@ static int server_handle_status_request(Client* client, const message_t* message
         return server_send_error_response_with_code(client->ssl, ERROR_UNKNOWN, "서버에서 장비 목록을 가져오는 데 실패했습니다.");
     }
     // LOG_INFO("Server", "장비 목록 요청 수신, 장비 개수: %d", count);
-    message_t* response = message_create_status_response(devices, count, resource_manager, reservation_manager);
+    message_t* response = message_create(MSG_STATUS_RESPONSE, NULL);
     if (response) {
-        network_send_message(client->ssl, response);
-        // LOG_INFO("Server", "MSG_STATUS_RESPONSE 전송 완료");
+        if (message_fill_status_response_args(response, devices, count, resource_manager, reservation_manager)) {
+            network_send_message(client->ssl, response);
+            // LOG_INFO("Server", "MSG_STATUS_RESPONSE 전송 완료");
+        } else {
+            // LOG_WARNING("Server", "MSG_STATUS_RESPONSE 인자 설정 실패");
+        }
         message_destroy(response);
     } else {
         // LOG_WARNING("Server", "MSG_STATUS_RESPONSE 생성 실패");
@@ -705,8 +709,9 @@ static void server_trigger_ui_refresh(void) {
 static int server_send_error_response_with_code(SSL* ssl, error_code_t error_code, const char* error_message) {
     if (!ssl) return -1;
     const char* msg = error_message ? error_message : message_get_error_string(error_code);
-    message_t* response = message_create_error_with_code(error_code, msg);
+    message_t* response = message_create(MSG_ERROR, msg);
     if (!response) return -1;
+    response->error_code = error_code;
     int ret = network_send_message(ssl, response);
     message_destroy(response);
     return ret;
