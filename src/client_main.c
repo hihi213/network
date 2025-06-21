@@ -678,8 +678,10 @@ static void client_handle_server_message(const message_t* message) {
         case MSG_STATUS_UPDATE:
             client_process_and_store_device_list(message);
             current_state = APP_STATE_DEVICE_LIST;
-            menu_highlight = 0;
-            scroll_offset = 0;
+            // [추가] 장비 목록이 변경되어 현재 선택된 인덱스가 유효하지 않을 경우 처리
+            if (menu_highlight >= device_count && device_count > 0) {
+                menu_highlight = device_count - 1;  // 마지막 장비로 조정
+            }
             break;
         case MSG_TIME_SYNC_RESPONSE:
         {

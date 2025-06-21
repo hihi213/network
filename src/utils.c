@@ -7,6 +7,37 @@
 #include "../include/utils.h"  // 유틸리티 관련 헤더 파일 포함
 #include "../include/ui.h"    // ui_manager_t, show_error_message 사용을 위해 추가
 
+// [추가] 비동기 로깅 시스템을 위한 자료구조
+typedef struct {
+    char message[1024];  // 로그 메시지 (고정 크기로 메모리 관리 단순화)
+} log_entry_t;
+
+typedef struct {
+    log_entry_t* entries;        // 원형 버퍼
+    int capacity;                // 버퍼 크기
+    int head;                    // 읽기 위치
+    int tail;                    // 쓰기 위치
+    int size;                    // 현재 큐 크기
+    pthread_mutex_t mutex;       // 뮤텍스
+    pthread_cond_t not_empty;    // 큐가 비어있지 않을 때 신호
+    pthread_cond_t not_full;     // 큐가 가득 차지 않았을 때 신호
+} log_queue_t;
+
+// [추가] 비동기 로깅 시스템 전역 변수
+static log_queue_t g_log_queue;
+static pthread_t g_logger_thread;
+static bool g_logger_running = false;
+static FILE* g_log_file = NULL;
+static log_level_t current_log_level = LOG_INFO; // 기본 로그 레벨은 INFO
+
+// [추가] 비동기 로깅 시스템 함수 프로토타입
+static void* logger_thread_function(void* arg);
+static int log_queue_init(int capacity);
+static void log_queue_cleanup(void);
+static bool log_queue_push(const char* message);
+static bool log_queue_pop(char* message);
+static void log_queue_signal_shutdown(void);
+
 /*
 error handling
 */
@@ -203,13 +234,7 @@ void utils_print_performance_stats(performance_stats_t* stats) {
 logger
 */
 
-/* 전역 변수 */
-static FILE* log_file = NULL;  // 로그 파일 포인터
-static log_level_t current_log_level = LOG_INFO; // 기본 로그 레벨은 INFO
-static pthread_mutex_t log_mutex;  // 로그 뮤텍스
-
 /* 정적 함수 선언 */
-static void utils_write_to_log_file(log_level_t level, const char* category, const char* message);  // 로그 파일에 쓰기 함수
 static const char* utils_get_log_level_string(log_level_t level);  // 로그 레벨 문자열 변환 함수
 
 /**
@@ -218,17 +243,33 @@ static const char* utils_get_log_level_string(log_level_t level);  // 로그 레
  * @return 성공 시 0, 실패 시 -1
  */
 int utils_init_logger(const char* filename) {
-    if (log_file != NULL) {  // 이미 초기화된 경우
+    if (g_log_file != NULL) {  // 이미 초기화된 경우
         return -1; // 이미 초기화됨
     }
 
-    log_file = fopen(filename, "a"); // 추가 모드로 열기
-    if (log_file == NULL) {  // 파일 열기 실패 시
+    g_log_file = fopen(filename, "a"); // 추가 모드로 열기
+    if (g_log_file == NULL) {  // 파일 열기 실패 시
         return -1;  // 에러 코드 반환
     }
 
-    pthread_mutex_init(&log_mutex, NULL);  // 로그 뮤텍스 초기화
-    // LOG_INFO("System", "로거 초기화 완료. 로그 파일: %s", filename);  // 초기화 완료 로그
+    // [수정] 비동기 로깅 시스템 초기화
+    if (log_queue_init(1000) != 0) {  // 1000개 메시지 큐 용량
+        fclose(g_log_file);
+        g_log_file = NULL;
+        return -1;
+    }
+    
+    g_logger_running = true;
+    
+    // 로거 스레드 생성
+    if (pthread_create(&g_logger_thread, NULL, logger_thread_function, NULL) != 0) {
+        log_queue_cleanup();
+        fclose(g_log_file);
+        g_log_file = NULL;
+        return -1;
+    }
+    
+    // LOG_INFO("System", "비동기 로거 초기화 완료. 로그 파일: %s", filename);
     return 0;  // 성공 코드 반환
 }
 
@@ -236,12 +277,25 @@ int utils_init_logger(const char* filename) {
  * @brief 로거를 정리합니다.
  */
 void utils_cleanup_logger(void) {
-    if (log_file != NULL) {  // 로그 파일이 열려있는 경우
-        // LOG_INFO("System", "로거 정리 중...");  // 정리 시작 로그
-        fclose(log_file);  // 로그 파일 닫기
-        log_file = NULL;  // 포인터를 NULL로 설정
+    // [수정] Graceful Shutdown 구현
+    if (g_logger_running) {
+        // LOG_INFO("System", "비동기 로거 정리 중...");
+        
+        // 로거 스레드 종료 신호
+        log_queue_signal_shutdown();
+        
+        // 로거 스레드가 완전히 종료될 때까지 대기
+        pthread_join(g_logger_thread, NULL);
+        
+        // 큐 정리
+        log_queue_cleanup();
+        
+        // 파일 닫기
+        if (g_log_file != NULL) {
+            fclose(g_log_file);
+            g_log_file = NULL;
+        }
     }
-    pthread_mutex_destroy(&log_mutex);  // 로그 뮤텍스 정리
 }
 
 /**
@@ -253,48 +307,35 @@ void utils_cleanup_logger(void) {
  */
 void utils_log_message(log_level_t level, const char* category, const char* format, ...) {
     if (level > current_log_level) {  // 로그 레벨이 낮으면 출력하지 않음
-        return; // 로그 레벨이 낮으면 출력하지 않음
+        return;
     }
 
-    char message_buffer[MAX_LOG_MSG];  // 메시지 버퍼
+    // [수정] 비동기 로깅으로 변경
+    char message_buffer[1024];  // 메시지 버퍼
     va_list args;  // 가변 인자 리스트
     va_start(args, format);  // 가변 인자 시작
     vsnprintf(message_buffer, sizeof(message_buffer), format, args);  // 포맷된 메시지 생성
     va_end(args);  // 가변 인자 종료
 
-    utils_write_to_log_file(level, category, message_buffer);  // 로그 파일에 메시지 쓰기
-}
+    // 타임스탬프 생성
+    time_t rawtime;
+    struct tm *timeinfo;
+    char timestamp_str[64];
+    char final_message[1024];
 
-/**
- * @brief 실제 로그 파일에 메시지를 쓰는 함수
- * @param level 로그 레벨
- * @param category 로그 카테고리
- * @param message 로그 메시지
- */
-static void utils_write_to_log_file(log_level_t level, const char* category, const char* message) {
-    pthread_mutex_lock(&log_mutex);  // 로그 뮤텍스 잠금
+    time(&rawtime);
+    timeinfo = localtime(&rawtime);
+    strftime(timestamp_str, sizeof(timestamp_str), "%m월 %d일 %H:%M", timeinfo);
 
-    if (log_file != NULL) {  // 로그 파일이 열려있는 경우
-        time_t rawtime;  // 원시 시간 변수
-        struct tm *timeinfo;  // 시간 정보 구조체 포인터
-        char timestamp_str[64];  // 타임스탬프 문자열 버퍼
+    // 최종 로그 메시지 포맷팅
+    snprintf(final_message, sizeof(final_message), "[%s] [%s] %s [%s]\n",
+             utils_get_log_level_string(level),
+             category,
+             message_buffer,
+             timestamp_str);
 
-        time(&rawtime);  // 현재 시간 가져오기
-        timeinfo = localtime(&rawtime);  // 로컬 시간으로 변환
-        strftime(timestamp_str, sizeof(timestamp_str), "%m월 %d일 %H:%M", timeinfo);  // 타임스탬프 포맷
-
-        fprintf(log_file, "[%s] [%s] %s [%s]\n",  // 로그 메시지 출력
-                utils_get_log_level_string(level),
-                category,
-                message,
-                timestamp_str);
-        fflush(log_file); // 즉시 디스크에 쓰기
-    } else {  // 로그 파일이 열려있지 않은 경우
-        utils_report_error(ERROR_LOGGER_FILE_NOT_OPEN, "Logger", "로그 파일이 열려 있지 않습니다. 메시지: [%s] [%s] %s", 
-                    utils_get_log_level_string(level), category, message);  // 경고 메시지 출력
-    }
-
-    pthread_mutex_unlock(&log_mutex);  // 로그 뮤텍스 해제
+    // 큐에 메시지 추가 (비동기)
+    log_queue_push(final_message);
 }
 
 /**
@@ -590,4 +631,158 @@ void utils_cleanup_manager_base(void* manager, hash_table_t* table, pthread_mute
         pthread_mutex_destroy(mutex);
     }
     free(manager);
+}
+
+// [추가] 비동기 로깅 시스템 구현
+
+/**
+ * @brief 로그 큐를 초기화합니다.
+ * @param capacity 큐의 최대 용량
+ * @return 성공 시 0, 실패 시 -1
+ */
+static int log_queue_init(int capacity) {
+    if (capacity <= 0) return -1;
+    
+    g_log_queue.entries = (log_entry_t*)malloc(capacity * sizeof(log_entry_t));
+    if (!g_log_queue.entries) return -1;
+    
+    g_log_queue.capacity = capacity;
+    g_log_queue.head = 0;
+    g_log_queue.tail = 0;
+    g_log_queue.size = 0;
+    
+    if (pthread_mutex_init(&g_log_queue.mutex, NULL) != 0) {
+        free(g_log_queue.entries);
+        return -1;
+    }
+    
+    if (pthread_cond_init(&g_log_queue.not_empty, NULL) != 0) {
+        pthread_mutex_destroy(&g_log_queue.mutex);
+        free(g_log_queue.entries);
+        return -1;
+    }
+    
+    if (pthread_cond_init(&g_log_queue.not_full, NULL) != 0) {
+        pthread_cond_destroy(&g_log_queue.not_empty);
+        pthread_mutex_destroy(&g_log_queue.mutex);
+        free(g_log_queue.entries);
+        return -1;
+    }
+    
+    return 0;
+}
+
+/**
+ * @brief 로그 큐를 정리합니다.
+ */
+static void log_queue_cleanup(void) {
+    pthread_mutex_lock(&g_log_queue.mutex);
+    if (g_log_queue.entries) {
+        free(g_log_queue.entries);
+        g_log_queue.entries = NULL;
+    }
+    pthread_mutex_unlock(&g_log_queue.mutex);
+    
+    pthread_cond_destroy(&g_log_queue.not_full);
+    pthread_cond_destroy(&g_log_queue.not_empty);
+    pthread_mutex_destroy(&g_log_queue.mutex);
+}
+
+/**
+ * @brief 로그 메시지를 큐에 추가합니다.
+ * @param message 추가할 로그 메시지
+ * @return 성공 시 true, 실패 시 false
+ */
+static bool log_queue_push(const char* message) {
+    if (!message) return false;
+    
+    pthread_mutex_lock(&g_log_queue.mutex);
+    
+    // 큐가 가득 찬 경우 대기 (Back-pressure)
+    while (g_log_queue.size >= g_log_queue.capacity && g_logger_running) {
+        pthread_cond_wait(&g_log_queue.not_full, &g_log_queue.mutex);
+    }
+    
+    // 로거가 종료 중이면 추가하지 않음
+    if (!g_logger_running) {
+        pthread_mutex_unlock(&g_log_queue.mutex);
+        return false;
+    }
+    
+    // 메시지 복사 (최대 1023자 + null 종료)
+    strncpy(g_log_queue.entries[g_log_queue.tail].message, message, 1023);
+    g_log_queue.entries[g_log_queue.tail].message[1023] = '\0';
+    
+    g_log_queue.tail = (g_log_queue.tail + 1) % g_log_queue.capacity;
+    g_log_queue.size++;
+    
+    pthread_cond_signal(&g_log_queue.not_empty);
+    pthread_mutex_unlock(&g_log_queue.mutex);
+    
+    return true;
+}
+
+/**
+ * @brief 로그 큐에서 메시지를 꺼냅니다.
+ * @param message 메시지를 저장할 버퍼
+ * @return 성공 시 true, 실패 시 false
+ */
+static bool log_queue_pop(char* message) {
+    if (!message) return false;
+    
+    pthread_mutex_lock(&g_log_queue.mutex);
+    
+    // 큐가 비어있고 로거가 실행 중이면 대기
+    while (g_log_queue.size == 0 && g_logger_running) {
+        pthread_cond_wait(&g_log_queue.not_empty, &g_log_queue.mutex);
+    }
+    
+    // 큐가 비어있고 로거가 종료 중이면 false 반환
+    if (g_log_queue.size == 0) {
+        pthread_mutex_unlock(&g_log_queue.mutex);
+        return false;
+    }
+    
+    // 메시지 복사
+    strcpy(message, g_log_queue.entries[g_log_queue.head].message);
+    
+    g_log_queue.head = (g_log_queue.head + 1) % g_log_queue.capacity;
+    g_log_queue.size--;
+    
+    pthread_cond_signal(&g_log_queue.not_full);
+    pthread_mutex_unlock(&g_log_queue.mutex);
+    
+    return true;
+}
+
+/**
+ * @brief 로거 스레드 종료를 위한 신호를 보냅니다.
+ */
+static void log_queue_signal_shutdown(void) {
+    pthread_mutex_lock(&g_log_queue.mutex);
+    g_logger_running = false;
+    pthread_cond_signal(&g_log_queue.not_empty);
+    pthread_mutex_unlock(&g_log_queue.mutex);
+}
+
+/**
+ * @brief 로거 스레드 함수 - 큐에서 메시지를 꺼내 파일에 쓰는 역할
+ * @param arg 스레드 인자 (사용하지 않음)
+ * @return NULL
+ */
+static void* logger_thread_function(void* arg) {
+    (void)arg;
+    char message[1024];
+    
+    while (g_logger_running || g_log_queue.size > 0) {
+        if (log_queue_pop(message)) {
+            // 파일에 직접 쓰기
+            if (g_log_file) {
+                fputs(message, g_log_file);
+                fflush(g_log_file);  // 즉시 디스크에 쓰기
+            }
+        }
+    }
+    
+    return NULL;
 }
