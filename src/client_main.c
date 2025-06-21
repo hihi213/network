@@ -687,6 +687,23 @@ static void client_handle_server_message(const message_t* message) {
                 time_t server_time = atol(message->args[0]);
                 g_time_offset = server_time - time(NULL);
                 LOG_INFO("TimeSync", "서버 시간 동기화 완료. Offset: %ld초", g_time_offset);
+                
+                // [추가] 시간 동기화 완료 후 장비 목록 요청
+                LOG_INFO("Client", "시간 동기화 완료, 장비 목록 요청 시작");
+                message_t* status_msg = message_create(MSG_STATUS_REQUEST, NULL);
+                if (status_msg) {
+                    if (network_send_message(client_session.ssl, status_msg) < 0) {
+                        LOG_ERROR("Client", "장비 목록 요청 전송 실패");
+                        running = false;
+                    } else {
+                        LOG_INFO("Client", "장비 목록 요청 전송 성공");
+                    }
+                    message_destroy(status_msg);
+                } else {
+                    LOG_ERROR("Client", "장비 목록 요청 메시지 생성 실패");
+                }
+            } else {
+                LOG_WARNING("TimeSync", "시간 동기화 응답에 서버 시간 정보가 없음");
             }
             break;
         }
