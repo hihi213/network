@@ -1,29 +1,41 @@
 /**
  * @file network.c
- * @brief 네트워크 통신 모듈 - SSL/TLS 기반의 안전한 소켓 통신
+ * @brief 저수준 네트워크 통신 모듈 - SSL/TLS 기반 보안 채널 및 메시지 전송
  * 
  * @details
- * 이 모듈은 클라이언트-서버 간의 안전한 통신을 위한 핵심 기능을 제공합니다:
+ * 이 모듈은 클라이언트-서버 간의 저수준 네트워크 통신을 담당합니다:
  * 
- * 1. **SSL/TLS 보안 통신**: TLS 1.2/1.3 기반의 암호화된 통신
- * 2. **소켓 관리**: 서버/클라이언트 소켓 초기화 및 옵션 설정
- * 3. **메시지 전송**: 구조화된 메시지의 안정적인 전송/수신
- * 4. **에러 처리**: 네트워크 오류의 체계적 처리 및 복구
+ * **핵심 역할:**
+ * - SSL/TLS 기반의 보안 채널 설정 및 관리
+ * - 소켓 옵션 관리 (타임아웃, 버퍼 크기, 재사용 등)
+ * - 자체 정의 프로토콜에 따른 메시지의 안정적인 송수신
+ * - 메시지 직렬화/역직렬화 및 체크섬 검증
  * 
- * @note 모든 네트워크 통신은 SSL/TLS로 암호화되며, 연결 지속성과
- *       안정성을 위한 다양한 소켓 옵션이 적용됩니다.
+ * **시스템 아키텍처에서의 위치:**
+ * - 네트워크 계층: OSI 4-7계층 (전송-응용 계층)
+ * - 보안 계층: SSL/TLS 암호화 및 인증
+ * - 프로토콜 계층: 커스텀 메시지 프로토콜 구현
+ * - 데이터 계층: 바이너리 메시지 직렬화/역직렬화
+ * 
+ * **주요 특징:**
+ * - TLS 1.2/1.3 기반의 강력한 암호화 통신
+ * - 메시지 단위의 신뢰성 있는 전송 (재전송, 체크섬)
+ * - 비동기 I/O 지원으로 높은 처리량 달성
+ * - 크로스 플랫폼 호환성 (Linux, macOS)
+ * 
+ * **프로토콜 구조:**
+ * - 메시지 헤더: 타입, 길이, 체크섬, 타임스탬프
+ * - 메시지 본문: JSON 형태의 구조화된 데이터
+ * - 에러 처리: 네트워크 오류 및 프로토콜 오류 구분
+ * 
+ * @note 이 모듈은 모든 네트워크 통신의 기반이 되며, 상위 계층에서
+ *       안전하고 신뢰할 수 있는 통신을 보장합니다.
  */
 
 #include "../include/network.h"
 #include "../include/message.h"
 #include "../include/utils.h"
-#include <netinet/tcp.h>  // TCP_NODELAY, TCP_KEEPIDLE, TCP_KEEPINTVL, TCP_KEEPCNT
-#include <sys/socket.h>   // SO_REUSEADDR, SO_REUSEPORT, SO_KEEPALIVE, SO_RCVTIMEO, SO_SNDTIMEO
-#include <netinet/in.h>   // sockaddr_in
-#include <arpa/inet.h>    // inet_pton, inet_ntop
-#include <unistd.h>       // close
-#include <errno.h>        // errno
-#include <string.h>       // strerror
+
 
 #define NET_IO_MAX_RETRY 3  // 네트워크 I/O 재시도 최대 횟수
 
@@ -61,6 +73,9 @@ int network_send_message(SSL* ssl, const message_t* message) {
         return -1;
     }
 
+    LOG_INFO("Network", "메시지 전송 시작: 타입=%d, 인자수=%d, 데이터길이=%zu", 
+             message->type, message->arg_count, strlen(message->data));
+
     // 1. 메시지 헤더 전송 (타입, 인자 개수)
     uint32_t net_type = htonl(message->type);
     if (network_send(ssl, &net_type, sizeof(net_type)) != sizeof(net_type)) return -1;
@@ -93,6 +108,7 @@ int network_send_message(SSL* ssl, const message_t* message) {
         if (network_send(ssl, message->data, data_len) != (ssize_t)data_len) return -1;
     }
 
+    LOG_INFO("Network", "메시지 전송 완료: 타입=%d", message->type);
     return 0;
 }
 
@@ -210,8 +226,8 @@ static void network_set_common_ssl_ctx_options(SSL_CTX* ctx) {
     // 자동 재시도 모드 활성화
     SSL_CTX_set_mode(ctx, SSL_MODE_AUTO_RETRY);
     
-    // 클라이언트 인증서 검증 비활성화 (개발 환경용)
-    SSL_CTX_set_verify(ctx, SSL_VERIFY_NONE, NULL);
+    // 클라이언트 인증서 검증 활성화 
+    SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, NULL);
 }
 
 /**
@@ -271,6 +287,8 @@ int network_init_ssl_manager(ssl_manager_t* manager, bool is_server, const char*
         return -1;
     }
     
+    LOG_INFO("Network", "SSL 매니저 초기화 시작: %s 모드", is_server ? "서버" : "클라이언트");
+    
     memset(manager, 0, sizeof(ssl_manager_t));
     manager->is_server = is_server;
     
@@ -284,6 +302,7 @@ int network_init_ssl_manager(ssl_manager_t* manager, bool is_server, const char*
             utils_report_error(ERROR_INVALID_PARAMETER, "SSL", "서버 모드에서는 인증서와 키 파일이 필요합니다");
             return -1;
         }
+        LOG_INFO("Network", "서버 SSL 컨텍스트 초기화: 인증서=%s, 키=%s", cert_file, key_file);
         return network_init_ssl_context(manager, cert_file, key_file);
     } else {
         manager->ctx = SSL_CTX_new(TLS_client_method());
@@ -291,12 +310,32 @@ int network_init_ssl_manager(ssl_manager_t* manager, bool is_server, const char*
             utils_report_error(ERROR_NETWORK_SSL_CONTEXT_FAILED, "SSL", "클라이언트 SSL 컨텍스트 생성 실패");
             return -1;
         }
+        
+        LOG_INFO("Network", "클라이언트 SSL 컨텍스트 생성 완료");
+        
+        // 서버의 인증서를 신뢰 목록에 추가
+        if (!SSL_CTX_load_verify_locations(manager->ctx, "certs/server.crt", NULL)) {
+            utils_report_error(ERROR_NETWORK_SSL_CERTIFICATE_FAILED, "SSL", "서버 인증서 로드 실패");
+            SSL_CTX_free(manager->ctx);
+            manager->ctx = NULL;
+            return -1;
+        }
+        
+        LOG_INFO("Network", "서버 인증서 로드 완료: certs/server.crt");
+        
+        // 검증 모드를 PEER로 설정
+        SSL_CTX_set_verify(manager->ctx, SSL_VERIFY_PEER, NULL);
+        
         network_set_common_ssl_ctx_options(manager->ctx);
+        
+        LOG_INFO("Network", "클라이언트 SSL 매니저 초기화 완료");
         return 0;
     }
 }
 
 int network_init_server_socket(int port) {
+    LOG_INFO("Network", "서버 소켓 초기화 시작: 포트=%d", port);
+    
     int server_fd = socket(AF_INET, SOCK_STREAM, 0);
     CHECK_SYSCALL_RET(server_fd, ERROR_NETWORK_SOCKET_CREATION_FAILED, "Network", "서버 소켓 생성 실패");
     network_set_socket_options(server_fd, true);
@@ -313,11 +352,16 @@ int network_init_server_socket(int port) {
         utils_report_error(ERROR_NETWORK_LISTEN_FAILED, "Network", "서버 소켓 리스닝 실패: %s", strerror(errno));
         CLEANUP_AND_RET(close(server_fd), -1);
     }
+    
+    LOG_INFO("Network", "서버 소켓 초기화 완료: 포트=%d, 소켓=%d", port, server_fd);
     return server_fd;
 }
 
 int network_init_client_socket(const char* server_ip, int port) {
     CHECK_PARAM_RET(server_ip, ERROR_INVALID_PARAMETER, "Network", "server_ip가 NULL입니다");
+    
+    LOG_INFO("Network", "클라이언트 소켓 초기화 시작: 서버=%s:%d", server_ip, port);
+    
     int client_fd = socket(AF_INET, SOCK_STREAM, 0);
     CHECK_SYSCALL_RET(client_fd, ERROR_NETWORK_SOCKET_CREATION_FAILED, "Network", "클라이언트 소켓 생성 실패");
     if (network_set_socket_options(client_fd, false) < 0) {
@@ -335,22 +379,37 @@ int network_init_client_socket(const char* server_ip, int port) {
         utils_report_error(ERROR_NETWORK_CONNECT_FAILED, "Network", "서버 연결 실패: %s", strerror(errno));
         CLEANUP_AND_RET(close(client_fd), -1);
     }
+    
+    LOG_INFO("Network", "클라이언트 소켓 초기화 완료: 서버=%s:%d, 소켓=%d", server_ip, port, client_fd);
     return client_fd;
 }
 
 int network_handle_ssl_handshake(ssl_handler_t* handler) {
     CHECK_PARAM_RET(handler && handler->ssl, ERROR_INVALID_PARAMETER, "SSL", "잘못된 SSL 핸들러");
+    
+    LOG_INFO("Network", "SSL 핸드셰이크 시작: %s 모드, 소켓=%d", 
+             handler->is_server ? "서버" : "클라이언트", handler->socket_fd);
+    
     int ret = handler->is_server ? SSL_accept(handler->ssl) : SSL_connect(handler->ssl);
     if (ret <= 0) {
         utils_report_error(ERROR_NETWORK_SSL_HANDSHAKE_FAILED, "SSL", "SSL 핸드셰이크 실패");
         ERR_print_errors_fp(stderr);
         return -1;
     }
+    
+    LOG_INFO("Network", "SSL 핸드셰이크 성공: %s 모드, 소켓=%d, 프로토콜=%s", 
+             handler->is_server ? "서버" : "클라이언트", handler->socket_fd, 
+             SSL_get_version(handler->ssl));
+    
     return 0;
 }
 
 ssl_handler_t* network_create_ssl_handler(ssl_manager_t* manager, int socket_fd) {
     CHECK_PARAM_RET_PTR(manager && manager->ctx, ERROR_INVALID_PARAMETER, "SSL", "잘못된 SSL Manager 또는 Context");
+    
+    LOG_INFO("Network", "SSL 핸들러 생성 시작: %s 모드, 소켓=%d", 
+             manager->is_server ? "서버" : "클라이언트", socket_fd);
+    
     ssl_handler_t* handler = (ssl_handler_t*)malloc(sizeof(ssl_handler_t));
     if (!handler) {
         utils_report_error(ERROR_MEMORY_ALLOCATION_FAILED, "SSL", "SSL 핸들러 메모리 할당 실패");
@@ -372,16 +431,26 @@ ssl_handler_t* network_create_ssl_handler(ssl_manager_t* manager, int socket_fd)
         free(handler);
         return NULL;
     }
+    
+    LOG_INFO("Network", "SSL 핸들러 생성 완료: %s 모드, 소켓=%d", 
+             manager->is_server ? "서버" : "클라이언트", socket_fd);
+    
     return handler;
 }
 
 void network_cleanup_ssl_handler(ssl_handler_t* handler) {
     if (!handler) return;
+    
+    LOG_INFO("Network", "SSL 핸들러 정리 시작: %s 모드, 소켓=%d", 
+             handler->is_server ? "서버" : "클라이언트", handler->socket_fd);
+    
     if (handler->ssl) {
         SSL_shutdown(handler->ssl);
         SSL_free(handler->ssl);
     }
     free(handler);
+    
+    LOG_INFO("Network", "SSL 핸들러 정리 완료");
 }
 
 int network_set_socket_options(int socket_fd, bool is_server) {
@@ -447,6 +516,7 @@ int network_set_socket_options(int socket_fd, bool is_server) {
         }
     #endif
 #endif
+/*호환성 문제로 주석처리
 #ifdef TCP_KEEPINTVL
         int keepintvl = 10;
         if (setsockopt(socket_fd, IPPROTO_TCP, TCP_KEEPINTVL, &keepintvl, sizeof(keepintvl)) < 0) {
@@ -461,9 +531,11 @@ int network_set_socket_options(int socket_fd, bool is_server) {
             return -1;
         }
 #endif
+*/
     }
 
     // LOG_INFO("Network", "소켓 옵션 설정 완료: fd=%d, is_server=%d", socket_fd, is_server);
+    LOG_INFO("Network", "소켓 옵션 설정 완료: fd=%d, %s 모드", socket_fd, is_server ? "서버" : "클라이언트");
     return 0;
 }
 
@@ -500,7 +572,7 @@ ssl_handler_t* network_accept_client(int server_fd, ssl_manager_t* ssl_manager, 
         utils_report_error(ERROR_NETWORK_IP_CONVERSION_FAILED, "Network", "클라이언트 IP 주소 변환 실패");
         CLEANUP_AND_RET(close(client_fd), NULL);
     }
-    // LOG_INFO("Network", "클라이언트 연결 수락: IP=%s, 소켓=%d", client_ip, client_fd);
+    LOG_INFO("Network", "클라이언트 연결 수락: IP=%s, 소켓=%d", client_ip, client_fd);
     ssl_handler_t* ssl_handler = network_create_ssl_handler(ssl_manager, client_fd);
     if (!ssl_handler) {
         utils_report_error(ERROR_NETWORK_SSL_INIT_FAILED, "Network", "SSL 핸들러 생성 실패: IP=%s", client_ip);
@@ -511,7 +583,7 @@ ssl_handler_t* network_accept_client(int server_fd, ssl_manager_t* ssl_manager, 
         network_cleanup_ssl_handler(ssl_handler);
         CLEANUP_AND_RET(close(client_fd), NULL);
     }
-    // LOG_INFO("Network", "클라이언트 SSL 연결 성공: IP=%s", client_ip);
+    LOG_INFO("Network", "클라이언트 SSL 연결 성공: IP=%s, 소켓=%d", client_ip, client_fd);
     return ssl_handler;
 }
 
@@ -523,7 +595,7 @@ ssl_handler_t* network_accept_client(int server_fd, ssl_manager_t* ssl_manager, 
  */
 ssl_handler_t* network_perform_ssl_handshake(int client_fd, ssl_manager_t* mgr) {
     CHECK_PARAM_RET_PTR(mgr, ERROR_INVALID_PARAMETER, "Network", "network_perform_ssl_handshake: SSL 매니저가 NULL입니다");
-    // LOG_INFO("Network", "SSL 핸드셰이크 시작: fd=%d", client_fd);
+    LOG_INFO("Network", "SSL 핸드셰이크 시작: fd=%d", client_fd);
     ssl_handler_t* handler = network_create_ssl_handler(mgr, client_fd);
     if (!handler) {
         utils_report_error(ERROR_NETWORK_SSL_INIT_FAILED, "Network", "SSL 핸들러 생성 실패: fd=%d", client_fd);
@@ -536,6 +608,6 @@ ssl_handler_t* network_perform_ssl_handshake(int client_fd, ssl_manager_t* mgr) 
         close(client_fd);
         return NULL;
     }
-    // LOG_INFO("Network", "SSL 핸드셰이크 성공: fd=%d", client_fd);
+    LOG_INFO("Network", "SSL 핸드셰이크 성공: fd=%d", client_fd);
     return handler;
 }

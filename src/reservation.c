@@ -1,17 +1,56 @@
 /**
  * @file reservation.c
- * @brief 예약 관리 시스템 - 타임휠 기반 만료 처리 및 해시 테이블 기반 고속 조회
+ * @brief 예약 관리 모듈 - 타임휠 기반 예약 시스템 핵심 로직
  * 
  * @details
- * 이 모듈은 장비 예약 시스템의 핵심 로직을 구현합니다:
+ * 이 모듈은 예약 관리 시스템의 핵심 로직을 구현합니다:
  * 
- * 1. **예약 생명주기 관리**: 생성 → 승인 → 완료/취소 → 정리
- * 2. **타임휠(Time Wheel) 알고리즘**: O(1) 시간 복잡도로 예약 만료 처리
- * 3. **해시 테이블 기반 조회**: O(1) 평균 시간 복잡도로 예약 검색
- * 4. **동시성 제어**: 뮤텍스 기반 스레드 안전성 보장
+ * **핵심 역할:**
+ * - 타임휠(Time Wheel) 알고리즘을 사용한 예약 만료 처리
+ * - 해시 테이블로 예약 정보를 빠르게 조회
+ * - 예약 생성 시 시간 충돌 검사 및 해결
+ * - 예약의 전체 생명주기 관리 (생성, 수정, 취소, 만료)
  * 
- * @note 타임휠 알고리즘은 대용량 예약 시스템에서 효율적인 만료 처리를 위해 선택되었습니다.
- *       전통적인 방식(모든 예약을 순회하며 만료 확인)의 O(n) 복잡도를 O(1)로 개선합니다.
+ * **시스템 아키텍처에서의 위치:**
+ * - 비즈니스 로직 계층: 예약 관련 핵심 알고리즘
+ * - 스케줄링 계층: 시간 기반 이벤트 처리
+ * - 데이터 계층: 예약 정보 저장 및 검색
+ * - 동시성 제어 계층: 예약 충돌 방지 및 해결
+ * 
+ * **타임휠 알고리즘:**
+ * - O(1) 시간 복잡도로 예약 만료 처리
+ * - 메모리 효율적인 순환 버퍼 구조
+ * - 정밀한 시간 해상도 (초 단위)
+ * - 자동 만료 처리 및 정리
+ * 
+ * **예약 충돌 검사:**
+ * - 시간 범위 겹침 검사 (O(log n))
+ * - 장비별 예약 상태 확인
+ * - 사용자별 동시 예약 제한
+ * - 우선순위 기반 충돌 해결
+ * 
+ * **주요 기능:**
+ * - 예약 생성/수정/취소/조회
+ * - 실시간 예약 상태 업데이트
+ * - 예약 만료 자동 처리
+ * - 예약 통계 및 분석
+ * 
+ * **예약 상태 관리:**
+ * - PENDING: 승인 대기 중
+ * - CONFIRMED: 확정된 예약
+ * - IN_PROGRESS: 진행 중인 예약
+ * - COMPLETED: 완료된 예약
+ * - CANCELLED: 취소된 예약
+ * - EXPIRED: 만료된 예약
+ * 
+ * **성능 최적화:**
+ * - 해시 테이블 기반 O(1) 예약 조회
+ * - 타임휠 기반 O(1) 만료 처리
+ * - 스레드 안전한 동시성 제어
+ * - 메모리 효율적인 데이터 구조
+ * 
+ * @note 이 모듈은 시스템의 핵심 비즈니스 로직을 구현하며,
+ *       복잡한 시간 기반 예약 처리를 효율적으로 수행합니다.
  */
 
 #include "../include/reservation.h"
@@ -310,6 +349,8 @@ reservation_manager_t* reservation_init_manager(resource_manager_t* res_manager,
         return NULL;
     }
 
+    LOG_INFO("Reservation", "예약 관리자 초기화 시작");
+
     if (!utils_init_manager_base(manager, sizeof(reservation_manager_t), &manager->reservation_map, MAX_RESERVATIONS, free, &manager->mutex)) {
         utils_report_error(ERROR_HASHTABLE_CREATION_FAILED, "Reservation", "매니저 공통 초기화 실패");
         free(manager);
@@ -347,6 +388,7 @@ reservation_manager_t* reservation_init_manager(resource_manager_t* res_manager,
         return NULL;
     }
 
+    LOG_INFO("Reservation", "예약 관리자 초기화 완료: 타임휠 크기=%d, 정리 스레드 시작", manager->time_wheel->size);
     return manager;
 }
 
@@ -426,6 +468,9 @@ uint32_t reservation_create(reservation_manager_t* manager, const char* device_i
         utils_report_error(ERROR_INVALID_PARAMETER, "Reservation", "잘못된 파라미터");
         return 0;
     }
+
+    LOG_INFO("Reservation", "예약 생성 시작: 장비=%s, 사용자=%s, 시작=%ld, 종료=%ld", 
+             device_id, username, start_time, end_time);
 
     pthread_mutex_lock(&manager->mutex);
 

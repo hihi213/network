@@ -44,7 +44,8 @@
 #include <ctype.h>
 #include <locale.h>
 #include <time.h>
-
+#include <netinet/tcp.h> 
+#include <inttypes.h> 
 /* 전역 상수 정의 */
 #define PORT 8080
 #define MAX_BUFFER_SIZE 4096

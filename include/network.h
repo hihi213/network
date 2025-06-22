@@ -4,11 +4,30 @@
 #include "common.h"
 #include "message.h" // Message 구조체 송수신을 위해 포함
 
-/* TCP Keepalive 상수 */
+/* TCP Keepalive 상수 - 플랫폼별 조건부 정의 */
+#ifndef TCP_KEEPALIVE
 #define TCP_KEEPALIVE 0x10
+#endif
+
+#ifndef TCP_KEEPIDLE
 #define TCP_KEEPIDLE 0x11
-#define TCP_KEEPINTVL 0x12
-#define TCP_KEEPCNT 0x13
+#endif
+
+#ifndef TCP_KEEPINTVL
+#ifdef __APPLE__
+#define TCP_KEEPINTVL 0x101  // macOS
+#else
+#define TCP_KEEPINTVL 0x12   // Linux
+#endif
+#endif
+
+#ifndef TCP_KEEPCNT
+#ifdef __APPLE__
+#define TCP_KEEPCNT 0x102    // macOS
+#else
+#define TCP_KEEPCNT 0x13     // Linux
+#endif
+#endif
 
 /* SSL 핸드셰이크 상태 열거형 */
 typedef enum ssl_handshake_state {

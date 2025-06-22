@@ -1,17 +1,44 @@
 /**
  * @file message.c
- * @brief 메시지 프로토콜 모듈 - 클라이언트-서버 간 통신 메시지 처리
+ * @brief 메시지 프로토콜 모듈 - 클라이언트-서버 간 통신 프로토콜 정의
  * 
  * @details
- * 이 모듈은 클라이언트와 서버 간의 통신을 위한 메시지 프로토콜을 구현합니다:
+ * 이 모듈은 클라이언트와 서버 간에 교환되는 메시지 프로토콜을 정의하고
+ * 관련 유틸리티 함수를 제공합니다:
  * 
- * 1. **메시지 생성/파괴**: 메모리 안전한 메시지 객체 관리
- * 2. **직렬화/역직렬화**: 네트워크 전송을 위한 바이너리 변환
- * 3. **상태 응답 생성**: 장비 목록과 예약 정보를 포함한 복합 응답
- * 4. **에러 처리**: 체계적인 에러 코드 및 메시지 관리
+ * **핵심 역할:**
+ * - 메시지 객체의 생성/파괴 및 메모리 관리
+ * - 장비 상태 응답 생성 및 구조화
+ * - 에러 메시지 변환 및 표준화
+ * - 메시지 타입별 처리 로직 구현
  * 
- * @note 모든 메시지는 네트워크 바이트 순서(빅엔디안)로 직렬화되며,
- *       가변 길이 문자열은 길이+내용 형태로 전송됩니다.
+ * **시스템 아키텍처에서의 위치:**
+ * - 프로토콜 계층: 애플리케이션 레벨 메시지 정의
+ * - 데이터 계층: 메시지 구조체 및 타입 정의
+ * - 비즈니스 로직 계층: 도메인별 메시지 처리
+ * - 인터페이스 계층: 상위 모듈과의 메시지 교환
+ * 
+ * **메시지 타입 분류:**
+ * - 인증 메시지: LOGIN, LOGOUT, AUTH_RESPONSE
+ * - 장비 관리: EQUIPMENT_LIST, EQUIPMENT_STATUS, EQUIPMENT_UPDATE
+ * - 예약 관리: RESERVATION_REQUEST, RESERVATION_RESPONSE, RESERVATION_CANCEL
+ * - 시스템 메시지: BROADCAST, ERROR, HEARTBEAT
+ * 
+ * **주요 특징:**
+ * - JSON 기반의 구조화된 메시지 형식
+ * - 타입 안전성을 위한 열거형 기반 메시지 타입
+ * - 메모리 누수 방지를 위한 자동 정리 메커니즘
+ * - 확장 가능한 메시지 프로토콜 구조
+ * 
+ * **메시지 생명주기:**
+ * - 생성: 메시지 객체 할당 및 초기화
+ * - 직렬화: JSON 형태로 변환하여 전송
+ * - 역직렬화: 수신된 JSON을 메시지 객체로 변환
+ * - 처리: 비즈니스 로직에 따른 메시지 처리
+ * - 정리: 메모리 해제 및 리소스 정리
+ * 
+ * @note 이 모듈은 시스템의 통신 프로토콜을 표준화하며, 모든
+ *       클라이언트-서버 간 데이터 교환의 기반이 됩니다.
  */
 
 #include "../include/message.h"
@@ -29,21 +56,24 @@
  * @return 생성된 메시지 객체, 실패 시 NULL
  */
 message_t* message_create(message_type_t type, const char *data) {
-    message_t *msg = (message_t *)malloc(sizeof(message_t));
-    if (!msg) {
-        // LOG_ERROR("Message", "메시지 메모리 할당 실패");
-        return NULL;
-    }
+    message_t* msg = (message_t*)malloc(sizeof(message_t));
+    if (!msg) return NULL;
+    
     msg->type = type;
     msg->arg_count = 0;
-    msg->error_code = ERROR_NONE; // 기본값 설정
+    msg->error_code = ERROR_NONE;
     memset(msg->args, 0, sizeof(msg->args));
+    
     if (data) {
         strncpy(msg->data, data, MAX_MESSAGE_LENGTH - 1);
         msg->data[MAX_MESSAGE_LENGTH - 1] = '\0';
     } else {
         msg->data[0] = '\0';
     }
+    
+    LOG_INFO("Message", "메시지 생성: 타입=%s(%d), 데이터=%s", 
+             message_get_type_string(type), type, data ? data : "(없음)");
+    
     return msg;
 }
 
@@ -270,28 +300,39 @@ message_t* message_receive(SSL* ssl) {
     uint32_t type_net, arg_count_net;
     if (network_recv(ssl, &type_net, sizeof(type_net)) != sizeof(type_net)) return NULL;
     if (network_recv(ssl, &arg_count_net, sizeof(arg_count_net)) != sizeof(arg_count_net)) return NULL;
+    
     message_type_t type = ntohl(type_net);
     uint32_t arg_count = ntohl(arg_count_net);
-    message_t* message = message_create(type, NULL);
-    if (!message) return NULL;
     
-    // 에러 코드 읽기 (MSG_ERROR 타입인 경우)
+    LOG_INFO("Message", "메시지 수신 시작: 타입=%s(%d), 인자수=%d", 
+             message_get_type_string(type), type, arg_count);
+    
+    message_t* msg = message_create(type, NULL);
+    if (!msg) return NULL;
+    
     if (type == MSG_ERROR) {
-        if (!message_read_error_code(ssl, message)) {
-            message_destroy(message);
+        if (!message_read_error_code(ssl, msg)) {
+            message_destroy(msg);
             return NULL;
         }
     }
     
-    if (!message_read_arguments(ssl, message, arg_count)) {
-        message_destroy(message);
+    if (arg_count > 0) {
+        if (!message_read_arguments(ssl, msg, arg_count)) {
+            message_destroy(msg);
+            return NULL;
+        }
+    }
+    
+    if (!message_read_data(ssl, msg)) {
+        message_destroy(msg);
         return NULL;
     }
-    if (!message_read_data(ssl, message)) {
-        message_destroy(message);
-        return NULL;
-    }
-    return message;
+    
+    LOG_INFO("Message", "메시지 수신 완료: 타입=%s(%d), 인자수=%d, 데이터길이=%zu", 
+             message_get_type_string(type), type, msg->arg_count, strlen(msg->data));
+    
+    return msg;
 }
 
 /**

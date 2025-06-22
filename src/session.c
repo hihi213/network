@@ -1,17 +1,48 @@
 /**
  * @file session.c
- * @brief 세션 관리 모듈 - 클라이언트 연결 세션 및 인증 관리
+ * @brief 세션 관리 모듈 - 클라이언트 연결 세션 및 인증 상태 관리
  * 
  * @details
- * 이 모듈은 클라이언트 연결의 세션 생명주기를 관리합니다:
+ * 이 모듈은 클라이언트의 연결 세션과 인증 상태를 관리합니다:
  * 
- * 1. **세션 생성/종료**: 사용자 인증 후 세션 객체 생성 및 정리
- * 2. **중복 로그인 방지**: 동일 사용자의 다중 세션 차단
- * 3. **세션 토큰 관리**: 고유한 세션 식별자 생성
- * 4. **클라이언트 정리**: SSL 연결 및 소켓 리소스 해제
+ * **핵심 역할:**
+ * - 서버 측: 해시 테이블을 이용한 중복 로그인 방지
+ * - 서버 측: 사용자 세션 정보 관리 및 추적
+ * - 클라이언트 측: 연결 관련 리소스(SSL, 소켓) 정리
+ * - 세션 생명주기 관리 (생성, 유지, 종료)
  * 
- * @note 서버 측에서는 해시 테이블로 세션을 관리하며, 클라이언트 측에서는
- *       SSL 연결 정보를 관리합니다.
+ * **시스템 아키텍처에서의 위치:**
+ * - 보안 계층: 사용자 인증 및 세션 관리
+ * - 상태 관리 계층: 클라이언트 연결 상태 추적
+ * - 리소스 관리 계층: 연결별 리소스 할당/해제
+ * - 네트워크 계층: 연결 지속성 및 안정성 보장
+ * 
+ * **서버 측 기능:**
+ * - 사용자별 세션 정보 저장 (사용자명, 연결 시간, 마지막 활동)
+ * - 중복 로그인 감지 및 기존 세션 강제 종료
+ * - 세션 타임아웃 처리 및 자동 정리
+ * - 동시 접속자 수 제한 및 관리
+ * 
+ * **클라이언트 측 기능:**
+ * - SSL 컨텍스트 및 소켓 리소스 정리
+ * - 연결 종료 시 안전한 리소스 해제
+ * - 재연결 시도 및 연결 상태 복구
+ * - 네트워크 오류 시 세션 정리
+ * 
+ * **주요 특징:**
+ * - 해시 테이블 기반 O(1) 세션 조회 성능
+ * - 스레드 안전한 세션 관리 (뮤텍스 보호)
+ * - 메모리 누수 방지를 위한 자동 정리 메커니즘
+ * - 세션 상태의 실시간 모니터링 지원
+ * 
+ * **세션 상태:**
+ * - ACTIVE: 정상 활성 세션
+ * - EXPIRED: 타임아웃으로 만료된 세션
+ * - DISCONNECTED: 연결이 끊어진 세션
+ * - CLEANUP: 정리 대기 중인 세션
+ * 
+ * @note 이 모듈은 시스템의 보안과 안정성을 담당하며, 사용자별
+ *       연결 상태를 체계적으로 관리합니다.
  */
 
 #include "../include/session.h"  // 세션 관련 헤더 파일 포함
@@ -54,7 +85,7 @@ session_manager_t* session_init_manager(void) {
     // 랜덤 시드 초기화 (토큰 생성용)
     srand(time(NULL));  // 현재 시간으로 랜덤 시드 설정
 
-    // LOG_INFO("Session", "세션 매니저 초기화 성공");  // 정보 로그 출력
+    LOG_INFO("Session", "세션 매니저 초기화 성공");  // 정보 로그 출력
     return manager;  // 초기화된 매니저 반환
 }
 
@@ -93,7 +124,7 @@ server_session_t* session_create(session_manager_t* manager, const char* usernam
     }
 
      pthread_mutex_lock(&manager->mutex);
-    // LOG_INFO("Session", "세션 생성 시작: 사용자=%s, IP=%s, 포트=%d", username, client_ip, client_port);
+    LOG_INFO("Session", "세션 생성 시작: 사용자=%s, IP=%s, 포트=%d", username, client_ip, client_port);
 
     // [개선] 기존 세션이 존재하는지 확인
     if (utils_hashtable_get(manager->sessions, username)) {
@@ -125,8 +156,8 @@ server_session_t* session_create(session_manager_t* manager, const char* usernam
     // 고유한 세션 토큰 생성 (사용자명_타임스탬프 형식)
     snprintf(new_session->token, MAX_TOKEN_LENGTH, "%s_%ld", username, new_session->created_at);  // 세션 토큰 생성
 
-    // LOG_INFO("Session", "세션 정보 설정 완료: 사용자=%s, 토큰=%s, 생성시간=%ld",
-    //          username, new_session->token, new_session->created_at);
+    LOG_INFO("Session", "세션 정보 설정 완료: 사용자=%s, 토큰=%s, 생성시간=%ld",
+             username, new_session->token, new_session->created_at);
 
     // [개선] 해시 테이블에 세션 삽입
     if (!utils_hashtable_insert(manager->sessions, username, new_session)) {  // 해시 테이블 삽입 실패 시
@@ -136,7 +167,7 @@ server_session_t* session_create(session_manager_t* manager, const char* usernam
         return NULL;  // NULL 반환
     }
 
-    // LOG_INFO("Session", "세션 생성 성공: %s", username);  // 정보 로그 출력
+    LOG_INFO("Session", "세션 생성 성공: %s", username);  // 정보 로그 출력
     pthread_mutex_unlock(&manager->mutex);  // 뮤텍스 해제
     return new_session;  // 생성된 세션 반환
 }
@@ -157,17 +188,17 @@ int session_close(session_manager_t* manager, const char* username) {
         return -1;  // 에러 코드 반환
     }
 
-    // LOG_INFO("Session", "세션 종료 시작: 사용자=%s", username);
+    LOG_INFO("Session", "세션 종료 시작: 사용자=%s", username);
 
     pthread_mutex_lock(&manager->mutex);  // 뮤텍스 잠금
     
     // [개선] 해시 테이블에서 바로 삭제. 성공하면 0, 없으면 -1 반환.
     if (utils_hashtable_delete(manager->sessions, username)) {  // 해시 테이블에서 세션 삭제 성공 시
-        // LOG_INFO("Session", "세션 종료 성공: %s", username);  // 정보 로그 출력
+        LOG_INFO("Session", "세션 종료 성공: %s", username);  // 정보 로그 출력
         pthread_mutex_unlock(&manager->mutex);  // 뮤텍스 해제
         return 0;  // 성공 코드 반환
     } else {  // 세션을 찾을 수 없는 경우
-        // LOG_WARNING("Session", "세션을 찾을 수 없음: %s", username);  // 경고 로그 출력
+        LOG_WARNING("Session", "세션을 찾을 수 없음: %s", username);  // 경고 로그 출력
         pthread_mutex_unlock(&manager->mutex);  // 뮤텍스 해제
         return -1;  // 에러 코드 반환
     }
@@ -183,6 +214,9 @@ int session_close(session_manager_t* manager, const char* username) {
  */
 void session_cleanup_client(client_session_t* session) {
     if (!session) return;  // 세션이 NULL이면 함수 종료
+
+    LOG_INFO("Session", "클라이언트 세션 정리 시작: 사용자=%s, 소켓=%d", 
+             session->username, session->socket_fd);
 
     // SSL 핸들러 정리
     if (session->ssl_handler) {  // SSL 핸들러가 존재하는 경우
@@ -209,4 +243,6 @@ void session_cleanup_client(client_session_t* session) {
     memset(session->server_ip, 0, sizeof(session->server_ip));  // 서버 IP 초기화
     session->server_port = 0;  // 서버 포트 초기화
     session->last_activity = 0;  // 마지막 활동 시간 초기화
+
+    LOG_INFO("Session", "클라이언트 세션 정리 완료");
 }
