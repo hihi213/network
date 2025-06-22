@@ -244,13 +244,6 @@ print_completion_message() {
     echo "  2. 클라이언트 실행: ./bin/client [서버IP] [포트번호]"
     echo "     예시: ./bin/client 127.0.0.1 8080"
     echo
-    log_info "기본 사용자 계정:"
-    echo "  - admin:password"
-    echo "  - user1:pass123"
-    echo "  - user2:pass456"
-    echo
-    log_warning "보안을 위해 기본 비밀번호를 변경하는 것을 권장합니다."
-    echo
     log_info "문제가 발생하면 다음 파일들을 확인해주세요:"
     echo "  - README_LINUX.md: 리눅스 빌드 가이드"
     echo "  - logs/server.log: 서버 로그"

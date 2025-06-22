@@ -535,8 +535,9 @@ static int server_handle_cancel_request(Client* client, const message_t* message
 
 static int server_handle_client_message(Client* client, const message_t* message) {
     if (!client || !message) return -1;
-    // 로그인되지 않은 상태에서는 로그인 요청만 허용
-    if (client->state != SESSION_LOGGED_IN && message->type != MSG_LOGIN) {
+    
+    // [수정 1] 로그인되지 않은 상태에서는 로그인(MSG_LOGIN)과 핑(MSG_PING) 요청만 허용
+    if (client->state != SESSION_LOGGED_IN && message->type != MSG_LOGIN && message->type != MSG_PING) {
         server_send_error_response_with_code(client->ssl, ERROR_PERMISSION_DENIED, "로그인이 필요한 서비스입니다.");
         return -1;
     }
@@ -578,6 +579,13 @@ static int server_handle_client_message(Client* client, const message_t* message
                 server_send_generic_response(client, MSG_LOGOUT, "success", 0);
             }
             return 0;
+        
+        // [수정 2] PING 요청에 대한 올바른 처리
+        case MSG_PING:
+            // PING에 대한 응답으로 PONG 메시지를 보냅니다.
+            server_send_generic_response(client, MSG_PONG, "pong", 0);
+            return 0; // 성공을 의미하는 0을 반환합니다.
+
         default: 
             server_send_error_response_with_code(client->ssl, ERROR_INVALID_PARAMETER, "알 수 없거나 처리할 수 없는 요청입니다.");
             return -1;
@@ -756,7 +764,13 @@ void server_draw_ui_for_current_state(void) {
     // 1. 상단 정보 바 (status_win) - 성능 통계 및 에러 메시지 공간
     werase(g_ui_manager->status_win);
     box(g_ui_manager->status_win, 0, 0);
-    int session_count = (session_manager && session_manager->sessions) ? session_manager->sessions->count : 0;
+    
+    // [수정] '연결 수'와 '세션 수'를 모두 가져옵니다.
+    pthread_mutex_lock(&client_list_mutex);
+    int connection_count = client_count; // 물리적 연결 수
+    pthread_mutex_unlock(&client_list_mutex);
+    
+    int session_count = (session_manager && session_manager->sessions) ? session_manager->sessions->count : 0; // 인증된 세션 수
     
     // 성능 통계 정보 가져오기
     pthread_mutex_lock(&g_perf_stats.mutex);
@@ -768,8 +782,8 @@ void server_draw_ui_for_current_state(void) {
     uint64_t min_response_time = g_perf_stats.min_response_time;
     pthread_mutex_unlock(&g_perf_stats.mutex);
     
-    // 첫 번째 줄: 기본 서버 정보 (시간 제거) + 에러 메시지 공간
-    mvwprintw(g_ui_manager->status_win, 1, 2, "포트: %d  세션: %d", g_server_port, session_count);
+    // [수정] '연결'과 '세션'을 모두 표시하도록 출력 문자열을 변경합니다.
+    mvwprintw(g_ui_manager->status_win, 1, 2, "포트: %d | 연결: %d | 세션: %d", g_server_port, connection_count, session_count);
     
     // 두 번째 줄: 성능 통계
     mvwprintw(g_ui_manager->status_win, 2, 2, "요청: 총%lu 성공%lu 실패%lu | 응답시간: 평균%luμs 최대%luμs 최소%luμs", 
