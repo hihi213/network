@@ -267,8 +267,12 @@ static void server_client_message_loop(Client* client) {
 
             pthread_mutex_lock(&g_perf_stats.mutex);
             g_perf_stats.total_requests++;
-            if (result == 0) g_perf_stats.successful_requests++;
-            else g_perf_stats.failed_requests++;
+            // result가 0이고 에러 응답을 보내지 않은 경우만 성공으로 카운트
+            if (result == 0) {
+                g_perf_stats.successful_requests++;
+            } else {
+                g_perf_stats.failed_requests++;
+            }
             g_perf_stats.total_response_time += response_time;
             if (g_perf_stats.max_response_time < response_time)
                 g_perf_stats.max_response_time = response_time;
@@ -343,10 +347,12 @@ static int server_process_device_reservation(Client* client, const char* device_
             snprintf(error_msg, sizeof(error_msg), "사용 불가: '%s'님이 사용 중입니다.", active_res->username);
             LOG_INFO("Server", "예약 실패: 다른 사용자가 사용 중 (장비=%s, 요청자=%s, 사용자=%s)", 
                     device_id, client->username, active_res->username);
-            return server_send_error_response_with_code(client->ssl, ERROR_RESERVATION_ALREADY_EXISTS, error_msg);
+            server_send_error_response_with_code(client->ssl, ERROR_RESERVATION_ALREADY_EXISTS, error_msg);
+            return -1;
         } else {
             LOG_WARNING("Server", "예약 실패: 장비 점검 중 또는 사용 불가 (장비=%s, 사용자=%s)", device_id, client->username);
-            return server_send_error_response_with_code(client->ssl, ERROR_RESOURCE_IN_USE, "현재 사용 불가 또는 점검 중인 장비입니다.");
+            server_send_error_response_with_code(client->ssl, ERROR_RESOURCE_IN_USE, "현재 사용 불가 또는 점검 중인 장비입니다.");
+            return -1;
         }
     }
     
@@ -356,7 +362,8 @@ static int server_process_device_reservation(Client* client, const char* device_
     uint32_t new_res_id = reservation_create(reservation_manager, device_id, client->username, start, end, "User Reservation");
     if (new_res_id == 0) {
         LOG_ERROR("Server", "예약 생성 실패: 장비=%s, 사용자=%s, 시간=%d초", device_id, client->username, duration_sec);
-        return server_send_error_response_with_code(client->ssl, ERROR_UNKNOWN, "예약 생성에 실패했습니다 (시간 중복 등).");
+        server_send_error_response_with_code(client->ssl, ERROR_UNKNOWN, "예약 생성에 실패했습니다 (시간 중복 등).");
+        return -1;
     }
     
     LOG_INFO("Server", "예약 생성 성공: 예약ID=%u, 장비=%s, 사용자=%s, 시작=%ld, 종료=%ld", 
@@ -409,7 +416,8 @@ static bool server_is_user_authenticated(const char* username, const char* passw
 static int server_handle_login_request(Client* client, const message_t* message) {
     if (message->arg_count < 2) {
         LOG_WARNING("Auth", "로그인 요청 실패: 인수 부족 (필요: 2, 받음: %d)", message->arg_count);
-        return server_send_error_response_with_code(client->ssl, ERROR_INVALID_PARAMETER, "로그인 정보가 부족합니다.");
+        server_send_error_response_with_code(client->ssl, ERROR_INVALID_PARAMETER, "로그인 정보가 부족합니다.");
+        return -1;
     }
     const char* user = message->args[0];
     const char* pass = message->args[1];
@@ -419,7 +427,8 @@ static int server_handle_login_request(Client* client, const message_t* message)
     // 1단계: 사용자 자격 증명 확인
     if (!server_is_user_authenticated(user, pass)) {
         LOG_WARNING("Auth", "로그인 실패: 사용자 '%s'의 자격 증명이 올바르지 않습니다. (IP: %s)", user, client->ip);
-        return server_send_error_response_with_code(client->ssl, ERROR_SESSION_AUTHENTICATION_FAILED, NULL);
+        server_send_error_response_with_code(client->ssl, ERROR_SESSION_AUTHENTICATION_FAILED, NULL);
+        return -1;
     }
 
     LOG_INFO("Auth", "사용자 자격 증명 확인 성공: '%s'", user);
@@ -429,7 +438,8 @@ static int server_handle_login_request(Client* client, const message_t* message)
     if (!session) {
         // session_create는 사용자가 이미 존재할 경우 NULL을 반환합니다.
         LOG_WARNING("Auth", "로그인 실패: 사용자 '%s'는 이미 로그인되어 있습니다. (IP: %s)", user, client->ip);
-        return server_send_error_response_with_code(client->ssl, ERROR_SESSION_ALREADY_EXISTS, NULL);
+        server_send_error_response_with_code(client->ssl, ERROR_SESSION_ALREADY_EXISTS, NULL);
+        return -1;
     }
 
     // 3단계: 로그인 성공 처리
@@ -450,7 +460,8 @@ static int server_handle_status_request(Client* client, const message_t* message
     device_t devices[MAX_DEVICES];
     int count = resource_get_device_list(resource_manager, devices, MAX_DEVICES);
     if (count < 0) {
-        return server_send_error_response_with_code(client->ssl, ERROR_UNKNOWN, "서버에서 장비 목록을 가져오는 데 실패했습니다.");
+        server_send_error_response_with_code(client->ssl, ERROR_UNKNOWN, "서버에서 장비 목록을 가져오는 데 실패했습니다.");
+        return -1;
     }
     // LOG_INFO("Server", "장비 목록 요청 수신, 장비 개수: %d", count);
     message_t* response = message_create(MSG_STATUS_RESPONSE, NULL);
@@ -471,7 +482,8 @@ static int server_handle_status_request(Client* client, const message_t* message
 static int server_handle_reserve_request(Client* client, const message_t* message) {
     if (message->arg_count < 2) {
         LOG_WARNING("Server", "예약 요청 실패: 인수 부족 (필요: 2, 받음: %d)", message->arg_count);
-        return server_send_error_response_with_code(client->ssl, ERROR_INVALID_PARAMETER, "예약 요청 정보(장비 ID, 시간)가 부족합니다.");
+        server_send_error_response_with_code(client->ssl, ERROR_INVALID_PARAMETER, "예약 요청 정보(장비 ID, 시간)가 부족합니다.");
+        return -1;
     }
     const char* device_id = message->args[0];
     int duration_sec = atoi(message->args[1]);
@@ -481,27 +493,31 @@ static int server_handle_reserve_request(Client* client, const message_t* messag
     if (duration_sec <= 0) {
         LOG_WARNING("Server", "예약 요청 실패: 유효하지 않은 시간 (사용자=%s, 장비=%s, 시간=%d초)", 
                    client->username, device_id, duration_sec);
-        return server_send_error_response_with_code(client->ssl, ERROR_RESERVATION_INVALID_TIME, "유효하지 않은 예약 시간입니다.");
+        server_send_error_response_with_code(client->ssl, ERROR_RESERVATION_INVALID_TIME, "유효하지 않은 예약 시간입니다.");
+        return -1;
     }
     
     LOG_INFO("Server", "예약 처리 시작: 사용자=%s, 장비=%s, 시간=%d초", client->username, device_id, duration_sec);
-    server_process_device_reservation(client, device_id, duration_sec);
-    return 0;
+    int result = server_process_device_reservation(client, device_id, duration_sec);
+    return result;
 }
 
 static int server_handle_cancel_request(Client* client, const message_t* message) {
     if (message->arg_count < 1) {
-        return server_send_error_response_with_code(client->ssl, ERROR_INVALID_PARAMETER, "예약 취소 정보(장비 ID)가 부족합니다.");
+        server_send_error_response_with_code(client->ssl, ERROR_INVALID_PARAMETER, "예약 취소 정보(장비 ID)가 부족합니다.");
+        return -1;
     }
 
     const char* device_id = message->args[0];
     reservation_t* res = reservation_get_active_for_device(reservation_manager, resource_manager, device_id);
 
     if (!res) {
-        return server_send_error_response_with_code(client->ssl, ERROR_RESERVATION_NOT_FOUND, "취소할 수 있는 예약이 없습니다.");
+        server_send_error_response_with_code(client->ssl, ERROR_RESERVATION_NOT_FOUND, "취소할 수 있는 예약이 없습니다.");
+        return -1;
     }
     if (strcmp(res->username, client->username) != 0) {
-        return server_send_error_response_with_code(client->ssl, ERROR_RESERVATION_PERMISSION_DENIED, "본인의 예약이 아니므로 취소할 수 없습니다.");
+        server_send_error_response_with_code(client->ssl, ERROR_RESERVATION_PERMISSION_DENIED, "본인의 예약이 아니므로 취소할 수 없습니다.");
+        return -1;
     }
 
     // [수정된 로직] 예약 취소 함수만 호출
@@ -509,19 +525,20 @@ static int server_handle_cancel_request(Client* client, const message_t* message
         // 성공 시 브로드캐스트와 응답 전송
         server_broadcast_status_update();
         server_send_generic_response(client, MSG_CANCEL_RESPONSE, "success", 0);
+        return 0;
     } else {
         // 실패 응답
         server_send_error_response_with_code(client->ssl, ERROR_UNKNOWN, "알 수 없는 오류로 예약 취소에 실패했습니다.");
+        return -1;
     }
-
-    return 0;
 }
 
 static int server_handle_client_message(Client* client, const message_t* message) {
     if (!client || !message) return -1;
     // 로그인되지 않은 상태에서는 로그인 요청만 허용
     if (client->state != SESSION_LOGGED_IN && message->type != MSG_LOGIN) {
-        return server_send_error_response_with_code(client->ssl, ERROR_PERMISSION_DENIED, "로그인이 필요한 서비스입니다.");
+        server_send_error_response_with_code(client->ssl, ERROR_PERMISSION_DENIED, "로그인이 필요한 서비스입니다.");
+        return -1;
     }
     switch (message->type) {
         case MSG_LOGIN: 
@@ -537,7 +554,8 @@ static int server_handle_client_message(Client* client, const message_t* message
             // 클라이언트가 보낸 T1 타임스탬프가 있는지 확인
             if (message->arg_count < 1) {
                 // 이전 버전 클라이언트와의 호환성을 위해 에러 대신 단순 처리
-                return server_send_error_response_with_code(client->ssl, ERROR_INVALID_PARAMETER, "Invalid time sync request.");
+                server_send_error_response_with_code(client->ssl, ERROR_INVALID_PARAMETER, "Invalid time sync request.");
+                return -1;
             }
 
             // T1: 클라이언트가 보낸 타임스탬프
@@ -561,7 +579,8 @@ static int server_handle_client_message(Client* client, const message_t* message
             }
             return 0;
         default: 
-            return server_send_error_response_with_code(client->ssl, ERROR_INVALID_PARAMETER, "알 수 없거나 처리할 수 없는 요청입니다.");
+            server_send_error_response_with_code(client->ssl, ERROR_INVALID_PARAMETER, "알 수 없거나 처리할 수 없는 요청입니다.");
+            return -1;
     }
 }
 

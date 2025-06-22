@@ -170,3 +170,39 @@ sudo pacman -S --noconfirm tmux
 - **"pthread.h: No such file or directory"**
   - **원인**: 기본적인 빌드 도구 및 C 표준 라이브러리가 부족합니다.
   - **해결**: `build-essential` 또는 "Development Tools" 그룹을 설치하세요. 
+
+
+
+#### 권한 오류
+```bash
+# 실행 권한 부여
+chmod +x bin/server bin/client
+```
+
+#### SSL 인증서 오류
+```bash
+# SSL 인증서가 없는 경우 자동 생성
+./install.sh
+```
+
+#### 포트 충돌
+```bash
+# 다른 포트 사용
+./bin/server 9090
+
+# 또는 기존 프로세스 확인 및 종료
+lsof -i :8080
+kill -9 <프로세스ID>
+```
+
+#### 한글 깨짐 현상
+```bash
+# Ubuntu/Debian에서 한글 언어 팩 설치
+sudo apt update
+sudo apt install -y language-pack-ko
+sudo locale-gen ko_KR.UTF-8
+```
+
+#### 네트워크 연결 오류
+- **"Connection timed out"**: 서버 IP 주소와 포트 번호 확인
+- **"Connection refused"**: 서버가 실행 중인지 확인

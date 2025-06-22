@@ -487,7 +487,7 @@ int network_set_socket_options(int socket_fd, bool is_server) {
 
     // 타임아웃: 서버/클라이언트 모두 적용
     struct timeval timeout;
-    timeout.tv_sec = 30;
+    timeout.tv_sec = 3000;//여길 수정하면 타임아웃 시간 변경 가능
     timeout.tv_usec = 0;
     if (setsockopt(socket_fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) < 0) {
         utils_report_error(ERROR_NETWORK_SOCKET_OPTION_FAILED, "Network", "SO_RCVTIMEO 설정 실패: %s", strerror(errno));
