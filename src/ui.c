@@ -190,6 +190,7 @@ void ui_draw_device_table(WINDOW* win, device_t* devices, int count, int highlig
     
     int win_height, win_width;
     getmaxyx(win, win_height, win_width);
+    (void)win_width; // 사용되지 않는 변수 경고를 막기 위함
     
     // 컬럼 위치/폭 설정 (5개 컬럼으로 변경)
     int col_w[5] = {10, 27, 15, 14, 20}; // 예약자 컬럼 폭을 늘림
@@ -314,8 +315,12 @@ void ui_draw_device_table(WINDOW* win, device_t* devices, int count, int highlig
 void ui_render_menu(WINDOW* win, const ui_menu_t* menu) {
     if (!win || !menu || !menu->items) return;
     
+    werase(win);
+    box(win, 0, 0);
+
     int win_height, win_width;
     getmaxyx(win, win_height, win_width);
+    (void)win_height; // 사용되지 않는 변수 경고를 막기 위함
     
     // 메뉴 제목 출력
     if (menu->title) {

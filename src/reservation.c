@@ -90,44 +90,6 @@ static void time_wheel_add(time_wheel_t* wheel, reservation_t* res) {
     pthread_mutex_unlock(&wheel->mutex);
 }
 
-static void time_wheel_remove(time_wheel_t* wheel, reservation_t* res) {
-    if (!wheel || !res || !res->time_wheel_node) {
-        LOG_WARNING("TimeWheel", "타임휠 제거 실패: 예약ID=%u, 노드포인터=%p", 
-                   res ? res->id : 0, res ? res->time_wheel_node : NULL);
-        return;
-    }
-
-    time_wheel_node_t* target_node = res->time_wheel_node;
-    
-    // [수정] 예약 제거 시에도 현재 시간 기준으로 버킷 인덱스를 계산합니다.
-    time_t now = time(NULL);
-    long remaining_seconds = (res->end_time > now) ? (res->end_time - now) : 0;
-    int bucket_index = (wheel->current_index + (remaining_seconds % wheel->size)) % wheel->size;
-
-    LOG_INFO("TimeWheel", "타임휠 제거 시작: 예약ID=%u, 장비=%s, 버킷=%d", 
-             res->id, res->device_id, bucket_index);
-
-    pthread_mutex_lock(&wheel->mutex);
-    time_wheel_node_t** p_node = &wheel->buckets[bucket_index];
-    bool found = false;
-    while (*p_node) {
-        if (*p_node == target_node) {
-            *p_node = target_node->next; // 연결 리스트에서 노드 제거
-            free(target_node);
-            res->time_wheel_node = NULL; // 역방향 포인터 정리
-            found = true;
-            LOG_INFO("TimeWheel", "타임휠 제거 성공: 예약ID=%u", res->id);
-            break;
-        }
-        p_node = &(*p_node)->next;
-    }
-    pthread_mutex_unlock(&wheel->mutex);
-    
-    if (!found) {
-        LOG_WARNING("TimeWheel", "타임휠에서 노드를 찾을 수 없음: 예약ID=%u", res->id);
-    }
-}
-
 static void time_wheel_tick(reservation_manager_t* manager) {
     time_wheel_t* wheel = manager->time_wheel;
     

@@ -3,20 +3,6 @@
 #include "../include/reservation.h"
 #include "../include/network.h"
 
-static message_t* message_create_with_two_args(message_type_t type, const char* arg1, const char* arg2) {
-    message_t* msg = message_create(type, NULL);
-    if (!msg) return NULL;
-    
-    msg->args[0] = strdup(arg1);
-    msg->args[1] = strdup(arg2);
-    if (!msg->args[0] || !msg->args[1]) {
-        message_destroy(msg);
-        return NULL;
-    }
-    msg->arg_count = 2;
-    return msg;
-}
-
 message_t* message_create(message_type_t type, const char *data) {
     message_t *msg = (message_t *)malloc(sizeof(message_t));
     if (!msg) {

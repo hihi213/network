@@ -1,7 +1,20 @@
 # 네트워크프로그래밍 프로젝트 Makefile
+
+# 플랫폼 감지
+UNAME_S := $(shell uname -s)
+ifeq ($(UNAME_S),Darwin)
+    # macOS (Homebrew)
+    OPENSSL_INCLUDE = -I/opt/homebrew/opt/openssl@3/include
+    OPENSSL_LIB = -L/opt/homebrew/opt/openssl@3/lib
+else
+    # Linux (기본 시스템 경로)
+    OPENSSL_INCLUDE = 
+    OPENSSL_LIB = 
+endif
+
 CC = gcc
-CFLAGS = -Wall -Wextra -g -I./include -I/opt/homebrew/opt/openssl@3/include
-LDFLAGS = -L/opt/homebrew/opt/openssl@3/lib -lssl -lcrypto -lpthread -lncurses -lmenu -lform
+CFLAGS = -Wall -Wextra -g -I./include $(OPENSSL_INCLUDE)
+LDFLAGS = $(OPENSSL_LIB) -lssl -lcrypto -lpthread -lncursesw -lmenuw -lformw
 
 # 공통 소스 파일
 COMMON_SRCS = src/utils.c \

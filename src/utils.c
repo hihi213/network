@@ -4,6 +4,7 @@
  * @details 시스템 전반에서 사용되는 공통 기능들을 제공합니다.
  */
 
+#include <inttypes.h> // PRIu64 사용을 위해 추가
 #include "../include/utils.h"  // 유틸리티 관련 헤더 파일 포함
 #include "../include/ui.h"    // ui_manager_t, show_error_message 사용을 위해 추가
 
@@ -213,23 +214,23 @@ void utils_print_performance_stats(const performance_stats_t* stats) {
     pthread_mutex_lock((pthread_mutex_t*)&stats->mutex);
     
     printf("\n=== 성능 통계 ===\n");
-    printf("총 요청 수: %llu\n", stats->total_requests);
-    printf("성공 요청 수: %llu\n", stats->successful_requests);
-    printf("실패 요청 수: %llu\n", stats->failed_requests);
+    printf("총 요청 수: %" PRIu64 "\n", stats->total_requests);
+    printf("성공 요청 수: %" PRIu64 "\n", stats->successful_requests);
+    printf("실패 요청 수: %" PRIu64 "\n", stats->failed_requests);
     printf("성공률: %.2f%%\n", 
            stats->total_requests > 0 ? 
            (double)stats->successful_requests / stats->total_requests * 100.0 : 0.0);
     
     if (stats->total_requests > 0) {
-        printf("평균 응답 시간: %llu μs\n", stats->total_response_time / stats->total_requests);
-        printf("최대 응답 시간: %llu μs\n", stats->max_response_time);
-        printf("최소 응답 시간: %llu μs\n", stats->min_response_time);
+        printf("평균 응답 시간: %" PRIu64 " μs\n", stats->total_response_time / stats->total_requests);
+        printf("최대 응답 시간: %" PRIu64 " μs\n", stats->max_response_time);
+        printf("최소 응답 시간: %" PRIu64 " μs\n", stats->min_response_time);
     }
     
-    printf("최대 동시 요청 수: %llu\n", stats->max_concurrent_requests);
-    printf("총 전송 데이터: %llu bytes\n", stats->total_data_sent);
-    printf("총 수신 데이터: %llu bytes\n", stats->total_data_received);
-    printf("총 오류 수: %llu\n", stats->total_errors);
+    printf("최대 동시 요청 수: %" PRIu64 "\n", stats->max_concurrent_requests);
+    printf("총 전송 데이터: %" PRIu64 " bytes\n", stats->total_data_sent);
+    printf("총 수신 데이터: %" PRIu64 " bytes\n", stats->total_data_received);
+    printf("총 오류 수: %" PRIu64 "\n", stats->total_errors);
     printf("================\n\n");
     
     pthread_mutex_unlock((pthread_mutex_t*)&stats->mutex);
@@ -306,36 +307,45 @@ void utils_cleanup_logger(void) {
  * @param ... 가변 인자
  */
 void utils_log_message(log_level_t level, const char* category, const char* format, ...) {
-    if (level > current_log_level) {  // 로그 레벨이 낮으면 출력하지 않음
-        return;
+    if (level < current_log_level) {
+        return; // 현재 설정된 로그 레벨보다 낮은 경우 무시
     }
 
-    // [수정] 비동기 로깅으로 변경
-    char message_buffer[1024];  // 메시지 버퍼
-    va_list args;  // 가변 인자 리스트
-    va_start(args, format);  // 가변 인자 시작
-    vsnprintf(message_buffer, sizeof(message_buffer), format, args);  // 포맷된 메시지 생성
-    va_end(args);  // 가변 인자 종료
+    char message_buffer[MAX_LOG_MSG];
+    va_list args;
+    va_start(args, format);
+    vsnprintf(message_buffer, sizeof(message_buffer), format, args);
+    va_end(args);
 
-    // 타임스탬프 생성
-    time_t rawtime;
-    struct tm *timeinfo;
+    message_buffer[sizeof(message_buffer) - 1] = '\0';
+
     char timestamp_str[64];
-    char final_message[1024];
+    time_t now = time(NULL);
+    struct tm *timeinfo;
+    timeinfo = localtime(&now);
+    strftime(timestamp_str, sizeof(timestamp_str), "%Y-%m-%d %H:%M:%S", timeinfo);
 
-    time(&rawtime);
-    timeinfo = localtime(&rawtime);
-    strftime(timestamp_str, sizeof(timestamp_str), "%m월 %d일 %H:%M", timeinfo);
+    const char* level_str = utils_get_log_level_string(level);
 
-    // 최종 로그 메시지 포맷팅
-    snprintf(final_message, sizeof(final_message), "[%s] [%s] %s [%s]\n",
-             utils_get_log_level_string(level),
-             category,
-             message_buffer,
-             timestamp_str);
+    char final_message[MAX_LOG_MSG];
 
-    // 큐에 메시지 추가 (비동기)
-    log_queue_push(final_message);
+    // 버퍼 오버플로우를 방지하기 위해 남은 공간 계산
+    int prefix_len = snprintf(NULL, 0, "[%s] [%s] ", level_str, category);
+    int suffix_len = snprintf(NULL, 0, " (%s)\n", timestamp_str);
+    int max_msg_len = sizeof(final_message) - prefix_len - suffix_len - 1;
+    if (max_msg_len < 0) {
+        max_msg_len = 0;
+    }
+
+    snprintf(final_message, sizeof(final_message), "[%s] [%s] %.*s (%s)\n",
+             level_str, category, max_msg_len, message_buffer, timestamp_str);
+
+    if (g_logger_running) {
+        log_queue_push(final_message);
+    } else {
+        // 비동기 로거가 실행 중이 아닐 때, 표준 에러로 직접 출력
+        fprintf(stderr, "%s", final_message);
+    }
 }
 
 /**

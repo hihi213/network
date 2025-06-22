@@ -1,6 +1,16 @@
 #ifndef COMMON_H
 #define COMMON_H
 
+/* 플랫폼 감지 및 호환성 매크로 */
+#ifdef __linux__
+    #define _GNU_SOURCE
+    #define _POSIX_C_SOURCE 200809L
+#endif
+
+#ifdef __APPLE__
+    #define _DARWIN_C_SOURCE
+#endif
+
 /* 표준 라이브러리 헤더 */
 #include <stdio.h>
 #include <stdlib.h>
@@ -34,6 +44,7 @@
 #include <ctype.h>
 #include <locale.h>
 #include <time.h>
+
 /* 전역 상수 정의 */
 #define PORT 8080
 #define MAX_BUFFER_SIZE 4096
@@ -62,5 +73,17 @@
 #define ALIGN_CACHE __attribute__((aligned(CACHE_LINE_SIZE)))
 #define LIKELY(x) __builtin_expect(!!(x), 1)
 #define UNLIKELY(x) __builtin_expect(!!(x), 0)
+
+/* 플랫폼별 경로 구분자 */
+#ifdef _WIN32
+    #define PATH_SEPARATOR "\\"
+#else
+    #define PATH_SEPARATOR "/"
+#endif
+
+/* 한글 처리 관련 매크로 */
+#define UTF8_MAX_BYTES 4
+#define UTF8_CONTINUATION_BYTE 0x80
+#define UTF8_CONTINUATION_MASK 0xC0
 
 #endif /* COMMON_H */
