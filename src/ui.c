@@ -259,7 +259,7 @@ void ui_draw_device_table(WINDOW* win, device_t* devices, int count, int highlig
                 // [개선된 클라이언트 모드 로직]
                 if (strlen(device->reserved_by) > 0 && device->reservation_end_time > 0) { // 예약자 정보와 종료 시간이 유효한 경우
                     // [핵심] 현재 시간과 예약 종료 시간을 직접 비교하여 상태를 결정
-                    if (current_time >= device->reservation_end_time) {
+                    if (current_time >device->reservation_end_time) {
                         // 시간이 만료된 경우, 'available'로 표시
                         display_status_str = "available";
                         strcpy(display_reservation_info, "-");

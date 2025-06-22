@@ -6,15 +6,17 @@ ifeq ($(UNAME_S),Darwin)
     # macOS (Homebrew)
     OPENSSL_INCLUDE = -I/opt/homebrew/opt/openssl@3/include
     OPENSSL_LIB = -L/opt/homebrew/opt/openssl@3/lib
+    NCURSES_LIBS = -lncurses -lmenu -lform
 else
     # Linux (기본 시스템 경로)
     OPENSSL_INCLUDE = 
     OPENSSL_LIB = 
+    NCURSES_LIBS = -lncursesw -lmenuw -lformw
 endif
 
 CC = gcc
 CFLAGS = -Wall -Wextra -g -I./include $(OPENSSL_INCLUDE)
-LDFLAGS = $(OPENSSL_LIB) -lssl -lcrypto -lpthread -lncursesw -lmenuw -lformw
+LDFLAGS = $(OPENSSL_LIB) -lssl -lcrypto -lpthread $(NCURSES_LIBS)
 
 # 공통 소스 파일
 COMMON_SRCS = src/utils.c \
