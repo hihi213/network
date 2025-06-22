@@ -1,8 +1,33 @@
-// message.c (최종 확인용)
+/**
+ * @file message.c
+ * @brief 메시지 프로토콜 모듈 - 클라이언트-서버 간 통신 메시지 처리
+ * 
+ * @details
+ * 이 모듈은 클라이언트와 서버 간의 통신을 위한 메시지 프로토콜을 구현합니다:
+ * 
+ * 1. **메시지 생성/파괴**: 메모리 안전한 메시지 객체 관리
+ * 2. **직렬화/역직렬화**: 네트워크 전송을 위한 바이너리 변환
+ * 3. **상태 응답 생성**: 장비 목록과 예약 정보를 포함한 복합 응답
+ * 4. **에러 처리**: 체계적인 에러 코드 및 메시지 관리
+ * 
+ * @note 모든 메시지는 네트워크 바이트 순서(빅엔디안)로 직렬화되며,
+ *       가변 길이 문자열은 길이+내용 형태로 전송됩니다.
+ */
+
 #include "../include/message.h"
 #include "../include/reservation.h"
 #include "../include/network.h"
 
+/**
+ * @brief 메시지 객체 생성
+ * @details
+ * 메시지 타입과 데이터를 받아 새로운 메시지 객체를 생성합니다.
+ * 메모리 할당 실패 시 NULL을 반환하며, 데이터는 안전하게 복사됩니다.
+ * 
+ * @param type 메시지 타입
+ * @param data 메시지 데이터 (NULL 가능)
+ * @return 생성된 메시지 객체, 실패 시 NULL
+ */
 message_t* message_create(message_type_t type, const char *data) {
     message_t *msg = (message_t *)malloc(sizeof(message_t));
     if (!msg) {
@@ -22,6 +47,25 @@ message_t* message_create(message_type_t type, const char *data) {
     return msg;
 }
 
+/**
+ * @brief 상태 응답 메시지의 인자들을 채움
+ * @details
+ * 장비 목록과 예약 정보를 조합하여 클라이언트가 필요로 하는 모든 정보를
+ * 포함한 상태 응답 메시지를 구성합니다.
+ * 
+ * 각 장비마다 다음 정보가 포함됩니다:
+ * - 장비 ID, 이름, 타입
+ * - 현재 상태 (available/reserved/maintenance)
+ * - 예약 종료 시간 (예약된 경우)
+ * - 예약자 사용자명 (예약된 경우)
+ * 
+ * @param msg 채울 메시지 객체
+ * @param devices 장비 배열
+ * @param count 장비 개수
+ * @param rm 리소스 관리자
+ * @param rvm 예약 관리자
+ * @return 성공 시 true, 실패 시 false
+ */
 bool message_fill_status_response_args(message_t* msg, const device_t* devices, int count, resource_manager_t* rm, reservation_manager_t* rvm) {
     if (!msg || !devices || !rm || !rvm) return false;
     msg->arg_count = 0;
@@ -53,6 +97,18 @@ bool message_fill_status_response_args(message_t* msg, const device_t* devices, 
     return true;
 }
 
+/**
+ * @brief 상태 응답 메시지 생성
+ * @details
+ * 장비 목록과 예약 정보를 포함한 완전한 상태 응답 메시지를 생성합니다.
+ * 이 메시지는 클라이언트가 장비 현황을 파악하는 데 필요한 모든 정보를 포함합니다.
+ * 
+ * @param devices 장비 배열
+ * @param device_count 장비 개수
+ * @param resource_manager 리소스 관리자
+ * @param reservation_manager 예약 관리자
+ * @return 생성된 메시지 객체, 실패 시 NULL
+ */
 message_t* message_create_status_response(const device_t *devices, int device_count, resource_manager_t* resource_manager, reservation_manager_t* reservation_manager) {
     message_t *message = message_create(MSG_STATUS_RESPONSE, NULL);
     if (!message) return NULL;
@@ -63,6 +119,16 @@ message_t* message_create_status_response(const device_t *devices, int device_co
     return message;
 }
 
+/**
+ * @brief 에러 코드를 포함한 에러 메시지 생성
+ * @details
+ * 에러 코드와 사용자 친화적 메시지를 포함한 에러 응답을 생성합니다.
+ * 클라이언트는 이 정보를 바탕으로 적절한 에러 처리를 수행할 수 있습니다.
+ * 
+ * @param error_code 에러 코드
+ * @param error_message 에러 메시지
+ * @return 생성된 에러 메시지 객체, 실패 시 NULL
+ */
 message_t* message_create_error_with_code(error_code_t error_code, const char* error_message) {
     message_t* msg = message_create(MSG_ERROR, error_message);
     if (msg) {
@@ -71,6 +137,14 @@ message_t* message_create_error_with_code(error_code_t error_code, const char* e
     return msg;
 }
 
+/**
+ * @brief 메시지 타입을 문자열로 변환
+ * @details
+ * 디버깅과 로깅을 위해 메시지 타입을 사람이 읽기 쉬운 문자열로 변환합니다.
+ * 
+ * @param type 메시지 타입
+ * @return 메시지 타입 문자열
+ */
 const char *message_get_type_string(message_type_t type) {
     switch (type) {
         case MSG_LOGIN: return "LOGIN";
@@ -92,6 +166,13 @@ const char *message_get_type_string(message_type_t type) {
     }
 }
 
+/**
+ * @brief 메시지 객체 메모리 해제
+ * @details
+ * 메시지 객체와 모든 동적 할당된 인자들의 메모리를 안전하게 해제합니다.
+ * 
+ * @param msg 해제할 메시지 객체
+ */
 void message_destroy(message_t *msg) {
     if (!msg) return;
     for (int i = 0; i < msg->arg_count; i++) {
@@ -103,6 +184,17 @@ void message_destroy(message_t *msg) {
     free(msg);
 }
 
+/**
+ * @brief SSL 연결에서 메시지 인자들을 읽어옴
+ * @details
+ * 네트워크에서 메시지 인자들을 순차적으로 읽어옵니다.
+ * 각 인자는 길이(4바이트) + 내용(가변 길이) 형태로 전송됩니다.
+ * 
+ * @param ssl SSL 연결 객체
+ * @param msg 메시지 객체
+ * @param arg_count 읽어올 인자 개수
+ * @return 성공 시 true, 실패 시 false
+ */
 static bool message_read_arguments(SSL* ssl, message_t* msg, uint32_t arg_count) {
     for (uint32_t i = 0; i < arg_count; i++) {
         uint32_t arg_len_net;
@@ -122,6 +214,15 @@ static bool message_read_arguments(SSL* ssl, message_t* msg, uint32_t arg_count)
     return true;
 }
 
+/**
+ * @brief SSL 연결에서 메시지 데이터 필드를 읽어옴
+ * @details
+ * 메시지의 데이터 필드를 읽어옵니다. 데이터 필드도 길이 + 내용 형태로 전송됩니다.
+ * 
+ * @param ssl SSL 연결 객체
+ * @param msg 메시지 객체
+ * @return 성공 시 true, 실패 시 false
+ */
 static bool message_read_data(SSL* ssl, message_t* msg) {
     uint32_t data_len_net;
     if (network_recv(ssl, &data_len_net, sizeof(data_len_net)) != sizeof(data_len_net)) return false;
@@ -134,6 +235,15 @@ static bool message_read_data(SSL* ssl, message_t* msg) {
     return true;
 }
 
+/**
+ * @brief SSL 연결에서 에러 코드를 읽어옴
+ * @details
+ * MSG_ERROR 타입 메시지에서 에러 코드를 읽어옵니다.
+ * 
+ * @param ssl SSL 연결 객체
+ * @param msg 메시지 객체
+ * @return 성공 시 true, 실패 시 false
+ */
 static bool message_read_error_code(SSL* ssl, message_t* msg) {
     uint32_t error_code_net;
     if (network_recv(ssl, &error_code_net, sizeof(error_code_net)) != sizeof(error_code_net)) return false;
@@ -141,6 +251,21 @@ static bool message_read_error_code(SSL* ssl, message_t* msg) {
     return true;
 }
 
+/**
+ * @brief SSL 연결에서 메시지를 수신
+ * @details
+ * 네트워크에서 완전한 메시지를 수신하고 파싱합니다.
+ * 
+ * 메시지 프로토콜 구조:
+ * 1. 메시지 타입 (4바이트)
+ * 2. 인자 개수 (4바이트)
+ * 3. 에러 코드 (MSG_ERROR 타입인 경우, 4바이트)
+ * 4. 인자들 (각각 길이 + 내용)
+ * 5. 데이터 필드 (길이 + 내용)
+ * 
+ * @param ssl SSL 연결 객체
+ * @return 수신된 메시지 객체, 실패 시 NULL
+ */
 message_t* message_receive(SSL* ssl) {
     uint32_t type_net, arg_count_net;
     if (network_recv(ssl, &type_net, sizeof(type_net)) != sizeof(type_net)) return NULL;
@@ -169,6 +294,14 @@ message_t* message_receive(SSL* ssl) {
     return message;
 }
 
+/**
+ * @brief 장비 상태를 문자열로 변환
+ * @details
+ * 장비 상태 열거형을 클라이언트가 이해할 수 있는 문자열로 변환합니다.
+ * 
+ * @param status 장비 상태
+ * @return 상태 문자열
+ */
 const char *message_get_device_status_string(device_status_t status) {
     switch (status) {
         case DEVICE_AVAILABLE: return "available";
@@ -178,6 +311,14 @@ const char *message_get_device_status_string(device_status_t status) {
     }
 }
 
+/**
+ * @brief 에러 코드를 사용자 친화적 메시지로 변환
+ * @details
+ * 시스템 에러 코드를 사용자가 이해하기 쉬운 한국어 메시지로 변환합니다.
+ * 
+ * @param error_code 에러 코드
+ * @return 사용자 친화적 에러 메시지
+ */
 const char* message_get_error_string(error_code_t error_code) {
     switch (error_code) {
         case ERROR_NONE: return "성공";

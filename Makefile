@@ -15,7 +15,9 @@ else
 endif
 
 CC = gcc
-CFLAGS = -Wall -Wextra -g -I./include $(OPENSSL_INCLUDE)
+# 기본 CFLAGS (사용자가 재정의할 수 있음)
+DEFAULT_CFLAGS = -Wall -Wextra -g -I./include $(OPENSSL_INCLUDE)
+CFLAGS ?= $(DEFAULT_CFLAGS)
 LDFLAGS = $(OPENSSL_LIB) -lssl -lcrypto -lpthread $(NCURSES_LIBS)
 
 # 공통 소스 파일
@@ -45,6 +47,14 @@ CLIENT_TARGET = bin/client
 # 기본 타겟
 all: directories $(SERVER_TARGET) $(CLIENT_TARGET) install_users
 
+# 디버그 빌드
+debug: CFLAGS = -Wall -Wextra -g -DDEBUG -I./include $(OPENSSL_INCLUDE)
+debug: all
+
+# 릴리즈 빌드
+release: CFLAGS = -Wall -Wextra -O2 -DNDEBUG -I./include $(OPENSSL_INCLUDE)
+release: all
+
 # 디렉토리 생성
 directories:
 	@mkdir -p obj bin
@@ -70,4 +80,4 @@ clean:
 	rm -f $(COMMON_OBJS) $(SERVER_OBJS) $(CLIENT_OBJS) $(SERVER_TARGET) $(CLIENT_TARGET)
 	rm -rf obj bin
 
-.PHONY: all clean directories 
+.PHONY: all clean directories debug release 

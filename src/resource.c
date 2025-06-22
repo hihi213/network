@@ -66,52 +66,74 @@ void resource_cleanup_manager(resource_manager_t* manager) {
  * @return 성공 시 true, 실패 시 false
  */
 bool resource_add_device(resource_manager_t* manager, const char* id, const char* type, const char* name) {
-    if (!manager || !id || !type || !name) {  // 유효성 검사
+    if (!manager || !id || !type || !name) {
         utils_report_error(ERROR_INVALID_PARAMETER, "Resource", "resource_add_device: 잘못된 파라미터");
-        return false;  // 에러 코드 반환
+        return false;
     }
 
-    // LOG_INFO("Resource", "장비 추가 시작: ID=%s, 타입=%s, 이름=%s", id, type, name);
+    pthread_mutex_lock(&manager->mutex);
 
-    pthread_mutex_lock(&manager->mutex);  // 뮤텍스 잠금
-
-    // [개선] 해시 테이블에서 기존 장비 확인
+    // [개선된 로직] 해시 테이블에서 기존 장비가 있는지 '조회'만 합니다.
     device_t* existing_device = (device_t*)utils_hashtable_get(manager->devices, id);
-    if (existing_device) {  // 기존 장비가 존재하는 경우
-        // LOG_INFO("Resource", "기존 장비 발견, 교체: ID=%s", id);
-        utils_hashtable_delete(manager->devices, id);  // 기존 장비 삭제
+
+    if (existing_device) {
+        // --- 장비 정보 갱신 (In-place Update) ---
+        LOG_INFO("Resource", "기존 장비 정보 갱신 시작: ID=%s", id);
+
+        // 기존 메모리를 재사용하여 내용만 복사합니다.
+        strncpy(existing_device->type, type, MAX_DEVICE_TYPE_LENGTH - 1);
+        existing_device->type[MAX_DEVICE_TYPE_LENGTH - 1] = '\0';
+        strncpy(existing_device->name, name, MAX_DEVICE_NAME_LENGTH - 1);
+        existing_device->name[MAX_DEVICE_NAME_LENGTH - 1] = '\0';
+
+        // 정보를 갱신했으므로, 상태를 초기화하는 것이 바람직할 수 있습니다.
+        // (정책에 따라 이 부분은 달라질 수 있습니다.)
+        if (existing_device->status == DEVICE_MAINTENANCE) {
+            LOG_INFO("Resource", "점검 중인 장비 정보 갱신, 상태 유지: ID=%s", id);
+        } else {
+            // 예약이 꼬이는 것을 방지하기 위해 사용 가능 상태로 초기화
+            existing_device->status = DEVICE_AVAILABLE;
+            existing_device->reservation_end_time = 0;
+            existing_device->active_reservation_id = 0;
+            memset(existing_device->reserved_by, 0, sizeof(existing_device->reserved_by));
+        }
+
+        pthread_mutex_unlock(&manager->mutex);
+        return true; // 갱신 성공
+
+    } else {
+        // --- 신규 장비 추가 (기존 로직과 동일) ---
+        LOG_INFO("Resource", "신규 장비 추가 시작: ID=%s", id);
+        
+        device_t* new_device = (device_t*)malloc(sizeof(device_t));
+        if (!new_device) {
+            pthread_mutex_unlock(&manager->mutex);
+            utils_report_error(ERROR_MEMORY_ALLOCATION_FAILED, "Resource", "장비 메모리 할당 실패: ID=%s", id);
+            return false;
+        }
+
+        // 장비 정보 초기화
+        strncpy(new_device->id, id, MAX_DEVICE_ID_LEN - 1);
+        new_device->id[MAX_DEVICE_ID_LEN - 1] = '\0';
+        strncpy(new_device->type, type, MAX_DEVICE_TYPE_LENGTH - 1);
+        new_device->type[MAX_DEVICE_TYPE_LENGTH - 1] = '\0';
+        strncpy(new_device->name, name, MAX_DEVICE_NAME_LENGTH - 1);
+        new_device->name[MAX_DEVICE_NAME_LENGTH - 1] = '\0';
+        new_device->status = DEVICE_AVAILABLE;
+        new_device->reservation_end_time = 0;
+        new_device->reserved_by[0] = '\0';
+        new_device->active_reservation_id = 0;
+
+        if (!utils_hashtable_insert(manager->devices, id, new_device)) {
+            pthread_mutex_unlock(&manager->mutex);
+            free(new_device);
+            utils_report_error(ERROR_RESOURCE_INIT_FAILED, "Resource", "해시 테이블에 장비 삽입 실패: ID=%s", id);
+            return false;
+        }
+
+        pthread_mutex_unlock(&manager->mutex);
+        return true;
     }
-
-    // 새 장비 생성
-    device_t* new_device = (device_t*)malloc(sizeof(device_t));  // 새 장비 메모리 할당
-    if (!new_device) {  // 메모리 할당 실패 시
-        pthread_mutex_unlock(&manager->mutex);  // 뮤텍스 해제
-        utils_report_error(ERROR_MEMORY_ALLOCATION_FAILED, "Resource", "장비 메모리 할당 실패: ID=%s", id);
-        return false;  // 에러 코드 반환
-    }
-
-    // 장비 정보 초기화
-    strncpy(new_device->id, id, MAX_DEVICE_ID_LEN - 1);  // 장비 ID 복사
-    new_device->id[MAX_DEVICE_ID_LEN - 1] = '\0';  // 문자열 종료
-    strncpy(new_device->type, type, MAX_DEVICE_TYPE_LENGTH - 1);  // 장비 타입 복사
-    new_device->type[MAX_DEVICE_TYPE_LENGTH - 1] = '\0';  // 문자열 종료
-    strncpy(new_device->name, name, MAX_DEVICE_NAME_LENGTH - 1);  // 장비 이름 복사
-    new_device->name[MAX_DEVICE_NAME_LENGTH - 1] = '\0';  // 문자열 종료
-    new_device->status = DEVICE_AVAILABLE;  // 기본 상태를 사용 가능으로 설정
-    new_device->reservation_end_time = 0;  // 예약 종료 시간을 0으로 초기화
-    new_device->reserved_by[0] = '\0';  // 예약자 정보를 빈 문자열로 초기화
-
-    // [개선] 해시 테이블에 장비 삽입
-    if (!utils_hashtable_insert(manager->devices, id, new_device)) {  // 해시 테이블 삽입 실패 시
-        pthread_mutex_unlock(&manager->mutex);  // 뮤텍스 해제
-        utils_report_error(ERROR_RESOURCE_INIT_FAILED, "Resource", "해시 테이블에 장비 삽입 실패: ID=%s", id);
-        free(new_device);  // 장비 메모리 해제
-        return false;  // 에러 코드 반환
-    }
-
-    // LOG_INFO("Resource", "장비 추가 성공: ID=%s", id);  // 정보 로그 출력
-    pthread_mutex_unlock(&manager->mutex);  // 뮤텍스 해제
-    return true;  // 성공 코드 반환
 }
 
 /**

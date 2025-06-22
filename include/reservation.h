@@ -69,5 +69,4 @@ bool reservation_cancel(reservation_manager_t* manager, uint32_t reservation_id,
 void reservation_cleanup_expired(reservation_manager_t* manager, struct resource_manager* res_manager);
 
 reservation_t* reservation_get_active_for_device(reservation_manager_t* resv_manager, struct resource_manager* rsrc_manager, const char* device_id);
-
 #endif // RESERVATION_H

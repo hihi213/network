@@ -1,13 +1,22 @@
-// network.c (최종 수정본)
 /**
  * @file network.c
- * @brief 네트워크 통신 모듈 - SSL/TLS 기반의 안전한 소켓 통신 기능
- * @details 서버/클라이언트 소켓 초기화, SSL 핸드셰이크, 메시지 전송/수신을 담당합니다.
+ * @brief 네트워크 통신 모듈 - SSL/TLS 기반의 안전한 소켓 통신
+ * 
+ * @details
+ * 이 모듈은 클라이언트-서버 간의 안전한 통신을 위한 핵심 기능을 제공합니다:
+ * 
+ * 1. **SSL/TLS 보안 통신**: TLS 1.2/1.3 기반의 암호화된 통신
+ * 2. **소켓 관리**: 서버/클라이언트 소켓 초기화 및 옵션 설정
+ * 3. **메시지 전송**: 구조화된 메시지의 안정적인 전송/수신
+ * 4. **에러 처리**: 네트워크 오류의 체계적 처리 및 복구
+ * 
+ * @note 모든 네트워크 통신은 SSL/TLS로 암호화되며, 연결 지속성과
+ *       안정성을 위한 다양한 소켓 옵션이 적용됩니다.
  */
 
 #include "../include/network.h"
 #include "../include/message.h"
-#include "../include/utils.h" // 매크로 사용을 위해 추가
+#include "../include/utils.h"
 #include <netinet/tcp.h>  // TCP_NODELAY, TCP_KEEPIDLE, TCP_KEEPINTVL, TCP_KEEPCNT
 #include <sys/socket.h>   // SO_REUSEADDR, SO_REUSEPORT, SO_KEEPALIVE, SO_RCVTIMEO, SO_SNDTIMEO
 #include <netinet/in.h>   // sockaddr_in
@@ -16,35 +25,36 @@
 #include <errno.h>        // errno
 #include <string.h>       // strerror
 
-#define NET_IO_MAX_RETRY 3
+#define NET_IO_MAX_RETRY 3  // 네트워크 I/O 재시도 최대 횟수
 
-// [내부 함수] 요청한 길이만큼 데이터를 완전히 전송하는 안정적인 쓰기 함수
-// static bool network_ssl_write_fully(SSL* ssl, const void* buf, int len) {
-//     if (!ssl || !buf) return false;
-//     if (len == 0) return true;
-//
-//     const char* ptr = (const char*)buf;
-//     while (len > 0) {
-//         int bytes_written = SSL_write(ssl, ptr, len);
-//         if (bytes_written <= 0) {
-//             int err = SSL_get_error(ssl, bytes_written);
-//             if (err != SSL_ERROR_ZERO_RETURN) {
-//                 utils_report_error(ERROR_NETWORK_SEND_FAILED, "Network", "SSL_write 에러 발생: %d", err);
-//             }
-//             return false;
-//         }
-//         ptr += bytes_written;
-//         len -= bytes_written;
-//     }
-//     return true;
-// }
-
+/**
+ * @brief 에러 코드를 네트워크 바이트 순서로 전송
+ * @details MSG_ERROR 타입 메시지에서 사용되는 에러 코드 전송 함수
+ * 
+ * @param ssl SSL 연결 객체
+ * @param error_code 전송할 에러 코드
+ * @return 성공 시 0, 실패 시 -1
+ */
 static int network_send_error_code(SSL* ssl, error_code_t error_code) {
     uint32_t net_error_code = htonl(error_code);
     return network_send(ssl, &net_error_code, sizeof(net_error_code)) == sizeof(net_error_code) ? 0 : -1;
 }
 
-// [핵심 수정] 길이가 0인 문자열도 올바르게 처리하도록 수정
+/**
+ * @brief 구조화된 메시지를 SSL 연결을 통해 전송
+ * @details
+ * 메시지 프로토콜에 따라 다음 순서로 데이터를 전송합니다:
+ * 1. 메시지 헤더 (타입, 인자 개수)
+ * 2. 에러 코드 (MSG_ERROR 타입인 경우)
+ * 3. 각 인자 (길이 + 내용)
+ * 4. 데이터 필드 (길이 + 내용)
+ * 
+ * 모든 정수 값은 네트워크 바이트 순서(빅엔디안)로 변환됩니다.
+ * 
+ * @param ssl SSL 연결 객체
+ * @param message 전송할 메시지 객체
+ * @return 성공 시 0, 실패 시 -1
+ */
 int network_send_message(SSL* ssl, const message_t* message) {
     if (!ssl || !message) {
         utils_report_error(ERROR_INVALID_PARAMETER, "Network", "network_send_message: 잘못된 파라미터");
@@ -83,23 +93,38 @@ int network_send_message(SSL* ssl, const message_t* message) {
         if (network_send(ssl, message->data, data_len) != (ssize_t)data_len) return -1;
     }
 
-    // LOG_INFO("Network", "메시지 전송 완료: 타입=%s", message_get_type_string(message->type));
     return 0;
 }
 
+/**
+ * @brief SSL 연결을 통해 데이터 전송 (재시도 로직 포함)
+ * @details
+ * SSL_write의 특성상 부분 전송이 발생할 수 있으므로, 요청된 길이만큼
+ * 완전히 전송될 때까지 재시도합니다.
+ * 
+ * 재시도 조건:
+ * - SSL_ERROR_WANT_READ/WRITE: 정상적인 블로킹 상황
+ * - SSL_ERROR_SYSCALL: 시스템 호출 중단
+ * 
+ * @param ssl SSL 연결 객체
+ * @param buf 전송할 데이터 버퍼
+ * @param len 전송할 데이터 길이
+ * @return 전송된 바이트 수, 실패 시 -1, 연결 종료 시 0
+ */
 ssize_t network_send(SSL* ssl, const void* buf, size_t len) {
     int retry = 0;
     size_t total_sent = 0;
+    
     while (total_sent < len && retry < NET_IO_MAX_RETRY) {
         int ret = SSL_write(ssl, (const char*)buf + total_sent, (int)(len - total_sent));
         if (ret > 0) {
             total_sent += ret;
             continue;
         }
+        
         int err = SSL_get_error(ssl, ret);
         if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE || err == SSL_ERROR_SYSCALL) {
-            // 정상적인 재시도 상황이므로 오류로 보고하지 않음
-            // utils_report_error(ERROR_NETWORK_SEND_FAILED, "Network", "network_send: 재시도 필요 (err=%d, retry=%d)", err, retry);
+            // 정상적인 재시도 상황
             retry++;
             continue;
         } else if (err == SSL_ERROR_ZERO_RETURN) {
@@ -110,6 +135,7 @@ ssize_t network_send(SSL* ssl, const void* buf, size_t len) {
             return -1;
         }
     }
+    
     if (total_sent < len) {
         utils_report_error(ERROR_NETWORK_SEND_FAILED, "Network", "network_send: 송신 미완료 (total_sent=%zu, len=%zu)", total_sent, len);
         return -1;
@@ -117,19 +143,31 @@ ssize_t network_send(SSL* ssl, const void* buf, size_t len) {
     return (ssize_t)total_sent;
 }
 
+/**
+ * @brief SSL 연결을 통해 데이터 수신 (재시도 로직 포함)
+ * @details
+ * SSL_read의 특성상 부분 수신이 발생할 수 있으므로, 요청된 길이만큼
+ * 완전히 수신될 때까지 재시도합니다.
+ * 
+ * @param ssl SSL 연결 객체
+ * @param buf 수신할 데이터 버퍼
+ * @param len 수신할 데이터 길이
+ * @return 수신된 바이트 수, 실패 시 -1, 연결 종료 시 0
+ */
 ssize_t network_recv(SSL* ssl, void* buf, size_t len) {
     int retry = 0;
     size_t total_recv = 0;
+    
     while (total_recv < len && retry < NET_IO_MAX_RETRY) {
         int ret = SSL_read(ssl, (char*)buf + total_recv, (int)(len - total_recv));
         if (ret > 0) {
             total_recv += ret;
             continue;
         }
+        
         int err = SSL_get_error(ssl, ret);
         if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE || err == SSL_ERROR_SYSCALL) {
-            // 정상적인 재시도 상황이므로 오류로 보고하지 않음
-            // utils_report_error(ERROR_NETWORK_RECEIVE_FAILED, "Network", "network_recv: 재시도 필요 (err=%d, retry=%d)", err, retry);
+            // 정상적인 재시도 상황
             retry++;
             continue;
         } else if (err == SSL_ERROR_ZERO_RETURN) {
@@ -140,6 +178,7 @@ ssize_t network_recv(SSL* ssl, void* buf, size_t len) {
             return -1;
         }
     }
+    
     if (total_recv < len) {
         utils_report_error(ERROR_NETWORK_RECEIVE_FAILED, "Network", "network_recv: 수신 미완료 (total_recv=%zu, len=%zu)", total_recv, len);
         return -1;
@@ -147,27 +186,58 @@ ssize_t network_recv(SSL* ssl, void* buf, size_t len) {
     return (ssize_t)total_recv;
 }
 
-// --- 이하 다른 함수들은 이전과 동일 (생략) ---
-
+/**
+ * @brief SSL 컨텍스트에 공통 보안 옵션 설정
+ * @details
+ * 보안 강화를 위한 SSL/TLS 설정:
+ * - 최소 TLS 1.2 버전 요구
+ * - 취약한 프로토콜 버전 비활성화 (SSLv2, SSLv3, TLS 1.0, TLS 1.1)
+ * - 자동 재시도 모드 활성화
+ * - 클라이언트 인증서 검증 비활성화 (개발용)
+ * 
+ * @param ctx SSL 컨텍스트
+ */
 static void network_set_common_ssl_ctx_options(SSL_CTX* ctx) {
     if (!ctx) return;
+    
+    // 최소 TLS 1.2 버전 요구 (보안 강화)
     SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION);
     SSL_CTX_set_max_proto_version(ctx, TLS1_3_VERSION);
+    
+    // 취약한 프로토콜 버전 비활성화
     SSL_CTX_set_options(ctx, SSL_OP_NO_SSLv2 | SSL_OP_NO_SSLv3 | SSL_OP_NO_TLSv1 | SSL_OP_NO_TLSv1_1);
+    
+    // 자동 재시도 모드 활성화
     SSL_CTX_set_mode(ctx, SSL_MODE_AUTO_RETRY);
+    
+    // 클라이언트 인증서 검증 비활성화 (개발 환경용)
     SSL_CTX_set_verify(ctx, SSL_VERIFY_NONE, NULL);
 }
 
+/**
+ * @brief SSL 컨텍스트 초기화 및 인증서 설정
+ * @details
+ * 서버용 SSL 컨텍스트를 생성하고 인증서/개인키를 로드합니다.
+ * 
+ * @param manager SSL 관리자 객체
+ * @param cert_file 인증서 파일 경로
+ * @param key_file 개인키 파일 경로
+ * @return 성공 시 0, 실패 시 -1
+ */
 static int network_init_ssl_context(ssl_manager_t* manager, const char* cert_file, const char* key_file) {
     if (!manager || !cert_file || !key_file) {
         utils_report_error(ERROR_INVALID_PARAMETER, "SSL", "network_init_ssl_context: 잘못된 파라미터");
         return -1;
     }
+    
+    // TLS 서버 메서드로 SSL 컨텍스트 생성
     manager->ctx = SSL_CTX_new(TLS_server_method());
     if (!manager->ctx) {
         utils_report_error(ERROR_NETWORK_SSL_CONTEXT_FAILED, "SSL", "SSL_CTX_new 실패");
         return -1;
     }
+    
+    // 인증서 및 개인키 파일 로드 및 검증
     if (SSL_CTX_use_certificate_file(manager->ctx, cert_file, SSL_FILETYPE_PEM) <= 0 ||
         SSL_CTX_use_PrivateKey_file(manager->ctx, key_file, SSL_FILETYPE_PEM) <= 0 ||
         !SSL_CTX_check_private_key(manager->ctx)) {
@@ -177,17 +247,34 @@ static int network_init_ssl_context(ssl_manager_t* manager, const char* cert_fil
         manager->ctx = NULL;
         return -1;
     }
+    
+    // 공통 보안 옵션 설정
     network_set_common_ssl_ctx_options(manager->ctx);
     return 0;
 }
 
+/**
+ * @brief SSL 관리자 초기화
+ * @details
+ * 서버/클라이언트 모드에 따라 SSL 관리자를 초기화합니다.
+ * 서버 모드에서는 인증서와 개인키가 필요합니다.
+ * 
+ * @param manager SSL 관리자 객체
+ * @param is_server 서버 모드 여부
+ * @param cert_file 인증서 파일 경로 (서버 모드에서만 사용)
+ * @param key_file 개인키 파일 경로 (서버 모드에서만 사용)
+ * @return 성공 시 0, 실패 시 -1
+ */
 int network_init_ssl_manager(ssl_manager_t* manager, bool is_server, const char* cert_file, const char* key_file) {
     if (!manager) {
         utils_report_error(ERROR_INVALID_PARAMETER, "SSL", "manager 포인터가 NULL입니다");
         return -1;
     }
+    
     memset(manager, 0, sizeof(ssl_manager_t));
     manager->is_server = is_server;
+    
+    // OpenSSL 라이브러리 초기화
     SSL_load_error_strings();
     OpenSSL_add_all_algorithms();
     SSL_library_init();

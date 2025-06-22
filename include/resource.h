@@ -32,5 +32,4 @@ bool resource_update_device_status(resource_manager_t* manager, const char* devi
 int resource_get_device_list(resource_manager_t* manager, device_t* devices, int max_devices);
 bool resource_is_device_available(resource_manager_t* manager, const char* id);
 void resource_cleanup_manager(resource_manager_t* manager);
-
 #endif /* RESOURCE_H */ 

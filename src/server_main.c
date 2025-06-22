@@ -1,4 +1,19 @@
-// server_main.c
+/**
+ * @file server_main.c
+ * @brief 장비 예약 시스템 서버 - 멀티스레드 클라이언트 처리 및 실시간 모니터링
+ * 
+ * @details
+ * 이 모듈은 장비 예약 시스템의 서버 애플리케이션을 구현합니다:
+ * 
+ * 1. **멀티스레드 클라이언트 처리**: 각 클라이언트마다 독립적인 스레드 할당
+ * 2. **실시간 성능 모니터링**: 응답 시간, 처리량, 오류율 추적
+ * 3. **메시지 라우팅**: 클라이언트 요청을 적절한 핸들러로 분배
+ * 4. **상태 브로드캐스팅**: 장비 상태 변경을 모든 클라이언트에 실시간 전송
+ * 
+ * @note 서버는 poll() 기반의 이벤트 루프로 클라이언트 연결을 처리하며,
+ *       각 클라이언트는 별도 스레드에서 메시지를 처리합니다.
+ */
+
 #include "../include/message.h"
 #include "../include/network.h"
 #include "../include/session.h"
@@ -7,15 +22,22 @@
 #include "../include/reservation.h" 
 #include "utils.h"
 
-// Client 구조체 정의
+/**
+ * @brief 클라이언트 연결 정보를 관리하는 구조체
+ * @details
+ * 각 클라이언트 연결에 대한 모든 정보를 포함합니다:
+ * - 네트워크 연결 정보 (소켓, SSL)
+ * - 인증 상태 및 사용자 정보
+ * - 마지막 활동 시간 (타임아웃 처리용)
+ */
 typedef struct {
-    int socket_fd;
-    SSL* ssl;
-    ssl_handler_t* ssl_handler;
-    char ip[INET_ADDRSTRLEN];
-    session_state_t state;
-    char username[MAX_USERNAME_LENGTH];
-    time_t last_activity;
+    int socket_fd;                    ///< 클라이언트 소켓 파일 디스크립터
+    SSL* ssl;                         ///< SSL 연결 객체
+    ssl_handler_t* ssl_handler;       ///< SSL 핸들러
+    char ip[INET_ADDRSTRLEN];         ///< 클라이언트 IP 주소
+    session_state_t state;            ///< 세션 상태 (로그인 여부 등)
+    char username[MAX_USERNAME_LENGTH]; ///< 인증된 사용자명
+    time_t last_activity;             ///< 마지막 활동 시간 (타임아웃 처리용)
 } Client;
 
 // 함수 프로토타입
@@ -39,63 +61,83 @@ static bool server_is_user_authenticated(const char* username, const char* passw
 static void server_load_users_from_file(const char* filename);
 static int server_process_device_reservation(Client* client, const char* device_id, int duration_sec);
 static void server_trigger_ui_refresh(void);
-// 전역 변수
-static int server_sock;
-static bool running = true;
-static int self_pipe[2];
-static ssl_manager_t ssl_manager;
-static resource_manager_t* resource_manager = NULL;
-static reservation_manager_t* reservation_manager = NULL;
-static session_manager_t* session_manager = NULL;
-static hash_table_t* user_credentials = NULL; // 사용자 정보 해시 테이블 추가
-static Client* client_list[MAX_CLIENTS];
-static int client_count = 0;
-static pthread_mutex_t client_list_mutex;
-static int g_server_port = 0; // [추가] 서버 포트 저장을 위한 전역 변수
-static performance_stats_t g_perf_stats;
 
+// 전역 변수
+static int server_sock;                    ///< 서버 소켓 파일 디스크립터
+static bool running = true;                ///< 서버 실행 상태
+static int self_pipe[2];                   ///< 시그널 처리를 위한 파이프
+static ssl_manager_t ssl_manager;          ///< SSL 관리자
+static resource_manager_t* resource_manager = NULL;      ///< 리소스 관리자
+static reservation_manager_t* reservation_manager = NULL; ///< 예약 관리자
+static session_manager_t* session_manager = NULL;        ///< 세션 관리자
+static hash_table_t* user_credentials = NULL;            ///< 사용자 인증 정보 해시 테이블
+static Client* client_list[MAX_CLIENTS];    ///< 연결된 클라이언트 목록
+static int client_count = 0;               ///< 현재 연결된 클라이언트 수
+static pthread_mutex_t client_list_mutex;  ///< 클라이언트 목록 보호용 뮤텍스
+static int g_server_port = 0;              ///< 서버 포트 번호
+static performance_stats_t g_perf_stats;   ///< 성능 통계
+
+/**
+ * @brief 서버 메인 함수
+ * @details
+ * 서버 애플리케이션의 진입점으로 다음 기능을 수행합니다:
+ * 1. 명령행 인자 검증 및 포트 설정
+ * 2. 서버 초기화 (소켓, SSL, 관리자 객체들)
+ * 3. poll() 기반 이벤트 루프로 클라이언트 연결 처리
+ * 4. 각 클라이언트를 별도 스레드에서 처리
+ * 5. 실시간 UI 업데이트
+ * 
+ * @param argc 명령행 인자 개수
+ * @param argv 명령행 인자 배열
+ * @return 성공 시 0, 실패 시 1
+ */
 int main(int argc, char* argv[]) {
     if (argc != 2) {
         utils_report_error(ERROR_INVALID_PARAMETER, "Server", "사용법: %s <포트>", argv[0]);
         return 1;
     }
-    g_server_port = atoi(argv[1]); // [추가] 포트 번호를 전역 변수에 저장
+    
+    g_server_port = atoi(argv[1]);
     if (server_init(g_server_port) != 0) {
         utils_report_error(ERROR_NETWORK_SOCKET_CREATION_FAILED, "Main", "서버 초기화 실패");
         server_cleanup();
         return 1;
     }
-    // LOG_INFO("Main", "서버가 클라이언트 연결을 기다립니다...");
+    
+    // 메인 이벤트 루프
     while (running) {
         struct pollfd fds[2];
-        fds[0].fd = server_sock;
+        fds[0].fd = server_sock;      // 클라이언트 연결 요청
         fds[0].events = POLLIN;
-        fds[1].fd = self_pipe[0];
+        fds[1].fd = self_pipe[0];     // 시그널 처리
         fds[1].events = POLLIN;
-        int ret = poll(fds, 2, 1000); // 1초마다 주기적 갱신 (남은시간 업데이트용)
+        
+        // 1초 타임아웃으로 poll 호출 (UI 업데이트 주기)
+        int ret = poll(fds, 2, 1000);
         if (ret < 0) {
             if (errno == EINTR) continue;
             utils_report_error(ERROR_NETWORK_SOCKET_OPTION_FAILED, "Main", "Poll 에러: %s", strerror(errno));
             break;
         }
         
+        // 시그널 처리
         if (fds[1].revents & POLLIN) {
             char buf[1];
-            // 파이프로부터 데이터를 읽어 어떤 이벤트인지 확인
             read(self_pipe[0], buf, 1);
-            if (buf[0] == 's') { // 's' for shutdown
-            running = false;
-            continue;
+            if (buf[0] == 's') {  // shutdown 시그널
+                running = false;
+                continue;
             }
             // 'u' 또는 다른 신호는 UI 갱신으로 간주
         }
         
+        // 클라이언트 연결 처리
         if (fds[0].revents & POLLIN) {
             Client* client = (Client*)malloc(sizeof(Client));
             if (!client) { continue; }
             memset(client, 0, sizeof(Client));
             
-            // network_accept_client 함수를 사용하여 클라이언트 연결 처리
+            // SSL 핸드셰이크를 포함한 클라이언트 연결 수락
             client->ssl_handler = network_accept_client(server_sock, &ssl_manager, client->ip);
             if (!client->ssl_handler) {
                 free(client);
@@ -106,6 +148,7 @@ int main(int argc, char* argv[]) {
             client->socket_fd = client->ssl_handler->socket_fd;
             client->last_activity = time(NULL);
             
+            // 클라이언트를 별도 스레드에서 처리
             pthread_t thread;
             if (pthread_create(&thread, NULL, server_client_thread_func, client) != 0) {
                 utils_report_error(ERROR_SESSION_CREATION_FAILED, "Main", "클라이언트 스레드 생성 실패");
@@ -114,18 +157,25 @@ int main(int argc, char* argv[]) {
             pthread_detach(thread);
         }
         
-        // 루프의 마지막에서 항상 UI를 그린다.
-        // 이렇게 하면 클라이언트 접속, 시그널 등 모든 이벤트 처리 후
-        // 최신 상태로 화면이 그려진다.
+        // UI 상태 업데이트
         server_draw_ui_for_current_state();
     }
+    
     server_cleanup();
     return 0;
 }
 
+/**
+ * @brief 모든 로그인된 클라이언트에게 장비 상태 업데이트 브로드캐스트
+ * @details
+ * 장비 상태가 변경되었을 때 모든 로그인된 클라이언트에게 실시간으로
+ * 업데이트를 전송합니다. 이를 통해 클라이언트는 서버에 별도 요청 없이
+ * 최신 상태를 받을 수 있습니다.
+ */
 static void server_broadcast_status_update(void) {
     LOG_INFO("Server", "상태 업데이트 브로드캐스트 시작: 연결된 클라이언트 수=%d", client_count);
     
+    // 현재 장비 목록 및 상태 조회
     device_t devices[MAX_DEVICES];
     int count = resource_get_device_list(resource_manager, devices, MAX_DEVICES);
     if (count < 0) {
@@ -133,6 +183,7 @@ static void server_broadcast_status_update(void) {
         return;
     }
     
+    // 상태 업데이트 메시지 생성
     message_t* status_msg = message_create(MSG_STATUS_UPDATE, NULL);
     if (!status_msg) {
         LOG_ERROR("Server", "상태 업데이트 실패: 상태 메시지 생성 실패");
@@ -145,6 +196,7 @@ static void server_broadcast_status_update(void) {
         return;
     }
     
+    // 모든 로그인된 클라이언트에게 브로드캐스트
     pthread_mutex_lock(&client_list_mutex);
     int sent_count = 0;
     for (int i = 0; i < client_count; i++) {
@@ -163,17 +215,27 @@ static void server_broadcast_status_update(void) {
     message_destroy(status_msg);
 }
 
+/**
+ * @brief 클라이언트 메시지 처리 루프
+ * @details
+ * 각 클라이언트 스레드에서 실행되며, 클라이언트로부터 메시지를 지속적으로
+ * 수신하고 처리합니다. 성능 통계도 함께 수집합니다.
+ * 
+ * @param client 클라이언트 객체
+ */
 static void server_client_message_loop(Client* client) {
     while (running) {
         message_t* msg = message_receive(client->ssl);
         if (msg) {
+            // 성능 측정 시작
             uint64_t start_time = utils_get_current_time();
 
             client->last_activity = time(NULL);
             int result = server_handle_client_message(client, msg);
 
+            // 성능 측정 및 통계 업데이트
             uint64_t end_time = utils_get_current_time();
-            uint64_t response_time = (end_time - start_time); // 마이크로초 단위로 유지
+            uint64_t response_time = (end_time - start_time);
 
             pthread_mutex_lock(&g_perf_stats.mutex);
             g_perf_stats.total_requests++;
@@ -186,17 +248,24 @@ static void server_client_message_loop(Client* client) {
                 g_perf_stats.min_response_time = response_time;
             pthread_mutex_unlock(&g_perf_stats.mutex);
 
-            // 성능 통계 업데이트 후 UI 갱신 트리거
+            // UI 갱신 트리거
             server_trigger_ui_refresh();
 
             message_destroy(msg);
         } else {
-            // LOG_INFO("Thread", "클라이언트(%s)가 연결을 종료했습니다.", client->ip);
+            // 클라이언트 연결 종료
             break;
         }
     }
 }
 
+/**
+ * @brief 클라이언트를 관리 목록에 추가
+ * @details
+ * 스레드 안전성을 위해 뮤텍스로 보호하여 클라이언트 목록에 추가합니다.
+ * 
+ * @param client 추가할 클라이언트 객체
+ */
 static void server_add_client_to_list(Client* client) {
     pthread_mutex_lock(&client_list_mutex);
     if (client_count < MAX_CLIENTS) client_list[client_count++] = client;

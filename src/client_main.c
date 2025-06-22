@@ -1,11 +1,18 @@
-// client_main.c (입력 씹힘 문제 해결 및 로그인 UI 개선 완료)
 /**
  * @file client_main.c
- * @brief 장치 예약 시스템 클라이언트 메인 프로그램 (최종 통합 버전)
- * @details poll() 기반의 단일 이벤트 루프를 사용하여 네트워크, 키보드 입력, 실시간 UI 갱신을
- * 안정적으로 동시에 처리합니다. 모든 알려진 버그가 수정되었습니다.
+ * @brief 장비 예약 시스템 클라이언트 - 상태 머신 기반 이벤트 루프
+ * 
+ * @details
+ * 이 모듈은 장비 예약 시스템의 클라이언트 애플리케이션을 구현합니다:
+ * 
+ * 1. **상태 머신**: 로그인 → 동기화 → 메인 메뉴 → 장비 조회/예약
+ * 2. **이벤트 루프**: poll() 기반의 단일 스레드 이벤트 처리
+ * 3. **UI 관리**: ncurses 기반의 실시간 사용자 인터페이스
+ * 4. **네트워크 통신**: SSL/TLS 기반의 안전한 서버 통신
+ * 
+ * @note 모든 UI 업데이트는 메인 스레드에서 처리되며, 네트워크 통신과
+ *       사용자 입력이 동시에 처리됩니다.
  */
-
 
 #include "../include/message.h"
 #include "../include/network.h"
@@ -14,18 +21,30 @@
 #include "../include/resource.h"
 #include "../include/reservation.h"
 
-
-// 로그인 필드 구분을 위한 enum
+/**
+ * @brief 로그인 화면의 입력 필드 구분
+ * @details Tab 키로 사용자명과 비밀번호 필드를 전환할 수 있습니다.
+ */
 typedef enum {
-    LOGIN_FIELD_USERNAME,
-    LOGIN_FIELD_PASSWORD
+    LOGIN_FIELD_USERNAME,  ///< 사용자명 입력 필드
+    LOGIN_FIELD_PASSWORD   ///< 비밀번호 입력 필드
 } LoginField;
 
-
-// UI 상태를 관리하기 위한 enum (State Machine 기반)
+/**
+ * @brief 애플리케이션 상태 머신 정의
+ * @details
+ * 각 상태는 특정 UI 화면과 입력 처리 로직을 가집니다:
+ * - LOGIN: 사용자 인증 화면
+ * - SYNCING: 서버와의 시간 동기화
+ * - MAIN_MENU: 로그인 전 메인 메뉴
+ * - LOGGED_IN_MENU: 로그인 후 메뉴
+ * - DEVICE_LIST: 장비 목록 조회
+ * - RESERVATION_TIME: 예약 시간 입력
+ * - EXIT: 프로그램 종료
+ */
 typedef enum {
     APP_STATE_LOGIN = 0,        // 로그인 화면 (초기 상태)
-    APP_STATE_SYNCING,          // [추가] 시간 동기화 중 상태
+    APP_STATE_SYNCING,          // 시간 동기화 중 상태
     APP_STATE_MAIN_MENU,        // 메인 메뉴
     APP_STATE_LOGGED_IN_MENU,   // 로그인된 메뉴
     APP_STATE_DEVICE_LIST,      // 장비 목록
@@ -59,7 +78,6 @@ static int client_connect_to_server(const char* server_ip, int port);
 static void client_handle_server_message(const message_t* message);
 static void client_login_submitted(const char* username, const char* password);
 static void client_perform_logout(void);
-
 static void client_draw_message_win(const char* msg);
 static void client_handle_keyboard_input(int ch);
 static void client_process_and_store_device_list(const message_t* message);
@@ -70,115 +88,170 @@ extern ui_manager_t* g_ui_manager;
 static client_session_t client_session;
 static ssl_manager_t ssl_manager;
 static bool running = true;
-static int self_pipe[2];
+static int self_pipe[2];  // 시그널 처리를 위한 파이프
 static AppState current_state = APP_STATE_LOGIN;
 static int menu_highlight = 0;
 static int scroll_offset = 0;
-static time_t g_time_offset = 0; // 서버 시간 - 클라이언트 시간
-static bool g_time_sync_completed = false; // [추가] 시간 동기화 완료 여부 추적
+static time_t g_time_offset = 0;  // 서버 시간 - 클라이언트 시간 (시간 동기화용)
+static bool g_time_sync_completed = false;  // 시간 동기화 완료 여부
 
-// 입력 버퍼 분리
-static char reservation_input_buffer[20] = {0};
+// 입력 버퍼 관리
+static char reservation_input_buffer[20] = {0};  // 예약 시간 입력 버퍼
 static int reservation_input_pos = 0;
-static char login_username_buffer[MAX_USERNAME_LENGTH] = {0};
+static char login_username_buffer[MAX_USERNAME_LENGTH] = {0};  // 로그인 사용자명 버퍼
 static int login_username_pos = 0;
-static char login_password_buffer[128] = {0}; // 비밀번호 버퍼
+static char login_password_buffer[128] = {0};  // 로그인 비밀번호 버퍼
 static int login_password_pos = 0;
 static LoginField active_login_field = LOGIN_FIELD_USERNAME;
 
-static int reservation_target_device_index = -1;
-static device_t* device_list = NULL;
-static int device_count = 0;
+// 장비 목록 관리
+static int reservation_target_device_index = -1;  // 예약 대상 장비 인덱스
+static device_t* device_list = NULL;  // 장비 목록 배열
+static int device_count = 0;  // 장비 개수
 
-// [추가] 동기화된 시간을 반환하는 헬퍼 함수
+/**
+ * @brief 동기화된 시간을 반환하는 헬퍼 함수
+ * @details 서버와의 시간 차이를 보정하여 정확한 시간을 제공합니다.
+ * 
+ * @return 서버와 동기화된 현재 시간
+ */
 static time_t client_get_synced_time(void) {
     return time(NULL) + g_time_offset;
 }
 
+/**
+ * @brief 클라이언트 메인 함수
+ * @details
+ * 애플리케이션의 진입점으로 다음 순서로 초기화를 수행합니다:
+ * 1. 명령행 인자 검증
+ * 2. 로깅 시스템 초기화
+ * 3. 시그널 핸들러 설정
+ * 4. UI 시스템 초기화
+ * 5. SSL 관리자 초기화
+ * 6. 서버 연결
+ * 7. 이벤트 루프 시작
+ * 
+ * @param argc 명령행 인자 개수
+ * @param argv 명령행 인자 배열
+ * @return 성공 시 0, 실패 시 1
+ */
 int main(int argc, char* argv[]) {
     if (argc != 3) { 
         utils_report_error(ERROR_INVALID_PARAMETER, "Client", "사용법: %s <서버 IP> <포트>", argv[0]); 
         return 1; 
     }
+    
+    // 로깅 시스템 초기화
     if (utils_init_logger("logs/client.log") < 0) return 1;
+    
+    // 시그널 처리를 위한 파이프 생성
     if (pipe(self_pipe) == -1) { 
         utils_report_error(ERROR_FILE_OPERATION_FAILED, "Client", "pipe 생성 실패"); 
         return 1; 
     }
-     signal(SIGINT, client_signal_handler); signal(SIGTERM, client_signal_handler);
     
-    // 1. UI를 먼저 초기화합니다.
-    if (ui_init(UI_CLIENT) < 0) { /* ... */ return 1; } 
+    // 시그널 핸들러 설정
+    signal(SIGINT, client_signal_handler);
+    signal(SIGTERM, client_signal_handler);
+    
+    // UI 시스템 초기화
+    if (ui_init(UI_CLIENT) < 0) { 
+        return 1; 
+    } 
 
-    // [개선] 즉각적인 UI 피드백을 위해 '연결 중' 메시지 표시
-    // -----------------------------------------------------------------
+    // 연결 중 메시지 표시 (사용자 피드백 개선)
     pthread_mutex_lock(&g_ui_manager->mutex);
-    werase(g_ui_manager->menu_win); // 창을 깨끗이 지웁니다.
+    werase(g_ui_manager->menu_win);
     box(g_ui_manager->menu_win, 0, 0);
     const char* conn_msg = "서버에 연결 중입니다...";
     int max_y, max_x;
     getmaxyx(g_ui_manager->menu_win, max_y, max_x);
-    // 메시지를 창 중앙에 출력합니다.
     mvwprintw(g_ui_manager->menu_win, max_y / 2, (max_x - strlen(conn_msg)) / 2, "%s", conn_msg);
-    wrefresh(g_ui_manager->menu_win); // 화면에 즉시 반영합니다.
+    wrefresh(g_ui_manager->menu_win);
     pthread_mutex_unlock(&g_ui_manager->mutex);
-    // -----------------------------------------------------------------
 
-    // 2. SSL 초기화 및 서버 연결을 시도합니다. (사용자는 위 메시지를 보고 있게 됩니다)
-    if (network_init_ssl_manager(&ssl_manager, false, NULL, NULL) < 0) { client_cleanup_resources(); return 1; }
-    if (client_connect_to_server(argv[1], atoi(argv[2])) < 0) { client_cleanup_resources(); return 1; }
+    // SSL 초기화 및 서버 연결
+    if (network_init_ssl_manager(&ssl_manager, false, NULL, NULL) < 0) { 
+        client_cleanup_resources(); 
+        return 1; 
+    }
+    if (client_connect_to_server(argv[1], atoi(argv[2])) < 0) { 
+        client_cleanup_resources(); 
+        return 1; 
+    }
 
+    // 메인 이벤트 루프
     while (running) {
         struct pollfd fds[3];
-        fds[0].fd = client_session.socket_fd;
+        fds[0].fd = client_session.socket_fd;  // 네트워크 소켓
         fds[0].events = POLLIN;
-        fds[1].fd = self_pipe[0];
+        fds[1].fd = self_pipe[0];  // 시그널 처리 파이프
         fds[1].events = POLLIN;
-        fds[2].fd = STDIN_FILENO;
+        fds[2].fd = STDIN_FILENO;  // 키보드 입력
         fds[2].events = POLLIN;
 
+        // 1초 타임아웃으로 poll 호출
         int ret = poll(fds, 3, 1000);
-        if (ret < 0) { if (errno == EINTR) continue; break; }
+        if (ret < 0) { 
+            if (errno == EINTR) continue; 
+            break; 
+        }
 
+        // 키보드 입력 처리
         if (fds[2].revents & POLLIN) {
             int ch = wgetch(g_ui_manager->menu_win);
             if(ch != ERR) client_handle_keyboard_input(ch);
         }
 
-        if (fds[1].revents & POLLIN) { running = false; }
+        // 시그널 처리
+        if (fds[1].revents & POLLIN) { 
+            running = false; 
+        }
 
+        // 네트워크 메시지 처리
         if (fds[0].revents & POLLIN) {
             message_t* msg = message_receive(client_session.ssl);
             if (msg) {
                 client_handle_server_message(msg);
                 message_destroy(msg);
-               
             } else {
-               ui_show_error_message("서버와의 연결이 끊어졌습니다. 종료합니다.");
-                sleep(2); // 메시지를 볼 수 있도록 잠시 대기
+                ui_show_error_message("서버와의 연결이 끊어졌습니다. 종료합니다.");
+                sleep(2);
                 running = false;
             }
         }
-        // 모든 입력(키보드, 네트워크)을 처리한 후,
-        // 최종적으로 확정된 상태를 기반으로 UI를 그립니다.
+        
+        // UI 상태에 따른 화면 갱신
         client_draw_ui_for_current_state();
     }
+    
     client_cleanup_resources();
     return 0;
 }
 
+/**
+ * @brief 현재 상태에 따른 UI 그리기
+ * @details
+ * 상태 머신의 현재 상태에 따라 적절한 UI를 렌더링합니다.
+ * 각 상태는 고유한 화면 레이아웃과 입력 처리 방식을 가집니다.
+ */
 void client_draw_ui_for_current_state(void) {
     pthread_mutex_lock(&g_ui_manager->mutex);
     werase(g_ui_manager->menu_win);
     curs_set(0);
+    
     switch (current_state) {
         case APP_STATE_LOGIN: {
-            // --- client_draw_login_input_ui() 통합 ---
+            // 로그인 화면 UI
             client_draw_message_win("[Tab] 필드 전환  [Enter] 로그인  [ESC] 메인 메뉴");
+            
+            // 사용자명 필드 (활성화 시 하이라이트)
             if (active_login_field == LOGIN_FIELD_USERNAME) wattron(g_ui_manager->menu_win, A_REVERSE);
             mvwprintw(g_ui_manager->menu_win, 3, 4, "아이디  : %-s", login_username_buffer);
             if (active_login_field == LOGIN_FIELD_USERNAME) wattroff(g_ui_manager->menu_win, A_REVERSE);
             mvwprintw(g_ui_manager->menu_win, 3, 13 + login_username_pos, " ");
+            
+            // 비밀번호 필드 (마스킹 처리)
             char password_display[sizeof(login_password_buffer)] = {0};
             if (login_password_pos > 0) {
                 memset(password_display, '*', login_password_pos);
@@ -187,6 +260,8 @@ void client_draw_ui_for_current_state(void) {
             mvwprintw(g_ui_manager->menu_win, 5, 4, "비밀번호: %-s", password_display);
             if (active_login_field == LOGIN_FIELD_PASSWORD) wattroff(g_ui_manager->menu_win, A_REVERSE);
             mvwprintw(g_ui_manager->menu_win, 5, 13 + login_password_pos, " ");
+            
+            // 커서 위치 설정
             if (active_login_field == LOGIN_FIELD_USERNAME) {
                 wmove(g_ui_manager->menu_win, 3, 13 + login_username_pos);
             } else {
@@ -196,6 +271,7 @@ void client_draw_ui_for_current_state(void) {
             break;
         }
         case APP_STATE_SYNCING: {
+            // 시간 동기화 화면
             const char* sync_message = "서버와 시간을 동기화하는 중입니다...";
             int max_y, max_x;
             getmaxyx(g_ui_manager->menu_win, max_y, max_x);

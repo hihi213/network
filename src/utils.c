@@ -1,18 +1,40 @@
 /**
  * @file utils.c
- * @brief 유틸리티 모듈 - 성능 측정, 로깅, 해시 테이블 기능
- * @details 시스템 전반에서 사용되는 공통 기능들을 제공합니다.
+ * @brief 시스템 유틸리티 모듈 - 해시 테이블, 비동기 로깅, 성능 측정, 에러 처리
+ * 
+ * @details
+ * 이 모듈은 시스템 전반에서 사용되는 핵심 유틸리티 기능들을 제공합니다:
+ * 
+ * 1. **해시 테이블**: O(1) 평균 시간 복잡도의 키-값 저장소
+ * 2. **비동기 로깅 시스템**: 성능에 영향을 주지 않는 백그라운드 로깅
+ * 3. **성능 측정**: 마이크로초 단위의 정밀한 시간 측정
+ * 4. **에러 처리**: 체계적인 에러 코드 관리 및 사용자 친화적 메시지
+ * 
+ * @note 모든 함수는 스레드 안전성을 보장하며, 메모리 누수를 방지하기 위한
+ *       적절한 정리 함수가 제공됩니다.
  */
 
 #include <inttypes.h> // PRIu64 사용을 위해 추가
 #include "../include/utils.h"  // 유틸리티 관련 헤더 파일 포함
 #include "../include/ui.h"    // ui_manager_t, show_error_message 사용을 위해 추가
 
-// [추가] 비동기 로깅 시스템을 위한 자료구조
+/**
+ * @brief 비동기 로깅 시스템의 로그 엔트리 구조체
+ * @details 고정 크기 메시지로 메모리 관리의 복잡성을 줄입니다.
+ */
 typedef struct {
     char message[1024];  // 로그 메시지 (고정 크기로 메모리 관리 단순화)
 } log_entry_t;
 
+/**
+ * @brief 비동기 로깅을 위한 원형 버퍼 큐
+ * @details 멀티스레드 환경에서 로깅 성능을 최적화하기 위해 원형 버퍼를 사용합니다.
+ * 
+ * 장점:
+ * - 메인 스레드의 블로킹 방지
+ * - 메모리 사용량 제한
+ * - FIFO 순서 보장
+ */
 typedef struct {
     log_entry_t* entries;        // 원형 버퍼
     int capacity;                // 버퍼 크기
@@ -24,14 +46,14 @@ typedef struct {
     pthread_cond_t not_full;     // 큐가 가득 차지 않았을 때 신호
 } log_queue_t;
 
-// [추가] 비동기 로깅 시스템 전역 변수
+// 비동기 로깅 시스템 전역 변수
 static log_queue_t g_log_queue;
 static pthread_t g_logger_thread;
 static bool g_logger_running = false;
 static FILE* g_log_file = NULL;
 static log_level_t current_log_level = LOG_INFO; // 기본 로그 레벨은 INFO
 
-// [추가] 비동기 로깅 시스템 함수 프로토타입
+// 비동기 로깅 시스템 함수 프로토타입
 static void* logger_thread_function(void* arg);
 static int log_queue_init(int capacity);
 static void log_queue_cleanup(void);
@@ -39,14 +61,12 @@ static bool log_queue_push(const char* message);
 static bool log_queue_pop(char* message);
 static void log_queue_signal_shutdown(void);
 
-/*
-error handling
-*/
-
 /**
- * @brief 에러 코드에 해당하는 메시지를 반환합니다.
+ * @brief 에러 코드에 해당하는 사용자 친화적 메시지를 반환
+ * @details 시스템의 모든 에러 코드에 대해 일관된 메시지를 제공합니다.
+ * 
  * @param error_code 에러 코드
- * @return 에러 메시지 문자열
+ * @return 에러 메시지 문자열 (한국어)
  */
 static const char* utils_get_error_message(error_code_t error_code) {
     switch (error_code) {
@@ -136,7 +156,9 @@ static const char* utils_get_error_message(error_code_t error_code) {
 }
 
 /**
- * @brief 에러를 보고하고 로깅합니다.
+ * @brief 에러를 보고하고 적절한 출력 채널로 전달
+ * @details 에러 메시지를 UI 시스템 또는 표준 에러 출력으로 전달합니다.
+ * 
  * @param error_code 에러 코드
  * @param module 에러가 발생한 모듈명
  * @param additional_info 추가 정보 (가변 인자)
@@ -174,30 +196,30 @@ void utils_report_error(error_code_t error_code, const char* module, const char*
     }
 }
 
-/*
-performance
- */
-
 /**
- * @brief 현재 시간을 마이크로초 단위로 반환합니다.
- * @return 마이크로초 단위의 현재 시간
+ * @brief 현재 시간을 마이크로초 단위로 반환
+ * @details 성능 측정에 사용되는 고정밀 시간 측정 함수입니다.
+ * 
+ * @return 마이크로초 단위의 현재 시간 (uint64_t)
  */
 uint64_t utils_get_current_time(void) {
-    struct timeval tv;  // 시간 구조체 선언
-    if (gettimeofday(&tv, NULL) != 0) {  // 현재 시간 가져오기 실패 시
-        utils_report_error(ERROR_PERFORMANCE_TIME_FAILED, "Performance", "gettimeofday 실패");  // 에러 로그 출력
-        return 0;  // 0 반환
+    struct timeval tv;
+    if (gettimeofday(&tv, NULL) != 0) {
+        utils_report_error(ERROR_PERFORMANCE_TIME_FAILED, "Performance", "gettimeofday 실패");
+        return 0;
     }
-    return (uint64_t)tv.tv_sec * 1000000ULL + (uint64_t)tv.tv_usec;  // 마이크로초 단위로 변환하여 반환
+    return (uint64_t)tv.tv_sec * 1000000ULL + (uint64_t)tv.tv_usec;
 }
 
 /**
- * @brief 성능 통계를 안전하게 복사합니다.
+ * @brief 성능 통계를 스레드 안전하게 복사
+ * @details 원본 통계 객체를 변경하지 않고 안전하게 복사합니다.
+ * 
  * @param stats 원본 성능 통계 포인터
  * @param output 복사할 대상 포인터
  */
 void utils_get_performance_stats(performance_stats_t* stats, performance_stats_t* output) {
-    if (!stats || !output) return;  // 유효성 검사
+    if (!stats || !output) return;
 
     pthread_mutex_lock(&stats->mutex);  // 뮤텍스 잠금
     memcpy(output, stats, sizeof(performance_stats_t));  // 성능 통계 복사
@@ -384,24 +406,41 @@ hash_table
 
 /**
  * @brief djb2 해시 함수 - 문자열을 해시 값으로 변환
+ * @details
+ * djb2는 간단하면서도 효과적인 해시 함수로, 다음과 같은 특성을 가집니다:
+ * - 빠른 계산 속도 (문자열 길이에 비례)
+ * - 좋은 분산 특성 (충돌 확률 낮음)
+ * - 구현이 간단하고 메모리 효율적
+ * 
+ * 공식: hash = ((hash << 5) + hash) + c (hash * 33 + c와 동일)
+ * 
  * @param key 해시할 키 문자열
  * @param size 해시 테이블 크기
- * @return 해시 값
+ * @return 해시 값 (0 ~ size-1 범위)
  */
 static uint32_t utils_hash_function(const char* key, uint32_t size) {
-    unsigned long hash = 5381;  // 초기 해시 값
-    int c;  // 문자 변수
-    while ((c = *key++)) {  // 문자열의 끝까지 반복
+    unsigned long hash = 5381;  // djb2 초기값
+    int c;
+    while ((c = *key++)) {
         hash = ((hash << 5) + hash) + c; // hash * 33 + c
     }
-    return hash % size;  // 해시 테이블 크기로 모듈로 연산
+    return hash % size;
 }
 
 /**
- * @brief 해시 테이블을 생성합니다.
- * @param size 해시 테이블 크기
- * @param free_func 값 해제 함수 포인터
- * @return 생성된 hash_table_t 포인터, 실패 시 NULL
+ * @brief 해시 테이블 생성
+ * @details
+ * 체이닝 방식의 해시 테이블을 생성합니다:
+ * - 충돌 시 연결 리스트로 처리
+ * - 스레드 안전성을 위한 뮤텍스 포함
+ * - 사용자 정의 메모리 해제 함수 지원
+ * 
+ * 시간 복잡도: 삽입/삭제/조회 O(1) 평균, O(n) 최악
+ * 공간 복잡도: O(n)
+ * 
+ * @param size 해시 테이블 크기 (소수 권장)
+ * @param free_func 값 해제 함수 포인터 (NULL 가능)
+ * @return 생성된 해시 테이블 포인터, 실패 시 NULL
  */
 hash_table_t* utils_hashtable_create(uint32_t size, void (*free_func)(void*)) {
     if (size == 0) return NULL;
@@ -419,7 +458,7 @@ hash_table_t* utils_hashtable_create(uint32_t size, void (*free_func)(void*)) {
     table->count = 0;
     table->free_value = free_func;
     
-    // 뮤텍스 초기화
+    // 스레드 안전성을 위한 뮤텍스 초기화
     if (pthread_mutex_init(&table->mutex, NULL) != 0) {
         free(table->buckets);
         free(table);
@@ -430,17 +469,23 @@ hash_table_t* utils_hashtable_create(uint32_t size, void (*free_func)(void*)) {
 }
 
 /**
- * @brief 해시 테이블을 정리합니다.
- * @param table 정리할 hash_table_t 포인터
+ * @brief 해시 테이블 정리 및 메모리 해제
+ * @details
+ * 모든 노드와 값의 메모리를 안전하게 해제합니다:
+ * - 각 버킷의 연결 리스트 순회
+ * - 사용자 정의 해제 함수로 값 메모리 해제
+ * - 뮤텍스 정리
+ * 
+ * @param table 정리할 해시 테이블 포인터
  */
 void utils_hashtable_destroy(hash_table_t* table) {
     if (!table) return;
     
     pthread_mutex_lock(&table->mutex);
     for (uint32_t i = 0; i < table->size; i++) {
-        hash_node_t* node = table->buckets[i];  // 현재 버킷의 첫 번째 노드
+        hash_node_t* node = table->buckets[i];
         while (node) {
-            hash_node_t* temp = node;  // 임시 변수에 현재 노드 저장
+            hash_node_t* temp = node;
             node = node->next;
             if (table->free_value) table->free_value(temp->value);
             free(temp->key);
@@ -455,10 +500,19 @@ void utils_hashtable_destroy(hash_table_t* table) {
 }
 
 /**
- * @brief 해시 테이블에 키-값 쌍을 삽입합니다.
+ * @brief 해시 테이블에 키-값 쌍 삽입
+ * @details
+ * 키가 이미 존재하는 경우 값을 업데이트하고, 없는 경우 새 노드를 생성합니다.
+ * 
+ * 삽입 과정:
+ * 1. 키의 해시 값 계산
+ * 2. 해당 버킷에서 키 검색
+ * 3. 키가 존재하면 값 업데이트
+ * 4. 키가 없으면 새 노드 생성 및 연결 리스트에 추가
+ * 
  * @param table 해시 테이블 포인터
- * @param key 삽입할 키
- * @param value 삽입할 값
+ * @param key 삽입할 키 (문자열 복사됨)
+ * @param value 삽입할 값 (포인터만 저장)
  * @return 성공 시 true, 실패 시 false
  */
 bool utils_hashtable_insert(hash_table_t* table, const char* key, void* value) {
@@ -468,11 +522,11 @@ bool utils_hashtable_insert(hash_table_t* table, const char* key, void* value) {
     
     uint32_t index = utils_hash_function(key, table->size);
     
-    // 기존 키가 있는지 확인
+    // 기존 키 검색 및 업데이트
     hash_node_t* current = table->buckets[index];
     while (current) {
         if (strcmp(current->key, key) == 0) {
-            // 기존 값 해제
+            // 기존 값 해제 후 새 값 설정
             if (table->free_value && current->value) {
                 table->free_value(current->value);
             }
@@ -507,30 +561,44 @@ bool utils_hashtable_insert(hash_table_t* table, const char* key, void* value) {
 }
 
 /**
- * @brief 해시 테이블에서 키에 해당하는 값을 조회합니다.
+ * @brief 해시 테이블에서 키에 해당하는 값 조회
+ * @details
+ * 해시 함수로 버킷을 찾고, 연결 리스트에서 키를 검색합니다.
+ * 
  * @param table 해시 테이블 포인터
  * @param key 조회할 키
- * @return 키에 해당하는 값, 없으면 NULL
+ * @return 키에 해당하는 값 포인터, 없으면 NULL
  */
 void* utils_hashtable_get(hash_table_t* table, const char* key) {
-    if (!table || !key) return NULL;  // 유효성 검사
+    if (!table || !key) return NULL;
     
     pthread_mutex_lock(&table->mutex);
-    uint32_t index = utils_hash_function(key, table->size);  // 해시 인덱스 계산
-    hash_node_t* node = table->buckets[index];  // 해당 버킷의 첫 번째 노드
-    while (node) {  // 노드가 존재하는 동안 반복
-        if (strcmp(node->key, key) == 0) {  // 키가 일치하는 경우
+    uint32_t index = utils_hash_function(key, table->size);
+    hash_node_t* node = table->buckets[index];
+    
+    while (node) {
+        if (strcmp(node->key, key) == 0) {
             pthread_mutex_unlock(&table->mutex);
-            return node->value;  // 값 반환
+            return node->value;
         }
-        node = node->next;  // 다음 노드로 이동
+        node = node->next;
     }
+    
     pthread_mutex_unlock(&table->mutex);
-    return NULL;  // 키를 찾지 못한 경우 NULL 반환
+    return NULL;
 }
 
 /**
- * @brief 해시 테이블에서 키-값 쌍을 삭제합니다.
+ * @brief 해시 테이블에서 키-값 쌍 삭제
+ * @details
+ * 연결 리스트에서 노드를 찾아 제거하고 메모리를 해제합니다.
+ * 
+ * 삭제 과정:
+ * 1. 해시 값으로 버킷 찾기
+ * 2. 연결 리스트에서 키 검색
+ * 3. 노드 제거 및 메모리 해제
+ * 4. 연결 리스트 재구성
+ * 
  * @param table 해시 테이블 포인터
  * @param key 삭제할 키
  * @return 성공 시 true, 실패 시 false
@@ -538,38 +606,40 @@ void* utils_hashtable_get(hash_table_t* table, const char* key) {
 bool utils_hashtable_delete(hash_table_t* table, const char* key) {
     if (!table || !key) {
         utils_report_error(ERROR_INVALID_PARAMETER, "HashTable", "utils_hashtable_delete: 잘못된 파라미터");
-        return false;  // 유효성 검사
+        return false;
     }
 
     pthread_mutex_lock(&table->mutex);
-    uint32_t index = utils_hash_function(key, table->size);  // 해시 인덱스 계산
+    uint32_t index = utils_hash_function(key, table->size);
     
-    hash_node_t* node = table->buckets[index];  // 해당 버킷의 첫 번째 노드
-    hash_node_t* prev = NULL;  // 이전 노드 포인터
+    hash_node_t* node = table->buckets[index];
+    hash_node_t* prev = NULL;
 
-    while (node) {  // 노드가 존재하는 동안 반복
-        if (strcmp(node->key, key) == 0) {  // 키가 일치하는 경우
-            if (prev) {  // 이전 노드가 존재하는 경우
-                prev->next = node->next;  // 이전 노드의 다음을 현재 노드의 다음으로 설정
-            } else {  // 첫 번째 노드인 경우
-                table->buckets[index] = node->next;  // 버킷의 첫 번째를 다음 노드로 설정
+    while (node) {
+        if (strcmp(node->key, key) == 0) {
+            // 연결 리스트에서 노드 제거
+            if (prev) {
+                prev->next = node->next;
+            } else {
+                table->buckets[index] = node->next;
             }
 
-            if (table->free_value) {  // 값 해제 함수가 존재하는 경우
-                table->free_value(node->value);  // 값 메모리 해제
+            // 메모리 해제
+            if (table->free_value) {
+                table->free_value(node->value);
             }
-            free(node->key);  // 키 메모리 해제
-            free(node);  // 노드 메모리 해제
+            free(node->key);
+            free(node);
             table->count--;
             pthread_mutex_unlock(&table->mutex);
-            return true;  // true 반환
+            return true;
         }
-        prev = node;  // 이전 노드를 현재 노드로 설정
-        node = node->next;  // 다음 노드로 이동
+        prev = node;
+        node = node->next;
     }
 
     pthread_mutex_unlock(&table->mutex);
-    return false;  // false 반환
+    return false;
 }
 
 /**

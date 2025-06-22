@@ -1,21 +1,41 @@
 /**
  * @file session.c
- * @brief 세션 관리 모듈 - 클라이언트 연결 세션 관리
- * @details 서버 측 세션 생성/관리 및 클라이언트 세션 정리 기능을 제공합니다.
+ * @brief 세션 관리 모듈 - 클라이언트 연결 세션 및 인증 관리
+ * 
+ * @details
+ * 이 모듈은 클라이언트 연결의 세션 생명주기를 관리합니다:
+ * 
+ * 1. **세션 생성/종료**: 사용자 인증 후 세션 객체 생성 및 정리
+ * 2. **중복 로그인 방지**: 동일 사용자의 다중 세션 차단
+ * 3. **세션 토큰 관리**: 고유한 세션 식별자 생성
+ * 4. **클라이언트 정리**: SSL 연결 및 소켓 리소스 해제
+ * 
+ * @note 서버 측에서는 해시 테이블로 세션을 관리하며, 클라이언트 측에서는
+ *       SSL 연결 정보를 관리합니다.
  */
 
 #include "../include/session.h"  // 세션 관련 헤더 파일 포함
 #include "../include/network.h"  // 네트워크 관련 헤더 파일 포함
 
-
-// [개선] server_session_t 구조체를 해제하기 위한 래퍼 함수
+/**
+ * @brief 서버 세션 객체 메모리 해제 래퍼 함수
+ * @details
+ * 해시 테이블의 값 해제 함수로 사용되는 래퍼 함수입니다.
+ * 세션 객체의 메모리를 안전하게 해제합니다.
+ * 
+ * @param session 해제할 세션 객체 포인터
+ */
 static void session_free_wrapper(void* session) {
     free(session);  // 세션 포인터 메모리 해제
 }
 
 /**
- * @brief 세션 매니저를 초기화합니다.
- * @return 성공 시 초기화된 session_manager_t 포인터, 실패 시 NULL
+ * @brief 세션 관리자 초기화
+ * @details
+ * 세션 관리를 위한 해시 테이블과 뮤텍스를 초기화합니다.
+ * 해시 테이블은 사용자명을 키로 하여 세션 객체를 저장합니다.
+ * 
+ * @return 초기화된 세션 관리자, 실패 시 NULL
  */
 session_manager_t* session_init_manager(void) {
     session_manager_t* manager = (session_manager_t*)malloc(sizeof(session_manager_t));  // 세션 매니저 메모리 할당
@@ -39,8 +59,12 @@ session_manager_t* session_init_manager(void) {
 }
 
 /**
- * @brief 세션 매니저의 메모리를 정리합니다.
- * @param manager 정리할 session_manager_t 포인터
+ * @brief 세션 관리자 정리
+ * @details
+ * 세션 관리자와 관련된 모든 리소스를 안전하게 해제합니다.
+ * 해시 테이블의 모든 세션 객체도 함께 정리됩니다.
+ * 
+ * @param manager 정리할 세션 관리자
  */
 void session_cleanup_manager(session_manager_t* manager) {
     if (!manager) return;
@@ -48,12 +72,19 @@ void session_cleanup_manager(session_manager_t* manager) {
 }
 
 /**
- * @brief 새로운 클라이언트 세션을 생성합니다.
- * @param manager 세션 매니저 포인터
- * @param username 사용자 이름
+ * @brief 새로운 클라이언트 세션 생성
+ * @details
+ * 사용자 인증 후 새로운 세션을 생성합니다. 중복 로그인을 방지하기 위해
+ * 기존 세션이 있는지 확인하고, 고유한 세션 토큰을 생성합니다.
+ * 
+ * 세션 토큰 형식: "사용자명_타임스탬프"
+ * 이는 디버깅과 로깅에 유용하며, 충돌 가능성이 매우 낮습니다.
+ * 
+ * @param manager 세션 관리자
+ * @param username 인증된 사용자명
  * @param client_ip 클라이언트 IP 주소
  * @param client_port 클라이언트 포트 번호
- * @return 생성된 server_session_t 포인터, 실패 시 NULL
+ * @return 생성된 세션 객체, 실패 시 NULL
  */
 server_session_t* session_create(session_manager_t* manager, const char* username, const char* client_ip, int client_port) {
     if (!manager || !username || !client_ip) {  // 유효성 검사
@@ -111,9 +142,13 @@ server_session_t* session_create(session_manager_t* manager, const char* usernam
 }
 
 /**
- * @brief 클라이언트 세션을 종료합니다.
- * @param manager 세션 매니저 포인터
- * @param username 종료할 세션의 사용자 이름
+ * @brief 클라이언트 세션 종료
+ * @details
+ * 사용자 로그아웃 또는 연결 종료 시 세션을 정리합니다.
+ * 해시 테이블에서 세션을 제거하고 관련 메모리를 해제합니다.
+ * 
+ * @param manager 세션 관리자
+ * @param username 종료할 세션의 사용자명
  * @return 성공 시 0, 실패 시 -1
  */
 int session_close(session_manager_t* manager, const char* username) {
@@ -139,8 +174,12 @@ int session_close(session_manager_t* manager, const char* username) {
 }
 
 /**
- * @brief 클라이언트 세션의 메모리를 정리합니다.
- * @param session 정리할 client_session_t 포인터
+ * @brief 클라이언트 세션 리소스 정리
+ * @details
+ * 클라이언트 연결 종료 시 모든 네트워크 리소스를 안전하게 해제합니다.
+ * SSL 연결, 소켓, 핸들러를 순서대로 정리하여 메모리 누수를 방지합니다.
+ * 
+ * @param session 정리할 클라이언트 세션
  */
 void session_cleanup_client(client_session_t* session) {
     if (!session) return;  // 세션이 NULL이면 함수 종료
